@@ -170,6 +170,29 @@ BEGIN
 
   END LOOP;
 
+  -- Create Materialized views
+    FOR object IN
+      SELECT matviewname::text,
+             definition
+        FROM pg_catalog.pg_matviews
+       WHERE schemaname = quote_ident(source_schema)
+
+    LOOP
+      buffer := dest_schema || '.' || quote_ident(object);
+      SELECT replace(definition,';','') INTO v_def
+        FROM pg_catalog.pg_matviews
+       WHERE schemaname = quote_ident(source_schema)
+         AND matviewname = quote_ident(object);
+
+         IF include_recs
+           THEN
+           EXECUTE 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || v_def || ';' ;
+           ELSE
+           EXECUTE 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || v_def || ' WITH NO DATA;' ;
+         END IF;
+
+    END LOOP;
+
 -- Create functions
   FOR func_oid IN
     SELECT oid
@@ -190,5 +213,5 @@ END;
 $BODY$
   LANGUAGE plpgsql VOLATILE
   COST 100;
-ALTER FUNCTION clone_schema(text, text, boolean)
+ALTER FUNCTION public.clone_schema(text, text, boolean)
   OWNER TO postgres;
