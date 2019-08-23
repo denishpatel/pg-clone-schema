@@ -10,6 +10,7 @@ Handles following objects:
 * Types
 
 You can call function like this to copy schema with data:
+<br/>
 >select clone_schema('development', 'development_clone', true);
 <br/>
 Alternatively, if you want to copy only schema without data:
