@@ -36,6 +36,7 @@ DECLARE
   sq_is_called     boolean;
   sq_is_cycled     boolean;
   sq_cycled        char(10);
+  arec             RECORD;
 
 BEGIN
 
@@ -60,6 +61,25 @@ BEGIN
   END IF;
 
   EXECUTE 'CREATE SCHEMA ' || quote_ident(dest_schema) ;
+
+  -- MV: Create types
+  FOR arec IN 
+    select n.nspname AS schemaname, t.typname AS typname, t.typcategory AS typcategory, t.typinput AS typinput, t.typstorage AS typstorage, CASE WHEN t.typcategory='C' THEN ''  
+    WHEN t.typcategory='E' THEN 'CREATE TYPE ' || quote_ident(dest_schema) || '.' || t.typname || ' AS ENUM (' || REPLACE(quote_literal(array_to_string(array_agg(e.enumlabel ORDER BY e.enumsortorder),',')), ',', ''',''') || ');' 
+    ELSE '' END AS enum_ddl FROM pg_type t JOIN pg_namespace n ON (n.oid = t.typnamespace) 
+    LEFT JOIN pg_enum e ON (t.oid = e.enumtypid) where n.nspname = quote_ident(source_schema) and t.typcategory <> 'A' group by 1,2,3,4,5
+  LOOP
+    BEGIN
+      IF arec.typcategory = 'E' THEN
+          EXECUTE arec.enum_ddl;
+          -- RAISE NOTICE 'created enum type:%', arec.enum_ddl;
+      ELSEIF arec.typcategory = 'C' THEN
+          RAISE NOTICE 'Composite type not implemented yet:%', arec.typname;
+      ELSE
+          RAISE NOTICE 'Unhandled type:%-%', arec.typcategory, arec.typname;
+      END IF;
+    END;          
+  END LOOP;
 
   -- Create sequences
   -- TODO: Find a way to make this sequence's owner is the correct table.
@@ -120,6 +140,7 @@ BEGIN
     IF include_recs
       THEN
       -- Insert records from source table
+      RAISE NOTICE 'Populating cloned table, %', buffer;      
       EXECUTE 'INSERT INTO ' || buffer || ' SELECT * FROM ' || quote_ident(source_schema) || '.' || quote_ident(object) || ';';
     END IF;
 
@@ -213,5 +234,4 @@ END;
 $BODY$
   LANGUAGE plpgsql VOLATILE
   COST 100;
-ALTER FUNCTION public.clone_schema(text, text, boolean)
-  OWNER TO postgres;
+ALTER FUNCTION public.clone_schema(text, text, boolean) OWNER TO postgres;
