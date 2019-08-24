@@ -2,7 +2,7 @@
 
 Handles following objects:
 
-* Tables - structure and data
+* Tables - structure (indexes and keys) and optionally, data
 * Views
 * Materialized Views - Structure and data
 * Sequences
