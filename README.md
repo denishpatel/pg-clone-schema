@@ -5,9 +5,9 @@ Handles following objects:
 * Tables - structure and data
 * Views
 * Materialized Views - Structure and data
-* Sequence
-* Functions
-* Types
+* Sequences
+* Functions/Procedures
+* Types (composite and enum)
 
 You can call function like this to copy schema with data:
 <br/>
