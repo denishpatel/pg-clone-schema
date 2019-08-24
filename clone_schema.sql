@@ -64,17 +64,23 @@ BEGIN
 
   -- MV: Create types
   FOR arec IN 
-    select n.nspname AS schemaname, t.typname AS typname, t.typcategory AS typcategory, t.typinput AS typinput, t.typstorage AS typstorage, CASE WHEN t.typcategory='C' THEN ''  
-    WHEN t.typcategory='E' THEN 'CREATE TYPE ' || quote_ident(dest_schema) || '.' || t.typname || ' AS ENUM (' || REPLACE(quote_literal(array_to_string(array_agg(e.enumlabel ORDER BY e.enumsortorder),',')), ',', ''',''') || ');' 
-    ELSE '' END AS enum_ddl FROM pg_type t JOIN pg_namespace n ON (n.oid = t.typnamespace) 
-    LEFT JOIN pg_enum e ON (t.oid = e.enumtypid) where n.nspname = quote_ident(source_schema) and t.typcategory <> 'A' group by 1,2,3,4,5
+    SELECT c.relkind, n.nspname AS schemaname, t.typname AS typname, t.typcategory, CASE WHEN t.typcategory='C' THEN 
+    'CREATE TYPE ' || quote_ident(dest_schema) || '.' || t.typname || ' AS (' || array_to_string(array_agg(a.attname || ' ' || pg_catalog.format_type(a.atttypid, a.atttypmod) ORDER BY c.relname, a.attnum),', ') || ');'
+    WHEN t.typcategory='E' THEN 
+    'CREATE TYPE ' || quote_ident(dest_schema) || '.' || t.typname || ' AS ENUM (' || REPLACE(quote_literal(array_to_string(array_agg(e.enumlabel ORDER BY e.enumsortorder),',')), ',', ''',''') || ');'
+    ELSE '' END AS type_ddl FROM pg_type t JOIN pg_namespace n ON (n.oid = t.typnamespace)
+    LEFT JOIN pg_enum e ON (t.oid = e.enumtypid)
+    LEFT JOIN pg_class c ON (c.reltype = t.oid) LEFT JOIN pg_attribute a ON (a.attrelid = c.oid)
+    WHERE n.nspname = quote_ident(source_schema) and (c.relkind IS NULL or c.relkind = 'c') and t.typcategory in ('C', 'E') group by 1,2,3,4 order by n.nspname, t.typcategory, t.typname
   LOOP
     BEGIN
+      -- Keep composite and enum types in separate branches for fine tuning later if needed.
       IF arec.typcategory = 'E' THEN
-          EXECUTE arec.enum_ddl;
-          -- RAISE NOTICE 'created enum type:%', arec.enum_ddl;
+          -- RAISE NOTICE '%', arec.type_ddl;
+          EXECUTE arec.type_ddl;
       ELSEIF arec.typcategory = 'C' THEN
-          RAISE NOTICE 'Composite type not implemented yet:%', arec.typname;
+          -- RAISE NOTICE '%', arec.type_ddl;
+          EXECUTE arec.type_ddl;
       ELSE
           RAISE NOTICE 'Unhandled type:%-%', arec.typcategory, arec.typname;
       END IF;
@@ -134,8 +140,8 @@ BEGIN
 
   LOOP
     buffer := dest_schema || '.' || quote_ident(object);
-    EXECUTE 'CREATE TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(object)
-        || ' INCLUDING ALL)';
+    RAISE NOTICE 'Creating table, %', buffer;
+    EXECUTE 'CREATE TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(object) || ' INCLUDING ALL)';
 
     IF include_recs
       THEN
