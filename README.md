@@ -8,7 +8,7 @@ Handles following objects:
 * Sequences
 * Functions/Procedures
 * Types (composite and enum)
-* Collations
+* Collations and Domains
 * Triggers
 
 You can call function like this to copy schema with data:
