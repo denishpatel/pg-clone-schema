@@ -38,6 +38,11 @@ DECLARE
   sq_cycled        char(10);
   arec             RECORD;
   cnt              integer;
+  v_ret            text;
+  v_diag1          text;
+  v_diag2          text;
+  v_diag3          text;
+  v_diag4          text;
 
 BEGIN
 
@@ -299,6 +304,15 @@ BEGIN
     END;          
   END LOOP;
   RAISE NOTICE '  TRIGGERS cloned: %', LPAD(cnt::text, 5, ' '); 
+  
+EXCEPTION
+    WHEN others THEN
+    BEGIN
+        GET STACKED DIAGNOSTICS v_diag1 = MESSAGE_TEXT, v_diag2 = PG_EXCEPTION_DETAIL, v_diag3 = PG_EXCEPTION_HINT, v_diag4 = RETURNED_SQLSTATE;
+	v_ret := v_diag4 || '. ' || v_diag1 || ' .' || v_diag2 || ' .' || v_diag3;
+        RAISE EXCEPTION 'Diagnostics: %',v_ret;
+        RETURN;
+    END;  
   
 RETURN;  
 END;
