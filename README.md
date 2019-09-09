@@ -10,6 +10,7 @@ Handles following objects:
 * Types (composite and enum)
 * Collations and Domains
 * Triggers
+* Permissions/GRANTs
 
 You can call function like this to copy schema with data:
 <br/>
