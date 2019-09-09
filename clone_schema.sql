@@ -19,6 +19,7 @@ DECLARE
   func_oid         oid;
   object           text;
   buffer           text;
+  buffer2          text;
   srctbl           text;
   default_         text;
   column_          text;
@@ -38,6 +39,7 @@ DECLARE
   sq_cycled        char(10);
   arec             RECORD;
   cnt              integer;
+  pos              integer;
   v_ret            text;
   v_diag1          text;
   v_diag2          text;
@@ -80,7 +82,7 @@ BEGIN
       EXECUTE arec.coll_ddl;
     END;          
   END LOOP;
-  RAISE NOTICE 'COLLATIONS cloned: %', LPAD(cnt::text, 5, ' '); 
+  RAISE NOTICE '  COLLATIONS cloned: %', LPAD(cnt::text, 5, ' '); 
  
   -- MV: Create Domains
   cnt := 0;
@@ -101,7 +103,7 @@ BEGIN
       EXECUTE arec.dom_ddl;
     END;          
   END LOOP;
-  RAISE NOTICE '   DOMAINS cloned: %', LPAD(cnt::text, 5, ' '); 
+  RAISE NOTICE '     DOMAINS cloned: %', LPAD(cnt::text, 5, ' '); 
   
   -- MV: Create types
   cnt := 0;
@@ -129,7 +131,7 @@ BEGIN
       END IF;
     END;          
   END LOOP;
-  RAISE NOTICE '     TYPES cloned: %', LPAD(cnt::text, 5, ' ');
+  RAISE NOTICE '       TYPES cloned: %', LPAD(cnt::text, 5, ' ');
   
   -- Create sequences
   cnt := 0;
@@ -176,7 +178,7 @@ BEGIN
     END IF;
 
   END LOOP;
-  RAISE NOTICE ' SEQUENCES cloned: %', LPAD(cnt::text, 5, ' ');
+  RAISE NOTICE '   SEQUENCES cloned: %', LPAD(cnt::text, 5, ' ');
   
 -- Create tables
   cnt := 0;
@@ -209,7 +211,7 @@ BEGIN
     END LOOP;
 
   END LOOP;
-  RAISE NOTICE '    TABLES cloned: %', LPAD(cnt::text, 5, ' ');
+  RAISE NOTICE '      TABLES cloned: %', LPAD(cnt::text, 5, ' ');
     
 --  add FK constraint
   cnt := 0;
@@ -227,7 +229,7 @@ BEGIN
       EXECUTE qry;
 
     END LOOP;
-  RAISE NOTICE '     FKEYS cloned: %', LPAD(cnt::text, 5, ' ');
+  RAISE NOTICE '       FKEYS cloned: %', LPAD(cnt::text, 5, ' ');
   
 -- Create views
   cnt := 0;
@@ -248,7 +250,7 @@ BEGIN
     EXECUTE 'CREATE OR REPLACE VIEW ' || buffer || ' AS ' || v_def || ';' ;
 
   END LOOP;
-  RAISE NOTICE '     VIEWS cloned: %', LPAD(cnt::text, 5, ' ');
+  RAISE NOTICE '       VIEWS cloned: %', LPAD(cnt::text, 5, ' ');
   
   -- Create Materialized views
     cnt := 0;
@@ -274,7 +276,7 @@ BEGIN
          END IF;
 
     END LOOP;
-    RAISE NOTICE ' MAT VIEWS cloned: %', LPAD(cnt::text, 5, ' ');
+    RAISE NOTICE '   MAT VIEWS cloned: %', LPAD(cnt::text, 5, ' ');
     
 -- Create functions
   cnt := 0;
@@ -288,7 +290,7 @@ BEGIN
     SELECT replace(qry, source_schema, dest_schema) INTO dest_qry;
     EXECUTE dest_qry;
   END LOOP;
-  RAISE NOTICE ' FUNCTIONS cloned: %', LPAD(cnt::text, 5, ' ');
+  RAISE NOTICE '   FUNCTIONS cloned: %', LPAD(cnt::text, 5, ' ');
   
   -- MV: Create Triggers
   cnt := 0;
@@ -303,7 +305,172 @@ BEGIN
       EXECUTE arec.trig_ddl;
     END;          
   END LOOP;
-  RAISE NOTICE '  TRIGGERS cloned: %', LPAD(cnt::text, 5, ' '); 
+  RAISE NOTICE '    TRIGGERS cloned: %', LPAD(cnt::text, 5, ' '); 
+
+  -- ---------------------
+  -- MV: Permissions: Defaults
+  -- ---------------------
+  cnt := 0;
+  FOR arec IN 
+    SELECT pg_catalog.pg_get_userbyid(d.defaclrole) AS "Owner", n.nspname AS schema, 
+    CASE d.defaclobjtype WHEN 'r' THEN 'table' WHEN 'S' THEN 'sequence' WHEN 'f' THEN 'function' WHEN 'T' THEN 'type' WHEN 'n' THEN 'schema' END AS atype, 
+    pg_catalog.array_to_string(d.defaclacl, E'\n') AS accessprivs, split_part(pg_catalog.array_to_string(d.defaclacl, E'\n'), '=', 1) as grantee, 
+    split_part(pg_catalog.array_to_string(d.defaclacl, E'\n'), '/', 2) as grantor, 
+    split_part(split_part(pg_catalog.array_to_string(d.defaclacl, E'\n'), '/', 1)::text, '=',2) as defacl 
+    FROM pg_catalog.pg_default_acl d LEFT JOIN pg_catalog.pg_namespace n ON (n.oid = d.defaclnamespace) WHERE n.nspname IS NOT NULL and n.nspname = quote_ident(source_schema) ORDER BY 3, 4, 1
+    
+  LOOP
+    BEGIN
+      cnt := cnt + 1;
+      -- RAISE NOTICE 'type=%  accessprivs=%', arec.atype, arec.accessprivs;
+      IF arec.atype = 'function' THEN
+        -- Just having execute is enough to grant all apparently.
+        buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || arec.grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ALL ON FUNCTIONS TO ' || arec.grantee || ';';
+        -- RAISE NOTICE '%', buffer;
+        EXECUTE buffer;
+      ELSIF arec.atype = 'sequence' THEN
+        IF POSITION('r' IN arec.defacl) > 0 AND POSITION('w' IN arec.defacl) > 0 AND POSITION('U' IN arec.defacl) > 0 THEN
+          -- arU is enough for all privs
+          buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || arec.grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ALL ON SEQUENCES TO ' || arec.grantee || ';';
+          -- RAISE NOTICE '%', buffer;
+          EXECUTE buffer;
+        ELSE
+          -- have to specify each priv individually
+          buffer2 := '';
+          IF POSITION('r' IN arec.defacl) > 0 THEN
+            buffer2 := 'SELECT';
+          END IF;
+          IF POSITION('w' IN arec.defacl) > 0 THEN
+            IF buffer2 = '' THEN
+              buffer2 := 'UPDATE';
+            ELSE
+              buffer2 := buffer2 || ', UPDATE';
+            END IF;
+          END IF;
+          IF POSITION('U' IN arec.defacl) > 0 THEN
+            IF buffer2 = '' THEN
+              buffer2 := 'USAGE';
+            ELSE
+              buffer2 := buffer2 || ', USAGE';
+            END IF;
+          END IF;
+          buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || arec.grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ' || buffer2 || ' ON SEQUENCES TO ' || arec.grantee || ';';
+          -- RAISE NOTICE '%', buffer;
+          EXECUTE buffer;          
+        END IF;
+      ELSIF arec.atype = 'table' THEN        
+        -- do each priv individually, jeeeesh!
+        buffer2 := '';
+        IF POSITION('a' IN arec.defacl) > 0 THEN
+          buffer2 := 'INSERT';
+        END IF;
+        IF POSITION('r' IN arec.defacl) > 0 THEN
+          IF buffer2 = '' THEN
+            buffer2 := 'SELECT';
+          ELSE
+            buffer2 := buffer2 || ', SELECT';
+          END IF;
+        END IF;
+        IF POSITION('w' IN arec.defacl) > 0 THEN
+          IF buffer2 = '' THEN
+            buffer2 := 'UPDATE';
+          ELSE
+            buffer2 := buffer2 || ', UPDATE';
+          END IF;
+        END IF;
+        IF POSITION('d' IN arec.defacl) > 0 THEN
+          IF buffer2 = '' THEN
+            buffer2 := 'DELETE';
+          ELSE
+            buffer2 := buffer2 || ', DELETE';
+          END IF;
+        END IF;        
+        IF POSITION('t' IN arec.defacl) > 0 THEN
+          IF buffer2 = '' THEN
+            buffer2 := 'TRIGGER';
+          ELSE
+            buffer2 := buffer2 || ', TRIGGER';
+          END IF;
+        END IF;        
+        IF POSITION('T' IN arec.defacl) > 0 THEN
+          IF buffer2 = '' THEN
+            buffer2 := 'TRUNCATE';
+          ELSE
+            buffer2 := buffer2 || ', TRUNCATE';
+          END IF;
+        END IF;                
+        buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || arec.grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ' || buffer2 || ' ON TABLES TO ' || arec.grantee || ';';
+        -- RAISE NOTICE '%', buffer;
+        EXECUTE buffer;                  
+      ELSE
+          RAISE WARNING 'Doing nothing for type=%  %', arec.atype, arec.accessprivs;
+      END IF;
+    END;          
+  END LOOP;
+  RAISE NOTICE '  DFLT PRIVS cloned: %', LPAD(cnt::text, 5, ' ');  
+  
+  -- MV: PRIVS: schema
+  cnt := 0;
+  FOR arec IN 
+    SELECT 'GRANT ' || p.perm::perm_type || ' ON SCHEMA ' || quote_ident(dest_schema) || ' TO ' || r.rolname || ';' as schema_ddl
+    FROM pg_catalog.pg_namespace AS n CROSS JOIN pg_catalog.pg_roles AS r CROSS JOIN (VALUES ('USAGE'), ('CREATE')) AS p(perm) 
+    WHERE n.nspname = quote_ident(source_schema) AND NOT r.rolsuper AND has_schema_privilege(r.oid, n.oid, p.perm) order by r.rolname, p.perm::perm_type
+  LOOP
+    BEGIN
+      cnt := cnt + 1;
+      EXECUTE arec.schema_ddl;
+    END;          
+  END LOOP;
+  RAISE NOTICE 'SCHEMA PRIVS cloned: %', LPAD(cnt::text, 5, ' '); 
+
+  -- MV: PRIVS: sequences
+  cnt := 0;
+  FOR arec IN 
+    SELECT 'GRANT ' || p.perm::perm_type || ' ON ' || quote_ident(dest_schema) || '.' || t.relname::text || ' TO ' || r.rolname || ';' as seq_ddl
+    FROM pg_catalog.pg_class AS t CROSS JOIN pg_catalog.pg_roles AS r CROSS JOIN (VALUES ('SELECT'), ('USAGE'), ('UPDATE')) AS p(perm)
+    WHERE t.relnamespace::regnamespace::name = quote_ident(source_schema) AND t.relkind = 'S'  AND NOT r.rolsuper AND has_sequence_privilege(r.oid, t.oid, p.perm)
+  LOOP
+    BEGIN
+      cnt := cnt + 1;
+      EXECUTE arec.seq_ddl;
+    END;          
+  END LOOP;
+  RAISE NOTICE '  SEQ. PRIVS cloned: %', LPAD(cnt::text, 5, ' '); 
+
+  -- MV: PRIVS: functions
+  cnt := 0;
+  FOR arec IN 
+    SELECT 'GRANT EXECUTE ON FUNCTION ' || quote_ident(dest_schema) || '.' || regexp_replace(f.oid::regprocedure::text, '^((("[^"]*")|([^"][^.]*))\.)?', '') || ' TO ' || r.rolname || ';' as func_ddl
+    FROM pg_catalog.pg_proc f CROSS JOIN pg_catalog.pg_roles AS r WHERE f.pronamespace::regnamespace::name = quote_ident(source_schema) AND NOT r.rolsuper AND has_function_privilege(r.oid, f.oid, 'EXECUTE') 
+    order by regexp_replace(f.oid::regprocedure::text, '^((("[^"]*")|([^"][^.]*))\.)?', '')
+  LOOP
+    BEGIN
+      cnt := cnt + 1;
+      EXECUTE arec.func_ddl;
+    END;          
+  END LOOP;
+  RAISE NOTICE '  FUNC PRIVS cloned: %', LPAD(cnt::text, 5, ' '); 
+
+  -- MV: PRIVS: tables
+  -- regular, partitioned, and foreign tables plus view and materialized view permissions. TODO: implement foreign table defs.
+  cnt := 0;
+  FOR arec IN 
+    SELECT 'GRANT ' || p.perm::perm_type || CASE WHEN t.relkind in ('r', 'p', 'f') THEN ' ON TABLE ' WHEN t.relkind in ('v', 'm')  THEN ' ON ' END || quote_ident(dest_schema) || '.' || t.relname::text || ' TO ' || r.rolname || ';' as tbl_ddl, 
+    has_table_privilege(r.oid, t.oid, p.perm) AS granted, t.relkind
+    FROM pg_catalog.pg_class AS t CROSS JOIN pg_catalog.pg_roles AS r CROSS JOIN (VALUES (TEXT 'SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'), ('TRUNCATE'), ('REFERENCES'), ('TRIGGER')) AS p(perm)
+    WHERE t.relnamespace::regnamespace::name = quote_ident(source_schema)  AND t.relkind in ('r', 'p', 'f', 'v', 'm')  AND NOT r.rolsuper AND has_table_privilege(r.oid, t.oid, p.perm) order by t.relname::text, t.relkind
+  LOOP
+    BEGIN
+      cnt := cnt + 1;
+      -- RAISE NOTICE 'ddl=%', arec.tbl_ddl;
+      IF arec.relkind = 'f' THEN
+        RAISE WARNING 'Foreign tables are not currently implemented, so skipping privs for them. ddl=%', arec.tbl_ddl;
+      ELSE
+        EXECUTE arec.tbl_ddl;      
+      END IF;
+    END;          
+  END LOOP;
+  RAISE NOTICE ' TABLE PRIVS cloned: %', LPAD(cnt::text, 5, ' '); 
   
 EXCEPTION
     WHEN others THEN
