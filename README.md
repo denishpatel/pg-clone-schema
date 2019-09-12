@@ -12,6 +12,8 @@ Handles following objects:
 * Triggers
 * Permissions/GRANTs
 
+<br/>
+<br/>
 
 Arguments:
 * source schema
