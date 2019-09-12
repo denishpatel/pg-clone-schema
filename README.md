@@ -12,6 +12,7 @@ Handles following objects:
 * Triggers
 * Permissions/GRANTs
 
+
 Arguments:
 * source schema
 * target schema
