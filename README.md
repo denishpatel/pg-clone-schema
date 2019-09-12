@@ -28,4 +28,9 @@ Alternatively, if you want to copy only schema without data:
 >select clone_schema('development', 'development_clone', false, false);
 <br/>
 
+If you just want to generate the DDL, call it like this:
+<br/>
+>select clone_schema('development', 'development_clone', false, true);
+<br/>
+
 
