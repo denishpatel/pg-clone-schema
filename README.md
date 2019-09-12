@@ -12,12 +12,20 @@ Handles following objects:
 * Triggers
 * Permissions/GRANTs
 
+Arguments:
+* source schema
+* target schema
+* clone with data
+* only generate DDL
+
 You can call function like this to copy schema with data:
 <br/>
->select clone_schema('development', 'development_clone', true);
+>select clone_schema('development', 'development_clone', true, false);
 <br/>
 
 Alternatively, if you want to copy only schema without data:
 <br/>
->select clone_schema('development', 'development_clone', false);
+>select clone_schema('development', 'development_clone', false, false);
 <br/>
+
+
