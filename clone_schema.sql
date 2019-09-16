@@ -278,13 +278,12 @@ BEGIN
   cnt := 0;
   FOR qry IN
     SELECT 'ALTER TABLE ' || quote_ident(dest_schema) || '.' || quote_ident(rn.relname)
-                          || ' ADD CONSTRAINT ' || quote_ident(ct.conname) || ' ' || pg_get_constraintdef(ct.oid) || ';'
+                          || ' ADD CONSTRAINT ' || quote_ident(ct.conname) || ' ' || REPLACE(pg_get_constraintdef(ct.oid), 'REFERENCES ', 'REFERENCES ' || quote_ident(dest_schema) || '.') || ';'
       FROM pg_constraint ct
       JOIN pg_class rn ON rn.oid = ct.conrelid
      WHERE connamespace = src_oid
        AND rn.relkind = 'r'
        AND ct.contype = 'f'
-
     LOOP
       cnt := cnt + 1;
       IF ddl_only THEN
