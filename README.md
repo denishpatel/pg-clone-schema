@@ -36,7 +36,7 @@ If you just want to generate the DDL, call it like this:
 >select clone_schema('development', 'development_clone', false, true);
 
 In this case, standard output with "INFO" lines are the generated DDL.
-<br/><br/><br/><br/>
+<br/><br/><br/>
 
 There is a dependency on this function to have these TYPE DEFs created before executing clone_schema:
        
