@@ -34,7 +34,6 @@ DECLARE
   sq_increment_by  bigint;
   sq_min_value     bigint;
   sq_cache_value   bigint;
-  sq_log_cnt       bigint;
   sq_is_called     boolean;
   sq_is_cycled     boolean;
   sq_cycled        char(10);
@@ -185,9 +184,9 @@ BEGIN
     END IF;
     srctbl := quote_ident(source_schema) || '.' || quote_ident(object);
 
-    EXECUTE 'SELECT last_value, log_cnt, is_called
+    EXECUTE 'SELECT last_value, is_called
               FROM ' || quote_ident(source_schema) || '.' || quote_ident(object) || ';'
-              INTO sq_last_value, sq_log_cnt,sq_is_called ;
+              INTO sq_last_value, sq_is_called;
 
     EXECUTE 'SELECT max_value, start_value, increment_by, min_value, cache_size, cycle
               FROM pg_catalog.pg_sequences WHERE schemaname='''|| quote_ident(source_schema) || ''' AND sequencename=''' || quote_ident(object) || ''';'
