@@ -34,9 +34,9 @@ Alternatively, if you want to copy only schema without data:
 If you just want to generate the DDL, call it like this:
 <br/>
 >select clone_schema('development', 'development_clone', false, true);
-<br/>
+
 In this case, standard output with "INFO" lines are the generated DDL.
-<br/><br/>
+<br/><br/><br/><br/>
 
 NOTE: Currently there is a dependency on installing the pg_permissions extension from Cybertec.  Here are instructions for downloading and installing:
 
