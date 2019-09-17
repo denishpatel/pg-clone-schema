@@ -39,7 +39,8 @@ In this case, standard output with "INFO" lines are the generated DDL.
 <br/><br/><br/><br/>
 
 There is a dependency on this function to have these TYPE DEFs created before executing clone_schema:
-       CREATE TYPE perm_type AS ENUM (
+
+CREATE TYPE perm_type AS ENUM (
           'SELECT',
           'INSERT',
           'UPDATE',
