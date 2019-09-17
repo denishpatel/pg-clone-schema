@@ -36,5 +36,16 @@ If you just want to generate the DDL, call it like this:
 >select clone_schema('development', 'development_clone', false, true);
 <br/>
 In this case, standard output with "INFO" lines are the generated DDL.
+<br/><br/>
 
+NOTE: Currently there is a dependency on installing the pg_permissions extension from Cybertec.  Here are instructions for downloading and installing:
 
+       sudo su -
+       git clone https://github.com/cybertec-postgresql/pg_permission.git pg_permission
+       cd pg_permission
+       -- make sure target pg_config is in your path
+       PATH=/usr/lib/postgresql/11/bin/pg_config:$PATH
+       --compile and install
+       make install
+       -- Inside sql session, create the extension:
+       create extension pg_permissions;
