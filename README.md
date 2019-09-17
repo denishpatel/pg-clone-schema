@@ -43,7 +43,7 @@ NOTE: Currently there is a dependency on installing the pg_permissions extension
        sudo su -
        git clone https://github.com/cybertec-postgresql/pg_permission.git pg_permission
        cd pg_permission
-       -- make sure target pg_config is in your path
+       -- make sure target pg_config is in your path. This example uses PG v11 on Ubuntu.
        PATH=/usr/lib/postgresql/11/bin/pg_config:$PATH
        --compile and install
        make install
