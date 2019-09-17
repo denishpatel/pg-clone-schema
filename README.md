@@ -38,14 +38,28 @@ If you just want to generate the DDL, call it like this:
 In this case, standard output with "INFO" lines are the generated DDL.
 <br/><br/><br/><br/>
 
-NOTE: Currently there is a dependency on installing the pg_permissions extension from Cybertec.  Here are instructions for downloading and installing:
+There is a dependency on this function to have these TYPE DEFs created before executing clone_schema:
+       CREATE TYPE perm_type AS ENUM (
+          'SELECT',
+          'INSERT',
+          'UPDATE',
+          'DELETE',
+          'TRUNCATE',
+          'REFERENCES',
+          'TRIGGER',
+          'USAGE',
+          'CREATE',
+          'EXECUTE',
+          'CONNECT',
+          'TEMPORARY'
+       );
 
-       sudo su -
-       git clone https://github.com/cybertec-postgresql/pg_permission.git pg_permission
-       cd pg_permission
-       -- make sure target pg_config is in your path. This example uses PG v11 on Ubuntu.
-       PATH=/usr/lib/postgresql/11/bin/pg_config:$PATH
-       --compile and install
-       make install
-       -- Inside sql session, create the extension:
-       create extension pg_permissions;
+       CREATE TYPE obj_type AS ENUM (
+          'TABLE',
+          'VIEW',
+          'COLUMN',
+          'SEQUENCE',
+          'FUNCTION',
+          'SCHEMA',
+          'DATABASE'
+       );
