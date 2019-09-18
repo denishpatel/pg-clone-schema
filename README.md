@@ -38,29 +38,3 @@ If you just want to generate the DDL, call it like this:
 In this case, standard output with "INFO" lines are the generated DDL.
 <br/><br/><br/>
 
-There is a dependency on this function to have these TYPE DEFs created before executing clone_schema:
-       
-       CREATE TYPE perm_type AS ENUM (
-          'SELECT',
-          'INSERT',
-          'UPDATE',
-          'DELETE',
-          'TRUNCATE',
-          'REFERENCES',
-          'TRIGGER',
-          'USAGE',
-          'CREATE',
-          'EXECUTE',
-          'CONNECT',
-          'TEMPORARY'
-       );
-
-       CREATE TYPE obj_type AS ENUM (
-          'TABLE',
-          'VIEW',
-          'COLUMN',
-          'SEQUENCE',
-          'FUNCTION',
-          'SCHEMA',
-          'DATABASE'
-       );
