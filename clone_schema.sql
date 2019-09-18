@@ -1,3 +1,4 @@
+
 -- Function: clone_schema(text, text, boolean, boolean)
 
 -- DROP FUNCTION clone_schema(text, text, boolean, boolean);
@@ -39,6 +40,7 @@ DECLARE
   sq_cycled        char(10);
   arec             RECORD;
   cnt              integer;
+  cnt2             integer;
   pos              integer;
   action           text := 'N/A';
   v_ret            text;
@@ -49,6 +51,23 @@ DECLARE
   v_diag5          text;
 
 BEGIN
+
+-- Validate required types exist.  If not, create them.
+select a.objtypecnt, b.permtypecnt INTO cnt, cnt2 FROM 
+(SELECT count(*) as objtypecnt FROM pg_catalog.pg_type t LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class c WHERE c.oid = t.typrelid))
+AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_type el WHERE el.oid = t.typelem AND el.typarray = t.oid)
+AND n.nspname <> 'pg_catalog' AND n.nspname <> 'information_schema' AND pg_catalog.pg_type_is_visible(t.oid) AND pg_catalog.format_type(t.oid, NULL) = 'obj_type') a,
+(SELECT count(*) as permtypecnt FROM pg_catalog.pg_type t LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class c WHERE c.oid = t.typrelid))
+AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_type el WHERE el.oid = t.typelem AND el.typarray = t.oid)
+AND n.nspname <> 'pg_catalog' AND n.nspname <> 'information_schema' AND pg_catalog.pg_type_is_visible(t.oid) AND pg_catalog.format_type(t.oid, NULL) = 'perm_type') b;
+IF cnt = 0 THEN
+  CREATE TYPE obj_type AS ENUM ('TABLE','VIEW','COLUMN','SEQUENCE','FUNCTION','SCHEMA','DATABASE');
+END IF;
+IF cnt2 = 0 THEN
+  CREATE TYPE perm_type AS ENUM ('SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER','USAGE','CREATE','EXECUTE','CONNECT','TEMPORARY');
+END IF;
 
 -- Check that source_schema exists
   SELECT oid INTO src_oid
@@ -514,6 +533,10 @@ BEGIN
   RAISE NOTICE '  DFLT PRIVS cloned: %', LPAD(cnt::text, 5, ' ');  
   
   -- MV: PRIVS: schema
+  -- crunchy data extension, check_access
+  -- SELECT role_path, base_role, as_role, objtype, schemaname, objname, array_to_string(array_agg(privname),',') as privs  FROM all_access() 
+  -- WHERE base_role != CURRENT_USER and objtype = 'schema' and schemaname = 'public' group by 1,2,3,4,5,6;
+  
   action := 'PRIVS: Schema';
   cnt := 0;
   FOR arec IN 
