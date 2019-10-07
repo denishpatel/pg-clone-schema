@@ -428,7 +428,7 @@ END IF;
       -- RAISE NOTICE 'type=%  accessprivs=%', arec.atype, arec.accessprivs;
       IF arec.atype = 'function' THEN
         -- Just having execute is enough to grant all apparently.
-        buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || arec.grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ALL ON FUNCTIONS TO ' || arec.grantee || ';';
+        buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || arec.grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ALL ON FUNCTIONS TO "' || arec.grantee || '";';
         -- RAISE NOTICE '%', buffer;
         IF ddl_only THEN
           RAISE INFO '%', buffer;
@@ -439,7 +439,7 @@ END IF;
       ELSIF arec.atype = 'sequence' THEN
         IF POSITION('r' IN arec.defacl) > 0 AND POSITION('w' IN arec.defacl) > 0 AND POSITION('U' IN arec.defacl) > 0 THEN
           -- arU is enough for all privs
-          buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || arec.grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ALL ON SEQUENCES TO ' || arec.grantee || ';';
+          buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || arec.grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ALL ON SEQUENCES TO "' || arec.grantee || '";';
           -- RAISE NOTICE '%', buffer;
           IF ddl_only THEN
             RAISE INFO '%', buffer;
@@ -467,7 +467,7 @@ END IF;
               buffer2 := buffer2 || ', USAGE';
             END IF;
           END IF;
-          buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || arec.grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ' || buffer2 || ' ON SEQUENCES TO ' || arec.grantee || ';';
+          buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || arec.grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ' || buffer2 || ' ON SEQUENCES TO "' || arec.grantee || '";';
           -- RAISE NOTICE '%', buffer;
           IF ddl_only THEN
             RAISE INFO '%', buffer;          
@@ -517,7 +517,7 @@ END IF;
             buffer2 := buffer2 || ', TRUNCATE';
           END IF;
         END IF;                
-        buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || arec.grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ' || buffer2 || ' ON TABLES TO ' || arec.grantee || ';';
+        buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || arec.grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ' || buffer2 || ' ON TABLES TO "' || arec.grantee || '";';
         -- RAISE NOTICE '%', buffer;
         IF ddl_only THEN
           RAISE INFO '%', buffer;                  
@@ -560,7 +560,7 @@ END IF;
   action := 'PRIVS: Sequences';
   cnt := 0;
   FOR arec IN 
-    SELECT 'GRANT ' || p.perm::perm_type || ' ON ' || quote_ident(dest_schema) || '.' || t.relname::text || ' TO ' || r.rolname || ';' as seq_ddl
+    SELECT 'GRANT ' || p.perm::perm_type || ' ON ' || quote_ident(dest_schema) || '.' || t.relname::text || ' TO "' || r.rolname || '";' as seq_ddl
     FROM pg_catalog.pg_class AS t CROSS JOIN pg_catalog.pg_roles AS r CROSS JOIN (VALUES ('SELECT'), ('USAGE'), ('UPDATE')) AS p(perm)
     WHERE t.relnamespace::regnamespace::name = quote_ident(source_schema) AND t.relkind = 'S'  AND NOT r.rolsuper AND has_sequence_privilege(r.oid, t.oid, p.perm)
   LOOP
@@ -580,7 +580,7 @@ END IF;
   action := 'PRIVS: Functions';
   cnt := 0;
   FOR arec IN 
-    SELECT 'GRANT EXECUTE ON FUNCTION ' || quote_ident(dest_schema) || '.' || regexp_replace(f.oid::regprocedure::text, '^((("[^"]*")|([^"][^.]*))\.)?', '') || ' TO ' || r.rolname || ';' as func_ddl
+    SELECT 'GRANT EXECUTE ON FUNCTION ' || quote_ident(dest_schema) || '.' || regexp_replace(f.oid::regprocedure::text, '^((("[^"]*")|([^"][^.]*))\.)?', '') || ' TO "' || r.rolname || '";' as func_ddl
     FROM pg_catalog.pg_proc f CROSS JOIN pg_catalog.pg_roles AS r WHERE f.pronamespace::regnamespace::name = quote_ident(source_schema) AND NOT r.rolsuper AND has_function_privilege(r.oid, f.oid, 'EXECUTE') 
     order by regexp_replace(f.oid::regprocedure::text, '^((("[^"]*")|([^"][^.]*))\.)?', '')
   LOOP
@@ -601,7 +601,7 @@ END IF;
   -- regular, partitioned, and foreign tables plus view and materialized view permissions. TODO: implement foreign table defs.
   cnt := 0;
   FOR arec IN 
-    SELECT 'GRANT ' || p.perm::perm_type || CASE WHEN t.relkind in ('r', 'p', 'f') THEN ' ON TABLE ' WHEN t.relkind in ('v', 'm')  THEN ' ON ' END || quote_ident(dest_schema) || '.' || t.relname::text || ' TO ' || r.rolname || ';' as tbl_ddl, 
+    SELECT 'GRANT ' || p.perm::perm_type || CASE WHEN t.relkind in ('r', 'p', 'f') THEN ' ON TABLE ' WHEN t.relkind in ('v', 'm')  THEN ' ON ' END || quote_ident(dest_schema) || '.' || t.relname::text || ' TO "' || r.rolname || '";' as tbl_ddl, 
     has_table_privilege(r.oid, t.oid, p.perm) AS granted, t.relkind
     FROM pg_catalog.pg_class AS t CROSS JOIN pg_catalog.pg_roles AS r CROSS JOIN (VALUES (TEXT 'SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'), ('TRUNCATE'), ('REFERENCES'), ('TRIGGER')) AS p(perm)
     WHERE t.relnamespace::regnamespace::name = quote_ident(source_schema)  AND t.relkind in ('r', 'p', 'f', 'v', 'm')  AND NOT r.rolsuper AND has_table_privilege(r.oid, t.oid, p.perm) order by t.relname::text, t.relkind
