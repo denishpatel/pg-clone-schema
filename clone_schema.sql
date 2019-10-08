@@ -29,6 +29,10 @@ DECLARE
   dest_qry         text;
   v_def            text;
   src_path_old     text;
+  aclstr           text;
+  grantor          text;
+  grantee          text;
+  privs            text;
   seqval           bigint;
   sq_last_value    bigint;
   sq_max_value     bigint;
@@ -422,121 +426,127 @@ BEGIN
   action := 'PRIVS: Defaults';
   cnt := 0;
   FOR arec IN 
-    SELECT pg_catalog.pg_get_userbyid(d.defaclrole) AS "Owner", n.nspname AS schema, 
+    SELECT pg_catalog.pg_get_userbyid(d.defaclrole) AS "owner", n.nspname AS schema, 
     CASE d.defaclobjtype WHEN 'r' THEN 'table' WHEN 'S' THEN 'sequence' WHEN 'f' THEN 'function' WHEN 'T' THEN 'type' WHEN 'n' THEN 'schema' END AS atype, 
-    pg_catalog.array_to_string(d.defaclacl, E'\n') AS accessprivs, split_part(pg_catalog.array_to_string(d.defaclacl, E'\n'), '=', 1) as grantee, 
-    split_part(pg_catalog.array_to_string(d.defaclacl, E'\n'), '/', 2) as grantor, 
-    split_part(split_part(pg_catalog.array_to_string(d.defaclacl, E'\n'), '/', 1)::text, '=',2) as defacl 
-    FROM pg_catalog.pg_default_acl d LEFT JOIN pg_catalog.pg_namespace n ON (n.oid = d.defaclnamespace) WHERE n.nspname IS NOT NULL and n.nspname = quote_ident(source_schema) ORDER BY 3, 4, 1
-    
+    d.defaclacl as defaclacl, pg_catalog.array_to_string(d.defaclacl, ',') as defaclstr
+    FROM pg_catalog.pg_default_acl d LEFT JOIN pg_catalog.pg_namespace n ON (n.oid = d.defaclnamespace) WHERE n.nspname IS NOT NULL and n.nspname = quote_ident(source_schema) ORDER BY 3, 2, 1
   LOOP
     BEGIN
-      cnt := cnt + 1;
-      -- RAISE NOTICE 'type=%  accessprivs=%', arec.atype, arec.accessprivs;
-      IF arec.atype = 'function' THEN
-        -- Just having execute is enough to grant all apparently.
-        buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || arec.grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ALL ON FUNCTIONS TO "' || arec.grantee || '";';
-        -- RAISE NOTICE '%', buffer;
-        IF ddl_only THEN
-          RAISE INFO '%', buffer;
-        ELSE
-          EXECUTE buffer;
-        END IF;
-        
-      ELSIF arec.atype = 'sequence' THEN
-        IF POSITION('r' IN arec.defacl) > 0 AND POSITION('w' IN arec.defacl) > 0 AND POSITION('U' IN arec.defacl) > 0 THEN
-          -- arU is enough for all privs
-          buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || arec.grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ALL ON SEQUENCES TO "' || arec.grantee || '";';
-          -- RAISE NOTICE '%', buffer;
-          IF ddl_only THEN
-            RAISE INFO '%', buffer;
-          ELSE
-            EXECUTE buffer;
-          END IF;
-          
-        ELSE
-          -- have to specify each priv individually
-          buffer2 := '';
-          IF POSITION('r' IN arec.defacl) > 0 THEN
-            buffer2 := 'SELECT';
-          END IF;
-          IF POSITION('w' IN arec.defacl) > 0 THEN
-            IF buffer2 = '' THEN
-              buffer2 := 'UPDATE';
+      -- RAISE NOTICE 'owner=%  type=%  defaclacl=%  defaclstr=%', arec.owner, arec.atype, arec.defaclacl, arec.defaclstr;
+      
+      FOREACH aclstr IN ARRAY arec.defaclacl
+      LOOP
+          cnt := cnt + 1;
+          -- RAISE NOTICE 'aclstr=%', aclstr;
+          -- break up into grantor, grantee, and privs, mydb_update=rwU/mydb_owner
+          SELECT split_part(aclstr, '=',1) INTO grantee;
+          SELECT split_part(aclstr, '=',2) INTO grantor;
+          SELECT split_part(grantor, '/',1) INTO privs;
+          SELECT split_part(grantor, '/',2) INTO grantor;
+          -- RAISE NOTICE 'grantor=%  grantee=%  privs=%', grantor, grantee, privs;
+
+          IF arec.atype = 'function' THEN
+            -- Just having execute is enough to grant all apparently.
+            buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ALL ON FUNCTIONS TO "' || grantee || '";';
+            IF ddl_only THEN
+              RAISE INFO '%', buffer;
             ELSE
-              buffer2 := buffer2 || ', UPDATE';
+              EXECUTE buffer;
             END IF;
-          END IF;
-          IF POSITION('U' IN arec.defacl) > 0 THEN
-            IF buffer2 = '' THEN
-              buffer2 := 'USAGE';
-            ELSE
-              buffer2 := buffer2 || ', USAGE';
-            END IF;
-          END IF;
-          buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || arec.grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ' || buffer2 || ' ON SEQUENCES TO "' || arec.grantee || '";';
-          -- RAISE NOTICE '%', buffer;
-          IF ddl_only THEN
-            RAISE INFO '%', buffer;          
-          ELSE
-            EXECUTE buffer;          
-          END IF;
-          
-        END IF;
-      ELSIF arec.atype = 'table' THEN        
-        -- do each priv individually, jeeeesh!
-        buffer2 := '';
-        IF POSITION('a' IN arec.defacl) > 0 THEN
-          buffer2 := 'INSERT';
-        END IF;
-        IF POSITION('r' IN arec.defacl) > 0 THEN
-          IF buffer2 = '' THEN
-            buffer2 := 'SELECT';
-          ELSE
-            buffer2 := buffer2 || ', SELECT';
-          END IF;
-        END IF;
-        IF POSITION('w' IN arec.defacl) > 0 THEN
-          IF buffer2 = '' THEN
-            buffer2 := 'UPDATE';
-          ELSE
-            buffer2 := buffer2 || ', UPDATE';
-          END IF;
-        END IF;
-        IF POSITION('d' IN arec.defacl) > 0 THEN
-          IF buffer2 = '' THEN
-            buffer2 := 'DELETE';
-          ELSE
-            buffer2 := buffer2 || ', DELETE';
-          END IF;
-        END IF;        
-        IF POSITION('t' IN arec.defacl) > 0 THEN
-          IF buffer2 = '' THEN
-            buffer2 := 'TRIGGER';
-          ELSE
-            buffer2 := buffer2 || ', TRIGGER';
-          END IF;
-        END IF;        
-        IF POSITION('T' IN arec.defacl) > 0 THEN
-          IF buffer2 = '' THEN
-            buffer2 := 'TRUNCATE';
-          ELSE
-            buffer2 := buffer2 || ', TRUNCATE';
-          END IF;
-        END IF;                
-        buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || arec.grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ' || buffer2 || ' ON TABLES TO "' || arec.grantee || '";';
-        -- RAISE NOTICE '%', buffer;
-        IF ddl_only THEN
-          RAISE INFO '%', buffer;                  
-        ELSE
-          EXECUTE buffer;                  
-        END IF;
         
-      ELSE
-          RAISE WARNING 'Doing nothing for type=%  %', arec.atype, arec.accessprivs;
-      END IF;
-    END;          
+          ELSIF arec.atype = 'sequence' THEN
+            IF POSITION('r' IN privs) > 0 AND POSITION('w' IN privs) > 0 AND POSITION('U' IN privs) > 0 THEN
+              -- arU is enough for all privs
+              buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ALL ON SEQUENCES TO "' || grantee || '";';
+              IF ddl_only THEN
+                RAISE INFO '%', buffer;
+              ELSE
+                EXECUTE buffer;
+              END IF;
+              
+            ELSE
+              -- have to specify each priv individually
+              buffer2 := '';
+              IF POSITION('r' IN privs) > 0 THEN
+                    buffer2 := 'SELECT';
+              END IF;
+              IF POSITION('w' IN privs) > 0 THEN
+                IF buffer2 = '' THEN
+                  buffer2 := 'UPDATE';
+                ELSE
+                  buffer2 := buffer2 || ', UPDATE';
+                END IF;
+              END IF;
+              IF POSITION('U' IN privs) > 0 THEN
+                    IF buffer2 = '' THEN
+                  buffer2 := 'USAGE';
+                ELSE
+                  buffer2 := buffer2 || ', USAGE';
+                END IF;
+              END IF;
+              buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ' || buffer2 || ' ON SEQUENCES TO "' || grantee || '";';
+              IF ddl_only THEN
+                RAISE INFO '%', buffer;          
+              ELSE
+                EXECUTE buffer;          
+              END IF;
+          
+            END IF;
+          ELSIF arec.atype = 'table' THEN        
+            -- do each priv individually, jeeeesh!
+            buffer2 := '';
+            IF POSITION('a' IN privs) > 0 THEN
+              buffer2 := 'INSERT';
+            END IF;
+            IF POSITION('r' IN privs) > 0 THEN
+              IF buffer2 = '' THEN
+                buffer2 := 'SELECT';
+              ELSE
+                buffer2 := buffer2 || ', SELECT';
+              END IF;
+            END IF;
+            IF POSITION('w' IN privs) > 0 THEN
+              IF buffer2 = '' THEN
+                buffer2 := 'UPDATE';
+              ELSE
+                buffer2 := buffer2 || ', UPDATE';
+              END IF;
+            END IF;
+            IF POSITION('d' IN privs) > 0 THEN
+              IF buffer2 = '' THEN
+                buffer2 := 'DELETE';
+              ELSE
+                buffer2 := buffer2 || ', DELETE';
+              END IF;
+            END IF;        
+            IF POSITION('t' IN privs) > 0 THEN
+              IF buffer2 = '' THEN
+                buffer2 := 'TRIGGER';
+              ELSE
+                buffer2 := buffer2 || ', TRIGGER';
+              END IF;
+            END IF;        
+            IF POSITION('T' IN privs) > 0 THEN
+              IF buffer2 = '' THEN
+                buffer2 := 'TRUNCATE';
+              ELSE
+                buffer2 := buffer2 || ', TRUNCATE';
+              END IF;
+            END IF;                
+            buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ' || buffer2 || ' ON TABLES TO "' || grantee || '";';
+            IF ddl_only THEN
+              RAISE INFO '%', buffer;                  
+            ELSE
+              EXECUTE buffer;                  
+            END IF;
+            
+          ELSE
+              RAISE WARNING 'Doing nothing for type=%  privs=%', arec.atype, privs;
+          END IF;
+      END LOOP;
+    END;                
   END LOOP;
+
   RAISE NOTICE '  DFLT PRIVS cloned: %', LPAD(cnt::text, 5, ' ');  
   
   -- MV: PRIVS: schema
