@@ -2,6 +2,7 @@
 -- Sample database
 --
 
+
 -- drop/create clone schema database
 drop database if exists clone_testing;
 create database clone_testing;
