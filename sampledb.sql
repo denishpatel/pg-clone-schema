@@ -923,10 +923,9 @@ GRANT ALL ON TABLE sample.test TO mydb_update;
 --
 -- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: sample; Owner: mydb_owner
 --
-
-ALTER DEFAULT PRIVILEGES FOR ROLE mydb_owner IN SCHEMA sample REVOKE ALL ON SEQUENCES  FROM mydb_owner;
-ALTER DEFAULT PRIVILEGES FOR ROLE mydb_owner IN SCHEMA sample GRANT ALL ON SEQUENCES  TO mydb_update;
-
+ALTER DEFAULT PRIVILEGES FOR ROLE mydb_owner IN SCHEMA sample GRANT ALL ON SEQUENCES TO mydb_owner;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres   IN SCHEMA sample GRANT ALL ON SEQUENCES TO mydb_owner;
+ALTER DEFAULT PRIVILEGES FOR ROLE mydb_owner IN SCHEMA sample GRANT ALL ON SEQUENCES  TO mydb_update;                                                                                                                            
 
 --
 -- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: sample; Owner: mydb_owner
