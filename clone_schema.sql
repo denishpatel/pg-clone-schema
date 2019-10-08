@@ -28,6 +28,7 @@ DECLARE
   qry              text;
   dest_qry         text;
   v_def            text;
+  src_path_old     text;
   seqval           bigint;
   sq_last_value    bigint;
   sq_max_value     bigint;
@@ -49,27 +50,11 @@ DECLARE
   v_diag3          text;
   v_diag4          text;
   v_diag5          text;
+  v_diag6          text;
 
 BEGIN
 
--- Validate required types exist.  If not, create them.
-select a.objtypecnt, b.permtypecnt INTO cnt, cnt2 FROM 
-(SELECT count(*) as objtypecnt FROM pg_catalog.pg_type t LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
-WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class c WHERE c.oid = t.typrelid))
-AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_type el WHERE el.oid = t.typelem AND el.typarray = t.oid)
-AND n.nspname <> 'pg_catalog' AND n.nspname <> 'information_schema' AND pg_catalog.pg_type_is_visible(t.oid) AND pg_catalog.format_type(t.oid, NULL) = 'obj_type') a,
-(SELECT count(*) as permtypecnt FROM pg_catalog.pg_type t LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
-WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class c WHERE c.oid = t.typrelid))
-AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_type el WHERE el.oid = t.typelem AND el.typarray = t.oid)
-AND n.nspname <> 'pg_catalog' AND n.nspname <> 'information_schema' AND pg_catalog.pg_type_is_visible(t.oid) AND pg_catalog.format_type(t.oid, NULL) = 'perm_type') b;
-IF cnt = 0 THEN
-  CREATE TYPE obj_type AS ENUM ('TABLE','VIEW','COLUMN','SEQUENCE','FUNCTION','SCHEMA','DATABASE');
-END IF;
-IF cnt2 = 0 THEN
-  CREATE TYPE perm_type AS ENUM ('SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER','USAGE','CREATE','EXECUTE','CONNECT','TEMPORARY');
-END IF;
-
--- Check that source_schema exists
+  -- Check that source_schema exists
   SELECT oid INTO src_oid
     FROM pg_namespace
    WHERE nspname = quote_ident(source_schema);
@@ -92,7 +77,29 @@ END IF;
     RAISE WARNING 'You cannot specify to clone data and generate ddl at the same time.';
     RETURN ;  
   END IF;
-  
+
+  -- Set the search_path to source schema. Before exiting set it back to what it was before.
+  SELECT setting INTO src_path_old FROM pg_settings WHERE name='search_path';
+  EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
+  -- RAISE NOTICE 'Using source search_path=%', buffer;
+
+  -- Validate required types exist.  If not, create them.
+  select a.objtypecnt, b.permtypecnt INTO cnt, cnt2 FROM 
+  (SELECT count(*) as objtypecnt FROM pg_catalog.pg_type t LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+  WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class c WHERE c.oid = t.typrelid))
+  AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_type el WHERE el.oid = t.typelem AND el.typarray = t.oid)
+  AND n.nspname <> 'pg_catalog' AND n.nspname <> 'information_schema' AND pg_catalog.pg_type_is_visible(t.oid) AND pg_catalog.format_type(t.oid, NULL) = 'obj_type') a,
+  (SELECT count(*) as permtypecnt FROM pg_catalog.pg_type t LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+  WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class c WHERE c.oid = t.typrelid))
+  AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_type el WHERE el.oid = t.typelem AND el.typarray = t.oid)
+  AND n.nspname <> 'pg_catalog' AND n.nspname <> 'information_schema' AND pg_catalog.pg_type_is_visible(t.oid) AND pg_catalog.format_type(t.oid, NULL) = 'perm_type') b;
+  IF cnt = 0 THEN
+    CREATE TYPE obj_type AS ENUM ('TABLE','VIEW','COLUMN','SEQUENCE','FUNCTION','SCHEMA','DATABASE');
+  END IF;
+  IF cnt2 = 0 THEN
+    CREATE TYPE perm_type AS ENUM ('SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER','USAGE','CREATE','EXECUTE','CONNECT','TEMPORARY');
+  END IF;
+
   IF ddl_only THEN
     RAISE NOTICE 'Only generating DDL, not actually creating anything...';
   END IF;
@@ -291,7 +298,7 @@ END IF;
   END LOOP;
   RAISE NOTICE '      TABLES cloned: %', LPAD(cnt::text, 5, ' ');
     
---  add FK constraint
+  --  add FK constraint
   action := 'FK Constraints';
   cnt := 0;
   FOR qry IN
@@ -622,15 +629,21 @@ END IF;
     END;          
   END LOOP;
   RAISE NOTICE ' TABLE PRIVS cloned: %', LPAD(cnt::text, 5, ' '); 
+
+  -- Set the search_path back to what it was before
+  EXECUTE 'SET search_path = ' || src_path_old;
   
-EXCEPTION
-    WHEN others THEN
-    BEGIN
-        GET STACKED DIAGNOSTICS v_diag1 = MESSAGE_TEXT, v_diag2 = PG_EXCEPTION_DETAIL, v_diag3 = PG_EXCEPTION_HINT, v_diag4 = RETURNED_SQLSTATE, v_diag5 = PG_CONTEXT;
-	v_ret := v_diag4 || '. ' || v_diag1 || ' .' || v_diag2 || ' .' || v_diag3 || '  ' || v_diag5;
-        RAISE EXCEPTION 'Action: %  Diagnostics: %',action, v_ret;
-        RETURN;
-    END;  
+  EXCEPTION
+     WHEN others THEN
+     BEGIN
+         GET STACKED DIAGNOSTICS v_diag1 = MESSAGE_TEXT, v_diag2 = PG_EXCEPTION_DETAIL, v_diag3 = PG_EXCEPTION_HINT, v_diag4 = RETURNED_SQLSTATE, v_diag5 = PG_CONTEXT, v_diag6 = PG_EXCEPTION_CONTEXT;
+ 	 -- v_ret := 'line=' || v_diag6 || '. '|| v_diag4 || '. ' || v_diag1 || ' .' || v_diag2 || ' .' || v_diag3;
+ 	 v_ret := 'line=' || v_diag6 || '. '|| v_diag4 || '. ' || v_diag1;
+         RAISE EXCEPTION 'Action: %  Diagnostics: %',action, v_ret;
+         -- Set the search_path back to what it was before
+         EXECUTE 'SET search_path = ' || src_path_old;         
+         RETURN;
+     END;  
   
 RETURN;  
 END;
@@ -639,3 +652,4 @@ $BODY$
   LANGUAGE plpgsql VOLATILE
   COST 100;
 ALTER FUNCTION public.clone_schema(text, text, boolean, boolean) OWNER TO postgres;
+
