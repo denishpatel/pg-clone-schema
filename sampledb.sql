@@ -958,6 +958,259 @@ ALTER DEFAULT PRIVILEGES FOR ROLE mydb_update IN SCHEMA sample GRANT INSERT,DELE
 ALTER DEFAULT PRIVILEGES FOR ROLE mydb_owner IN SCHEMA sample REVOKE ALL ON TABLES  FROM mydb_owner;
 ALTER DEFAULT PRIVILEGES FOR ROLE mydb_owner IN SCHEMA sample GRANT SELECT,INSERT,REFERENCES,DELETE,TRIGGER,UPDATE ON TABLES  TO mydb_update;
 
+-- add some data
+set search_path = 'sample';
+
+COPY person (id, firstname, lastname) FROM stdin;
+1       john    doe
+2       mike    smith
+\.
+
+
+COPY address (id, addr) FROM stdin;
+1       1234 whatever st., Reno, NV
+\.
+
+
+COPY emp (empname, salary, last_date, last_user) FROM stdin;
+Post Gres       100     2019-10-09 07:43:21.579145      postgres
+\.
+
+
+COPY foo (foo_id, foo_name) FROM stdin;
+1       eeny
+2       meeny
+3       miny
+4       moe
+5       tiger
+6       toe
+\.
+
+
+COPY foo_bar_baz_0 (foo_id, bar_id, baz) FROM stdin;
+\.
+                                                                                                                            
+COPY foo_bar_baz_1 (foo_id, bar_id, baz) FROM stdin;
+1       9       1
+1       32      1
+1       44      1
+1       48      1
+1       57      1
+1       61      1
+1       84      1
+1       86      1
+1       110     1
+1       112     1
+1       114     1
+1       115     1
+1       117     1
+1       127     1
+1       131     1
+1       152     1
+1       156     1
+1       161     1
+1       164     1
+1       166     1
+1       170     1
+1       185     1
+1       187     1
+1       194     1
+1       197     1
+1       205     1
+1       217     1
+1       219     1
+1       226     1
+1       238     1
+1       242     1
+1       249     1
+1       253     1
+1       255     1
+1       292     1
+1       305     1
+1       306     1
+1       310     1
+1       318     1
+1       324     1
+1       332     1
+1       347     1
+1       358     1
+1       362     1
+1       377     1
+1       388     1
+\.
+                                                                                                                            
+COPY foo_bar_baz_2 (foo_id, bar_id, baz) FROM stdin;
+2       0       2
+2       1       2
+2       3       2
+2       4       2
+2       7       2
+2       11      2
+2       14      2
+2       16      2
+2       19      2
+2       20      2
+2       22      2
+2       24      2
+2       26      2
+2       27      2
+2       28      2
+2       30      2
+2       36      2
+2       41      2
+2       42      2
+2       46      2
+2       51      2
+2       56      2
+2       66      2
+2       72      2
+2       75      2
+2       77      2
+2       81      2
+2       83      2
+2       87      2
+2       91      2
+2       94      2
+2       96      2
+2       99      2
+2       100     2
+2       101     2
+2       104     2
+2       116     2
+2       118     2
+2       121     2
+2       122     2
+2       125     2
+2       129     2
+2       130     2
+2       138     2
+2       142     2
+2       144     2
+2       145     2
+2       148     2
+2       151     2
+2       154     2
+2       163     2
+2       173     2
+2       174     2
+2       175     2
+2       176     2
+2       181     2
+\.
+                                                                                                                            
+COPY foo_bar_baz_3 (foo_id, bar_id, baz) FROM stdin;
+3       2       3
+3       8       3
+3       17      3
+3       18      3
+3       23      3
+3       25      3
+3       31      3
+3       34      3
+3       35      3
+3       37      3
+3       40      3
+3       43      3
+3       45      3
+3       47      3
+3       50      3
+3       52      3
+3       59      3
+3       65      3
+3       71      3
+3       76      3
+3       79      3
+3       85      3
+3       88      3
+3       97      3
+3       98      3
+3       103     3
+3       126     3
+3       132     3
+3       136     3
+3       139     3
+3       140     3
+3       141     3
+3       143     3
+3       146     3
+3       147     3
+3       150     3
+3       167     3
+3       168     3
+3       169     3
+3       179     3
+3       189     3
+3       196     3
+3       200     3
+3       203     3
+3       204     3
+3       206     3
+3       209     3
+3       210     3
+\.
+
+COPY foo_bar_baz_4 (foo_id, bar_id, baz) FROM stdin;
+4       5       4
+4       10      4
+4       12      4
+4       13      4
+4       15      4
+4       21      4
+4       29      4
+4       33      4
+4       38      4
+4       39      4
+4       49      4
+4       53      4
+4       54      4
+4       55      4
+4       60      4
+4       63      4
+4       64      4
+4       70      4
+4       78      4
+4       80      4
+4       82      4
+4       90      4
+4       93      4
+4       95      4
+4       102     4
+4       105     4
+4       107     4
+4       108     4
+4       109     4
+\.
+
+COPY foo_bar_baz_5 (foo_id, bar_id, baz) FROM stdin;
+5       6       5
+5       58      5
+5       62      5
+5       67      5
+5       68      5
+5       69      5
+5       73      5
+5       74      5
+5       89      5
+5       92      5
+5       106     5
+5       120     5
+5       123     5
+5       133     5
+5       149     5
+5       158     5
+5       160     5
+5       162     5
+5       172     5
+5       184     5
+5       199     5
+5       227     5
+5       228     5
+\.
+                                                                                                                            
 --
 -- End Sample database
 --
+
+                                                                                                                            
+                                                                                                                            
+                                                                                                                            
