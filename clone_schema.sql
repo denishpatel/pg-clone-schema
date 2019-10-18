@@ -305,6 +305,7 @@ BEGIN
   --  add FK constraint
   action := 'FK Constraints';
   cnt := 0;
+  SET search_path = '';
   FOR qry IN
     SELECT 'ALTER TABLE ' || quote_ident(dest_schema) || '.' || quote_ident(rn.relname)
                           || ' ADD CONSTRAINT ' || quote_ident(ct.conname) || ' ' || REPLACE(pg_get_constraintdef(ct.oid), 'REFERENCES ' ||quote_ident(source_schema), 'REFERENCES ' || quote_ident(dest_schema)) || ';'
@@ -322,6 +323,7 @@ BEGIN
       END IF;
     END LOOP;
   RAISE NOTICE '       FKEYS cloned: %', LPAD(cnt::text, 5, ' ');
+  EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
   
 -- Create views
   action := 'Views';
