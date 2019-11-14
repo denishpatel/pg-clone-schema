@@ -219,7 +219,7 @@ BEGIN
               INTO sq_last_value, sq_is_called;
 
     EXECUTE 'SELECT max_value, start_value, increment_by, min_value, cache_size, cycle
-              FROM pg_catalog.pg_sequences WHERE schemaname='''|| quote_ident(source_schema) || ''' AND sequencename=''' || quote_ident(object) || ''';'
+              FROM pg_catalog.pg_sequences WHERE schemaname='|| quote_literal(source_schema) || ' AND sequencename=' || quote_literal(object) || ';'
               INTO sq_max_value, sq_start_value, sq_increment_by, sq_min_value, sq_cache_value, sq_is_cycled ;
 
     IF sq_is_cycled
@@ -407,8 +407,8 @@ BEGIN
   action := 'Triggers';
   cnt := 0;
   FOR arec IN
-    SELECT trigger_schema, trigger_name, event_object_table, action_order, action_condition, action_statement, action_orientation, action_timing, array_to_string(array_agg(event_manipulation), ' OR '),
-    'CREATE TRIGGER ' || trigger_name || ' ' || action_timing || ' ' || array_to_string(array_agg(event_manipulation), ' OR ') || ' ON ' || quote_ident(dest_schema) || '.' || event_object_table ||
+    SELECT trigger_schema, trigger_name, event_object_table, action_order, action_condition, action_statement, action_orientation, action_timing, array_to_string(array_agg(event_manipulation::text), ' OR '),
+    'CREATE TRIGGER ' || trigger_name || ' ' || action_timing || ' ' || array_to_string(array_agg(event_manipulation::text), ' OR ') || ' ON ' || quote_ident(dest_schema) || '.' || event_object_table ||
     ' FOR EACH ' || action_orientation || ' ' || action_statement || ';' as TRIG_DDL
     FROM information_schema.triggers where trigger_schema = quote_ident(source_schema) GROUP BY 1,2,3,4,5,6,7,8
   LOOP
@@ -666,4 +666,3 @@ $BODY$
   LANGUAGE plpgsql VOLATILE
   COST 100;
 ALTER FUNCTION public.clone_schema(text, text, boolean, boolean) OWNER TO postgres;
-
