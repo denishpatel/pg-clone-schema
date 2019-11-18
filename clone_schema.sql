@@ -407,8 +407,8 @@ BEGIN
   action := 'Triggers';
   cnt := 0;
   FOR arec IN
-    SELECT trigger_schema, trigger_name, event_object_table, action_order, action_condition, action_statement, action_orientation, action_timing, array_to_string(array_agg(event_manipulation), ' OR '),
-    'CREATE TRIGGER ' || trigger_name || ' ' || action_timing || ' ' || array_to_string(array_agg(event_manipulation), ' OR ') || ' ON ' || quote_ident(dest_schema) || '.' || event_object_table ||
+    SELECT trigger_schema, trigger_name, event_object_table, action_order, action_condition, action_statement, action_orientation, action_timing, array_to_string(array_agg(event_manipulation::text), ' OR '),
+    'CREATE TRIGGER ' || trigger_name || ' ' || action_timing || ' ' || array_to_string(array_agg(event_manipulation::text), ' OR ') || ' ON ' || quote_ident(dest_schema) || '.' || event_object_table ||
     ' FOR EACH ' || action_orientation || ' ' || action_statement || ';' as TRIG_DDL
     FROM information_schema.triggers where trigger_schema = quote_ident(source_schema) GROUP BY 1,2,3,4,5,6,7,8
   LOOP
