@@ -26,6 +26,8 @@ DECLARE
   default_         text;
   column_          text;
   qry              text;
+  ix_old_name      text;
+  ix_new_name      text;
   dest_qry         text;
   v_def            text;
   src_path_old     text;
@@ -275,6 +277,26 @@ BEGIN
     ELSE
       EXECUTE 'CREATE TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(object) || ' INCLUDING ALL)';
     END IF;
+
+    -- INCLUDING ALL creates new index names, we restore them to the old name.
+    -- There should be no conflicts since they live in different schemas
+    FOR ix_old_name, ix_new_name IN
+      SELECT old.indexname, new.indexname
+      FROM pg_indexes old, pg_indexes new
+      WHERE old.schemaname = source_schema
+        AND new.schemaname = dest_schema
+        AND old.tablename = new.tablename
+        AND old.tablename = object
+        AND old.indexname <> new.indexname
+        AND regexp_replace(old.indexdef, E'.*USING','') = regexp_replace(new.indexdef, E'.*USING','')
+        ORDER BY old.indexname, new.indexname
+    LOOP
+      IF ddl_only THEN
+        RAISE INFO '%', 'ALTER INDEX ' || quote_ident(dest_schema) || '.'  || quote_ident(ix_new_name) || ' RENAME TO ' || quote_ident(ix_old_name) || ';';
+      ELSE
+        EXECUTE 'ALTER INDEX ' || quote_ident(dest_schema) || '.'  || quote_ident(ix_new_name) || ' RENAME TO ' || quote_ident(ix_old_name) || ';';
+      END IF;
+    END LOOP;
 
     IF include_recs
       THEN
