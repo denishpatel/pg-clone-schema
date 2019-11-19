@@ -222,7 +222,7 @@ BEGIN
               INTO sq_last_value, sq_is_called;
 
     EXECUTE 'SELECT max_value, start_value, increment_by, min_value, cache_size, cycle, data_type
-              FROM pg_catalog.pg_sequences WHERE schemaname='''|| quote_ident(source_schema) || ''' AND sequencename=''' || quote_ident(object) || ''';'
+              FROM pg_catalog.pg_sequences WHERE schemaname='|| quote_literal(source_schema) || ' AND sequencename=' || quote_literal(object) || ';'
               INTO sq_max_value, sq_start_value, sq_increment_by, sq_min_value, sq_cache_value, sq_is_cycled, sq_data_type ;
 
     IF sq_is_cycled
@@ -690,4 +690,3 @@ $BODY$
   LANGUAGE plpgsql VOLATILE
   COST 100;
 ALTER FUNCTION public.clone_schema(text, text, boolean, boolean) OWNER TO postgres;
-
