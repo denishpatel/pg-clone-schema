@@ -273,7 +273,7 @@ BEGIN
 
   LOOP
     cnt := cnt + 1;
-    buffer := dest_schema || '.' || quote_ident(object);
+    buffer := quote_ident(dest_schema) || '.' || quote_ident(object);
     IF ddl_only THEN
       RAISE INFO '%', 'CREATE TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(object) || ' INCLUDING ALL)';
     ELSE
@@ -362,7 +362,7 @@ BEGIN
 
   LOOP
     cnt := cnt + 1;
-    buffer := dest_schema || '.' || quote_ident(object);
+    buffer := quote_ident(dest_schema) || '.' || quote_ident(object);
     SELECT view_definition INTO v_def
       FROM information_schema.views
      WHERE table_schema = quote_ident(source_schema)
