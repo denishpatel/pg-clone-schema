@@ -44,6 +44,7 @@ DECLARE
   sq_cache_value   bigint;
   sq_is_called     boolean;
   sq_is_cycled     boolean;
+  sq_data_type     text;
   sq_cycled        char(10);
   arec             RECORD;
   cnt              integer;
@@ -220,9 +221,9 @@ BEGIN
               FROM ' || quote_ident(source_schema) || '.' || quote_ident(object) || ';'
               INTO sq_last_value, sq_is_called;
 
-    EXECUTE 'SELECT max_value, start_value, increment_by, min_value, cache_size, cycle
+    EXECUTE 'SELECT max_value, start_value, increment_by, min_value, cache_size, cycle, data_type
               FROM pg_catalog.pg_sequences WHERE schemaname='''|| quote_ident(source_schema) || ''' AND sequencename=''' || quote_ident(object) || ''';'
-              INTO sq_max_value, sq_start_value, sq_increment_by, sq_min_value, sq_cache_value, sq_is_cycled ;
+              INTO sq_max_value, sq_start_value, sq_increment_by, sq_min_value, sq_cache_value, sq_is_cycled, sq_data_type ;
 
     IF sq_is_cycled
       THEN
@@ -232,6 +233,7 @@ BEGIN
     END IF;
 
     qry := 'ALTER SEQUENCE '   || quote_ident(dest_schema) || '.' || quote_ident(object)
+           || ' AS ' || sq_data_type
            || ' INCREMENT BY ' || sq_increment_by
            || ' MINVALUE '     || sq_min_value
            || ' MAXVALUE '     || sq_max_value
