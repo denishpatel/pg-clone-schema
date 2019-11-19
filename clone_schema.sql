@@ -26,6 +26,8 @@ DECLARE
   default_         text;
   column_          text;
   qry              text;
+  ix_old_name      text;
+  ix_new_name      text;
   dest_qry         text;
   v_def            text;
   src_path_old     text;
@@ -42,6 +44,7 @@ DECLARE
   sq_cache_value   bigint;
   sq_is_called     boolean;
   sq_is_cycled     boolean;
+  sq_data_type     text;
   sq_cycled        char(10);
   arec             RECORD;
   cnt              integer;
@@ -218,9 +221,9 @@ BEGIN
               FROM ' || quote_ident(source_schema) || '.' || quote_ident(object) || ';'
               INTO sq_last_value, sq_is_called;
 
-    EXECUTE 'SELECT max_value, start_value, increment_by, min_value, cache_size, cycle
+    EXECUTE 'SELECT max_value, start_value, increment_by, min_value, cache_size, cycle, data_type
               FROM pg_catalog.pg_sequences WHERE schemaname='|| quote_literal(source_schema) || ' AND sequencename=' || quote_literal(object) || ';'
-              INTO sq_max_value, sq_start_value, sq_increment_by, sq_min_value, sq_cache_value, sq_is_cycled ;
+              INTO sq_max_value, sq_start_value, sq_increment_by, sq_min_value, sq_cache_value, sq_is_cycled, sq_data_type ;
 
     IF sq_is_cycled
       THEN
@@ -230,6 +233,7 @@ BEGIN
     END IF;
 
     qry := 'ALTER SEQUENCE '   || quote_ident(dest_schema) || '.' || quote_ident(object)
+           || ' AS ' || sq_data_type
            || ' INCREMENT BY ' || sq_increment_by
            || ' MINVALUE '     || sq_min_value
            || ' MAXVALUE '     || sq_max_value
@@ -269,12 +273,32 @@ BEGIN
 
   LOOP
     cnt := cnt + 1;
-    buffer := dest_schema || '.' || quote_ident(object);
+    buffer := quote_ident(dest_schema) || '.' || quote_ident(object);
     IF ddl_only THEN
       RAISE INFO '%', 'CREATE TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(object) || ' INCLUDING ALL)';
     ELSE
       EXECUTE 'CREATE TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(object) || ' INCLUDING ALL)';
     END IF;
+
+    -- INCLUDING ALL creates new index names, we restore them to the old name.
+    -- There should be no conflicts since they live in different schemas
+    FOR ix_old_name, ix_new_name IN
+      SELECT old.indexname, new.indexname
+      FROM pg_indexes old, pg_indexes new
+      WHERE old.schemaname = source_schema
+        AND new.schemaname = dest_schema
+        AND old.tablename = new.tablename
+        AND old.tablename = object
+        AND old.indexname <> new.indexname
+        AND regexp_replace(old.indexdef, E'.*USING','') = regexp_replace(new.indexdef, E'.*USING','')
+        ORDER BY old.indexname, new.indexname
+    LOOP
+      IF ddl_only THEN
+        RAISE INFO '%', 'ALTER INDEX ' || quote_ident(dest_schema) || '.'  || quote_ident(ix_new_name) || ' RENAME TO ' || quote_ident(ix_old_name) || ';';
+      ELSE
+        EXECUTE 'ALTER INDEX ' || quote_ident(dest_schema) || '.'  || quote_ident(ix_new_name) || ' RENAME TO ' || quote_ident(ix_old_name) || ';';
+      END IF;
+    END LOOP;
 
     IF include_recs
       THEN
@@ -338,7 +362,7 @@ BEGIN
 
   LOOP
     cnt := cnt + 1;
-    buffer := dest_schema || '.' || quote_ident(object);
+    buffer := quote_ident(dest_schema) || '.' || quote_ident(object);
     SELECT view_definition INTO v_def
       FROM information_schema.views
      WHERE table_schema = quote_ident(source_schema)
