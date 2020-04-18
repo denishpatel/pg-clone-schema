@@ -37,7 +37,7 @@ If you just want to generate the DDL, call it like this:
 
 In this case, standard output with "INFO" lines are the generated DDL.
 <br/><br/><br/>
-schema_object_counts file is useful for validating the cloning results.
+**schema_object_counts** file is useful for validating the cloning results.
 <br/><br/><br/>
 
 
