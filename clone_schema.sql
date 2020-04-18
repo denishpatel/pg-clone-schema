@@ -1,4 +1,4 @@
-
+-- 2020-04-18: added indexes and comments for materialized views per issue #24
 -- Function: clone_schema(text, text, boolean, boolean)
 
 -- DROP FUNCTION clone_schema(text, text, boolean, boolean);
@@ -28,6 +28,8 @@ DECLARE
   qry              text;
   ix_old_name      text;
   ix_new_name      text;
+  aname            text;
+  adef             text;
   dest_qry         text;
   v_def            text;
   src_path_old     text;
@@ -407,6 +409,26 @@ BEGIN
     END LOOP;
     RAISE NOTICE '   MAT VIEWS cloned: %', LPAD(cnt::text, 5, ' ');
 
+    -- INCLUDING ALL creates new index names, we restore them to the old name.
+    -- There should be no conflicts since they live in different schemas
+    FOR aname, adef IN
+      SELECT indexname, replace(indexdef, quote_ident(source_schema), quote_ident(dest_schema)) as newdef FROM pg_indexes where schemaname = quote_ident(source_schema) and tablename = object order by indexname
+    LOOP
+      IF ddl_only THEN
+        RAISE INFO '%', adef || ';';
+      ELSE
+        EXECUTE adef || ';';
+      END IF;
+    END LOOP;
+
+    select obj_description(oid) into adef from pg_class where relkind = 'm' and relname = object;
+    IF ddl_only THEN
+      RAISE INFO '%', 'COMMENT ON MATERIALIZED VIEW ' || quote_ident(dest_schema) || '.' || object || ' IS ''' || adef || ''';';
+    ELSE
+	  EXECUTE 'COMMENT ON MATERIALIZED VIEW ' || quote_ident(dest_schema) || '.' || object || ' IS ''' || adef || ''';';
+    END IF;	 
+
+
 -- Create functions
   action := 'Functions';
   cnt := 0;
@@ -675,8 +697,8 @@ BEGIN
      WHEN others THEN
      BEGIN
          GET STACKED DIAGNOSTICS v_diag1 = MESSAGE_TEXT, v_diag2 = PG_EXCEPTION_DETAIL, v_diag3 = PG_EXCEPTION_HINT, v_diag4 = RETURNED_SQLSTATE, v_diag5 = PG_CONTEXT, v_diag6 = PG_EXCEPTION_CONTEXT;
- 	 -- v_ret := 'line=' || v_diag6 || '. '|| v_diag4 || '. ' || v_diag1 || ' .' || v_diag2 || ' .' || v_diag3;
- 	 v_ret := 'line=' || v_diag6 || '. '|| v_diag4 || '. ' || v_diag1;
+         -- v_ret := 'line=' || v_diag6 || '. '|| v_diag4 || '. ' || v_diag1 || ' .' || v_diag2 || ' .' || v_diag3;
+         v_ret := 'line=' || v_diag6 || '. '|| v_diag4 || '. ' || v_diag1;
          RAISE EXCEPTION 'Action: %  Diagnostics: %',action, v_ret;
          -- Set the search_path back to what it was before
          EXECUTE 'SET search_path = ' || src_path_old;
@@ -690,3 +712,4 @@ $BODY$
   LANGUAGE plpgsql VOLATILE
   COST 100;
 ALTER FUNCTION public.clone_schema(text, text, boolean, boolean) OWNER TO postgres;
+
