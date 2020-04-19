@@ -13,7 +13,6 @@ Handles following objects:
 * Permissions/GRANTs
 
 <br/>
-<br/>
 
 Arguments:
 * source schema
