@@ -40,6 +40,8 @@ In this case, standard output with "INFO" lines are the generated DDL.
 The **schema_object_counts.sql** file is useful for validating the cloning results.
 <br/><br/><br/>
 
+# Limitations
+* Foreign Tables are not handled at the present time.  They must be done manually.
 
 Sponsor:
  http://elephas.io/
