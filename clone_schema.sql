@@ -1,4 +1,5 @@
 -- 2020-04-18: added indexes and comments for materialized views per issue #24
+-- 2020-04-19: fixed table cloning where partitioned tables and unlogged tables were created as regular tables per issue #28
 -- Function: clone_schema(text, text, boolean, boolean)
 
 -- DROP FUNCTION clone_schema(text, text, boolean, boolean);
@@ -29,9 +30,13 @@ DECLARE
   ix_old_name      text;
   ix_new_name      text;
   aname            text;
+  relpersist       text;
+  relispart        text;
+  relknd           text;
   adef             text;
   dest_qry         text;
   v_def            text;
+  part_range       text;
   src_path_old     text;
   aclstr           text;
   grantor          text;
@@ -264,22 +269,64 @@ BEGIN
   END LOOP;
   RAISE NOTICE '   SEQUENCES cloned: %', LPAD(cnt::text, 5, ' ');
 
--- Create tables
+-- Create tables including partitioned ones (parent/children) and unlogged ones.  Order by is critical since child partition range logic is dependent on it.
   action := 'Tables';
   cnt := 0;
-  FOR object IN
-    SELECT TABLE_NAME::text
-      FROM information_schema.tables
-     WHERE table_schema = quote_ident(source_schema)
-       AND table_type = 'BASE TABLE'
-
+  FOR object, relpersist, relispart, relknd  IN
+    select c.relname, c.relpersistence, c.relispartition, c.relkind
+    FROM pg_class c join pg_namespace n on (n.oid = c.relnamespace) 
+    WHERE n.nspname = quote_ident(source_schema) and c.relkind in ('r','p') order by c.relkind desc, c.relname
   LOOP
     cnt := cnt + 1;
     buffer := quote_ident(dest_schema) || '.' || quote_ident(object);
-    IF ddl_only THEN
-      RAISE INFO '%', 'CREATE TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(object) || ' INCLUDING ALL)';
-    ELSE
-      EXECUTE 'CREATE TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(object) || ' INCLUDING ALL)';
+    buffer2 := '';
+    IF relpersist = 'u' THEN
+      buffer2 := 'UNLOGGED ';
+    END IF;
+    
+    IF relknd = 'r' THEN
+      IF ddl_only THEN
+        RAISE INFO '%', 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(object) || ' INCLUDING ALL)';
+      ELSE
+        EXECUTE 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(object) || ' INCLUDING ALL)';
+      END IF;
+    ELSIF relknd = 'p' THEN
+      -- define parent table and assume child tables have already been created based on top level sort order.
+      SELECT 'CREATE TABLE ' || quote_ident(dest_schema) || '.' || pc.relname || E'(\n' || string_agg(pa.attname || ' ' || pg_catalog.format_type(pa.atttypid, pa.atttypmod) || 
+      coalesce(' DEFAULT ' || (SELECT pg_catalog.pg_get_expr(d.adbin, d.adrelid) FROM pg_catalog.pg_attrdef d  
+      WHERE d.adrelid = pa.attrelid AND d.adnum = pa.attnum AND pa.atthasdef), '') || ' ' || CASE pa.attnotnull WHEN TRUE THEN 'NOT NULL' ELSE 'NULL' END, E',\n') || 
+      coalesce((SELECT E',\n' || string_agg('CONSTRAINT ' || pc1.conname || ' ' || pg_get_constraintdef(pc1.oid), E',\n' ORDER BY pc1.conindid) 
+      FROM pg_constraint pc1 WHERE pc1.conrelid = pa.attrelid), '') into buffer FROM pg_catalog.pg_attribute pa JOIN pg_catalog.pg_class pc ON pc.oid = pa.attrelid AND 
+      pc.relname = quote_ident(object) JOIN pg_catalog.pg_namespace pn ON pn.oid = pc.relnamespace AND pn.nspname = quote_ident(source_schema) 
+      WHERE pa.attnum > 0 AND NOT pa.attisdropped GROUP BY pn.nspname, pc.relname, pa.attrelid;
+      
+      -- append partition keyword to it
+      SELECT pg_catalog.pg_get_partkeydef(c.oid::pg_catalog.oid) into buffer2 FROM pg_catalog.pg_class c  LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace 
+      WHERE c.relname = quote_ident(object) COLLATE pg_catalog.default AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default;
+  
+      -- RAISE NOTICE ' buffer = %   buffer2 = %',buffer, buffer2;
+      qry := buffer || ') PARTITION BY ' || buffer2 || ';';
+      IF ddl_only THEN
+        RAISE INFO '%', qry;
+      ELSE
+        EXECUTE qry;
+      END IF;
+
+      -- loop for child tables and alter them to attach to parent for specific partition method.
+      FOR aname, part_range, object IN
+        SELECT quote_ident(dest_schema) || '.' || c1.relname as tablename, pg_catalog.pg_get_expr(c1.relpartbound, c1.oid) as partrange, quote_ident(dest_schema) || '.' || c2.relname as object
+        FROM pg_catalog.pg_class c1, pg_namespace n, pg_catalog.pg_inherits i, pg_class c2 WHERE n.nspname = 'sample' AND c1.relnamespace = n.oid AND c1.relkind = 'r' AND 
+        c1.relispartition AND c1.oid=i.inhrelid AND i.inhparent = c2.oid AND c2.relnamespace = n.oid ORDER BY pg_catalog.pg_get_expr(c1.relpartbound, c1.oid) = 'DEFAULT', c1.oid::pg_catalog.regclass::pg_catalog.text  
+      LOOP
+        qry := 'ALTER TABLE ONLY ' || object || ' ATTACH PARTITION ' || aname || ' ' || part_range || ';';
+        RAISE NOTICE ' qry = %', qry;
+        IF ddl_only THEN
+          RAISE INFO '%', qry;
+        ELSE
+          EXECUTE qry;
+        END IF;
+        
+      END LOOP;    
     END IF;
 
     -- INCLUDING ALL creates new index names, we restore them to the old name.
