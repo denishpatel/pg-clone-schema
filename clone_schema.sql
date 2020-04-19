@@ -432,6 +432,7 @@ BEGIN
 -- Create functions
   action := 'Functions';
   cnt := 0;
+  SET search_path = '';
   FOR func_oid IN
     SELECT oid
       FROM pg_proc
@@ -447,6 +448,7 @@ BEGIN
     END IF;
 
   END LOOP;
+  EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
   RAISE NOTICE '   FUNCTIONS cloned: %', LPAD(cnt::text, 5, ' ');
 
   -- MV: Create Triggers
@@ -646,8 +648,9 @@ BEGIN
   -- MV: PRIVS: functions
   action := 'PRIVS: Functions';
   cnt := 0;
+  EXECUTE 'SET search_path = ' || quote_ident(dest_schema) ;
   FOR arec IN
-    SELECT 'GRANT EXECUTE ON FUNCTION ' || quote_ident(dest_schema) || '.' || regexp_replace(f.oid::regprocedure::text, '^((("[^"]*")|([^"][^.]*))\.)?', '') || ' TO "' || r.rolname || '";' as func_ddl
+    SELECT 'GRANT EXECUTE ON FUNCTION ' || quote_ident(dest_schema) || '.' || replace(regexp_replace(f.oid::regprocedure::text, '^((("[^"]*")|([^"][^.]*))\.)?', ''), source_schema, dest_schema) || ' TO "' || r.rolname || '";' as func_ddl 
     FROM pg_catalog.pg_proc f CROSS JOIN pg_catalog.pg_roles AS r WHERE f.pronamespace::regnamespace::name = quote_ident(source_schema) AND NOT r.rolsuper AND has_function_privilege(r.oid, f.oid, 'EXECUTE')
     order by regexp_replace(f.oid::regprocedure::text, '^((("[^"]*")|([^"][^.]*))\.)?', '')
   LOOP
@@ -661,6 +664,7 @@ BEGIN
 
     END;
   END LOOP;
+  EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
   RAISE NOTICE '  FUNC PRIVS cloned: %', LPAD(cnt::text, 5, ' ');
 
   -- MV: PRIVS: tables
