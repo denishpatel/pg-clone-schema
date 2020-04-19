@@ -38,10 +38,11 @@ If you just want to generate the DDL, call it like this:
 In this case, standard output with "INFO" lines are the generated DDL.
 <br/><br/><br/>
 The **schema_object_counts.sql** file is useful for validating the cloning results.
-<br/><br/><br/>
+<br/><br/>
 
 # Limitations
 * Foreign Tables are not handled at the present time.  They must be done manually.
-
+<br/>
+<br/>
 Sponsor:
  http://elephas.io/
