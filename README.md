@@ -36,7 +36,7 @@ If you just want to generate the DDL, call it like this:
 
 In this case, standard output with "INFO" lines are the generated DDL.
 <br/><br/><br/>
-The **schema_object_counts.sql** file is useful for validating the cloning results.
+The **schema_object_counts.sql** file is useful for validating the cloning results.  Just run it against source and target schemas to validate object counts after changing default schema name, **sample**.
 <br/><br/>
 
 # Limitations
