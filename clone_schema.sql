@@ -1,4 +1,4 @@
--- Function: clone_schema(text, text, boolean, boolean)
+-- Function: clone_schema(text, text, boolean, boolean) 
 
 -- DROP FUNCTION clone_schema(text, text, boolean, boolean);
 
