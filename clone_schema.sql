@@ -1,5 +1,3 @@
--- 2020-04-18: added indexes and comments for materialized views per issue #24
--- 2020-04-19: fixed table cloning where partitioned tables and unlogged tables were created as regular tables per issue #28
 -- Function: clone_schema(text, text, boolean, boolean)
 
 -- DROP FUNCTION clone_schema(text, text, boolean, boolean);
@@ -322,7 +320,6 @@ BEGIN
         c1.relispartition AND c1.oid=i.inhrelid AND i.inhparent = c2.oid AND c2.relnamespace = n.oid ORDER BY pg_catalog.pg_get_expr(c1.relpartbound, c1.oid) = 'DEFAULT', c1.oid::pg_catalog.regclass::pg_catalog.text  
       LOOP
         qry := 'ALTER TABLE ONLY ' || object || ' ATTACH PARTITION ' || aname || ' ' || part_range || ';';
-        RAISE NOTICE ' qry = %', qry;
         IF ddl_only THEN
           RAISE INFO '%', qry;
         ELSE
@@ -431,34 +428,29 @@ BEGIN
   -- Create Materialized views
     action := 'Mat. Views';
     cnt := 0;
-    FOR object IN
-      SELECT matviewname::text, definition FROM pg_catalog.pg_matviews WHERE schemaname = quote_ident(source_schema)
+    -- RAISE INFO 'mat views start1';
+    FOR object, v_def IN
+      SELECT matviewname::text, replace(definition,';','') FROM pg_catalog.pg_matviews WHERE schemaname = quote_ident(source_schema)
     LOOP
       cnt := cnt + 1;
-	  -- RAISE INFO 'mat views start2';
       buffer := dest_schema || '.' || quote_ident(object);
-      SELECT replace(definition,';','') INTO v_def
-        FROM pg_catalog.pg_matviews
-       WHERE schemaname = quote_ident(source_schema)
-         AND matviewname = quote_ident(object);
-
-         IF include_recs THEN
-           EXECUTE 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || v_def || ';' ;
-         ELSE
-           IF ddl_only THEN
-             RAISE INFO '%', 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || v_def || ' WITH NO DATA;' ;
-           ELSE
-             EXECUTE 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || v_def || ' WITH NO DATA;' ;
-           END IF;
-
-         END IF;
-		 
-      SELECT obj_description(oid) into adef from pg_class where relkind = 'm' and relname = object;
-      IF ddl_only THEN
-        RAISE INFO '%', 'COMMENT ON MATERIALIZED VIEW ' || quote_ident(dest_schema) || '.' || object || ' IS ''' || adef || ''';';
+      IF include_recs THEN
+        EXECUTE 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || v_def || ' WITH DATA;' ;
       ELSE
-	    EXECUTE 'COMMENT ON MATERIALIZED VIEW ' || quote_ident(dest_schema) || '.' || object || ' IS ''' || adef || ''';';
-      END IF;	 		 
+        IF ddl_only THEN
+          RAISE INFO '%', 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || v_def || ' WITH NO DATA;' ;
+        ELSE
+          EXECUTE 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || v_def || ' WITH NO DATA;' ;
+        END IF;
+      END IF;
+      SELECT coalesce(obj_description(oid), '') into adef from pg_class where relkind = 'm' and relname = object;
+      IF adef <> '' THEN
+        IF ddl_only THEN
+          RAISE INFO '%', 'COMMENT ON MATERIALIZED VIEW ' || quote_ident(dest_schema) || '.' || object || ' IS ''' || adef || ''';';
+        ELSE
+          EXECUTE 'COMMENT ON MATERIALIZED VIEW ' || quote_ident(dest_schema) || '.' || object || ' IS ''' || adef || ''';';
+        END IF;	 		 
+      END IF;
 
       FOR aname, adef IN
         SELECT indexname, replace(indexdef, quote_ident(source_schema), quote_ident(dest_schema)) as newdef FROM pg_indexes where schemaname = quote_ident(source_schema) and tablename = object order by indexname
