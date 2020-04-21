@@ -68,6 +68,9 @@ DECLARE
 
 BEGIN
 
+  -- Make sure NOTICE are shown
+  set client_min_messages = 'notice';
+  
   -- Check that source_schema exists
   SELECT oid INTO src_oid
     FROM pg_namespace
@@ -130,7 +133,7 @@ BEGIN
   FOR arec IN
     SELECT n.nspname as schemaname, a.rolname as ownername , c.collname, c.collprovider,  c.collcollate as locale,
     'CREATE COLLATION ' || quote_ident(dest_schema) || '."' || c.collname || '" (provider = ' || CASE WHEN c.collprovider = 'i' THEN 'icu' WHEN c.collprovider = 'c' THEN 'libc' ELSE '' END || ', locale = ''' || c.collcollate || ''');' as COLL_DDL
-    FROM pg_collation c JOIN pg_namespace n ON (c.collnamespace = n.oid) JOIN pg_authid a ON (c.collowner = a.oid) WHERE n.nspname = quote_ident(source_schema) order by c.collname
+    FROM pg_collation c JOIN pg_namespace n ON (c.collnamespace = n.oid) JOIN pg_roles a ON (c.collowner = a.oid) WHERE n.nspname = quote_ident(source_schema) order by c.collname
   LOOP
     BEGIN
       cnt := cnt + 1;
@@ -429,13 +432,10 @@ BEGIN
     action := 'Mat. Views';
     cnt := 0;
     FOR object IN
-      SELECT matviewname::text,
-             definition
-        FROM pg_catalog.pg_matviews
-       WHERE schemaname = quote_ident(source_schema)
-
+      SELECT matviewname::text, definition FROM pg_catalog.pg_matviews WHERE schemaname = quote_ident(source_schema)
     LOOP
       cnt := cnt + 1;
+	  -- RAISE INFO 'mat views start2';
       buffer := dest_schema || '.' || quote_ident(object);
       SELECT replace(definition,';','') INTO v_def
         FROM pg_catalog.pg_matviews
@@ -452,28 +452,26 @@ BEGIN
            END IF;
 
          END IF;
+		 
+      SELECT obj_description(oid) into adef from pg_class where relkind = 'm' and relname = object;
+      IF ddl_only THEN
+        RAISE INFO '%', 'COMMENT ON MATERIALIZED VIEW ' || quote_ident(dest_schema) || '.' || object || ' IS ''' || adef || ''';';
+      ELSE
+	    EXECUTE 'COMMENT ON MATERIALIZED VIEW ' || quote_ident(dest_schema) || '.' || object || ' IS ''' || adef || ''';';
+      END IF;	 		 
+
+      FOR aname, adef IN
+        SELECT indexname, replace(indexdef, quote_ident(source_schema), quote_ident(dest_schema)) as newdef FROM pg_indexes where schemaname = quote_ident(source_schema) and tablename = object order by indexname
+      LOOP
+        IF ddl_only THEN
+          RAISE INFO '%', adef || ';';
+        ELSE
+          EXECUTE adef || ';';
+        END IF;
+      END LOOP;
 
     END LOOP;
     RAISE NOTICE '   MAT VIEWS cloned: %', LPAD(cnt::text, 5, ' ');
-
-    -- INCLUDING ALL creates new index names, we restore them to the old name.
-    -- There should be no conflicts since they live in different schemas
-    FOR aname, adef IN
-      SELECT indexname, replace(indexdef, quote_ident(source_schema), quote_ident(dest_schema)) as newdef FROM pg_indexes where schemaname = quote_ident(source_schema) and tablename = object order by indexname
-    LOOP
-      IF ddl_only THEN
-        RAISE INFO '%', adef || ';';
-      ELSE
-        EXECUTE adef || ';';
-      END IF;
-    END LOOP;
-
-    select obj_description(oid) into adef from pg_class where relkind = 'm' and relname = object;
-    IF ddl_only THEN
-      RAISE INFO '%', 'COMMENT ON MATERIALIZED VIEW ' || quote_ident(dest_schema) || '.' || object || ' IS ''' || adef || ''';';
-    ELSE
-	  EXECUTE 'COMMENT ON MATERIALIZED VIEW ' || quote_ident(dest_schema) || '.' || object || ' IS ''' || adef || ''';';
-    END IF;	 
 
 
 -- Create functions
@@ -589,8 +587,8 @@ BEGIN
               ELSE
                 EXECUTE buffer;
               END IF;
-
             END IF;
+			
           ELSIF arec.atype = 'table' THEN
             -- do each priv individually, jeeeesh!
             buffer2 := '';
@@ -639,8 +637,28 @@ BEGIN
               EXECUTE buffer;
             END IF;
 
+          ELSIF arec.atype = 'type' THEN
+            IF POSITION('r' IN privs) > 0 AND POSITION('w' IN privs) > 0 AND POSITION('U' IN privs) > 0 THEN
+              -- arU is enough for all privs
+              buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ALL ON TYPES TO "' || grantee || '";';
+              IF ddl_only THEN
+                RAISE INFO '%', buffer;
+              ELSE
+                EXECUTE buffer;
+              END IF;
+			ELSIF POSITION('U' IN privs) THEN
+              buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT USAGE ON TYPES TO "' || grantee || '";';
+              IF ddl_only THEN
+                RAISE INFO '%', buffer;
+              ELSE
+                EXECUTE buffer;
+              END IF;			
+			ELSE  
+              RAISE WARNING 'Unhandled TYPE Privs:: type=%  privs=%  owner=%   defaclacl=%  defaclstr=%  grantor=%  grantee=% ', arec.atype, privs, arec.owner, arec.defaclacl, arec.defaclstr, grantor, grantee;
+            END IF;
+
           ELSE
-              RAISE WARNING 'Doing nothing for type=%  privs=%', arec.atype, privs;
+		      RAISE WARNING 'Unhandled Privs:: type=%  privs=%  owner=%   defaclacl=%  defaclstr=%  grantor=%  grantee=% ', arec.atype, privs, arec.owner, arec.defaclacl, arec.defaclstr, grantor, grantee;
           END IF;
       END LOOP;
     END;
@@ -760,7 +778,5 @@ RETURN;
 END;
 
 $BODY$
-  LANGUAGE plpgsql VOLATILE
-  COST 100;
-ALTER FUNCTION public.clone_schema(text, text, boolean, boolean) OWNER TO postgres;
-
+  LANGUAGE plpgsql VOLATILE  COST 100;
+-- ALTER FUNCTION public.clone_schema(text, text, boolean, boolean) OWNER TO postgres;
