@@ -21,6 +21,7 @@ DECLARE
   object           text;
   buffer           text;
   buffer2          text;
+  buffer3          text;  
   srctbl           text;
   default_         text;
   column_          text;
@@ -353,7 +354,15 @@ BEGIN
       THEN
       -- Insert records from source table
       RAISE NOTICE 'Populating cloned table, %', buffer;
-      EXECUTE 'INSERT INTO ' || buffer || ' SELECT * FROM ' || quote_ident(source_schema) || '.' || quote_ident(object) || ';';
+	  
+	  -- 2020/06/18 - Issue #31 fix: add "OVERRIDING SYSTEM VALUE" for IDENTITY columns marked as GENERATED ALWAYS.
+	  select count(*) into cnt from pg_class c, pg_attribute a, pg_namespace n  where a.attrelid = c.oid and c.relname = quote_ident(object) and n.oid = c.relnamespace and n.nspname = quote_ident(source_schema) and a.attidentity = 'a';
+	  buffer3 := '';
+	  IF cnt > 0 THEN
+	      buffer3 := ' OVERRIDING SYSTEM VALUE';
+	  END IF;
+	  
+      EXECUTE 'INSERT INTO ' || buffer || buffer3 || ' SELECT * FROM ' || quote_ident(source_schema) || '.' || quote_ident(object) || ';';
     END IF;
 
     SET search_path = '';
