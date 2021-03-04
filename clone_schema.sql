@@ -1,3 +1,6 @@
+-- Change History:
+-- 2021-03-03  MJV FIX: Fixed population of tables with rows section. "buffer" variable was not initialized correctly. Used new variable, tblname, to fix it.
+
 -- Function: clone_schema(text, text, boolean, boolean) 
 
 -- DROP FUNCTION clone_schema(text, text, boolean, boolean);
@@ -57,6 +60,7 @@ DECLARE
   cnt2             integer;
   pos              integer;
   action           text := 'N/A';
+  tblname          text;
   v_ret            text;
   v_diag1          text;
   v_diag2          text;
@@ -274,13 +278,13 @@ BEGIN
 -- Create tables including partitioned ones (parent/children) and unlogged ones.  Order by is critical since child partition range logic is dependent on it.
   action := 'Tables';
   cnt := 0;
-  FOR object, relpersist, relispart, relknd  IN
+  FOR tblname, relpersist, relispart, relknd  IN
     select c.relname, c.relpersistence, c.relispartition, c.relkind
     FROM pg_class c join pg_namespace n on (n.oid = c.relnamespace) 
     WHERE n.nspname = quote_ident(source_schema) and c.relkind in ('r','p') order by c.relkind desc, c.relname
   LOOP
     cnt := cnt + 1;
-    buffer := quote_ident(dest_schema) || '.' || quote_ident(object);
+    buffer := quote_ident(dest_schema) || '.' || quote_ident(tblname);
     buffer2 := '';
     IF relpersist = 'u' THEN
       buffer2 := 'UNLOGGED ';
@@ -288,9 +292,9 @@ BEGIN
     
     IF relknd = 'r' THEN
       IF ddl_only THEN
-        RAISE INFO '%', 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(object) || ' INCLUDING ALL)';
+        RAISE INFO '%', 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
       ELSE
-        EXECUTE 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(object) || ' INCLUDING ALL)';
+        EXECUTE 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
       END IF;
     ELSIF relknd = 'p' THEN
       -- define parent table and assume child tables have already been created based on top level sort order.
@@ -299,12 +303,12 @@ BEGIN
       WHERE d.adrelid = pa.attrelid AND d.adnum = pa.attnum AND pa.atthasdef), '') || ' ' || CASE pa.attnotnull WHEN TRUE THEN 'NOT NULL' ELSE 'NULL' END, E',\n') || 
       coalesce((SELECT E',\n' || string_agg('CONSTRAINT ' || pc1.conname || ' ' || pg_get_constraintdef(pc1.oid), E',\n' ORDER BY pc1.conindid) 
       FROM pg_constraint pc1 WHERE pc1.conrelid = pa.attrelid), '') into buffer FROM pg_catalog.pg_attribute pa JOIN pg_catalog.pg_class pc ON pc.oid = pa.attrelid AND 
-      pc.relname = quote_ident(object) JOIN pg_catalog.pg_namespace pn ON pn.oid = pc.relnamespace AND pn.nspname = quote_ident(source_schema) 
+      pc.relname = quote_ident(tblname) JOIN pg_catalog.pg_namespace pn ON pn.oid = pc.relnamespace AND pn.nspname = quote_ident(source_schema) 
       WHERE pa.attnum > 0 AND NOT pa.attisdropped GROUP BY pn.nspname, pc.relname, pa.attrelid;
       
       -- append partition keyword to it
       SELECT pg_catalog.pg_get_partkeydef(c.oid::pg_catalog.oid) into buffer2 FROM pg_catalog.pg_class c  LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace 
-      WHERE c.relname = quote_ident(object) COLLATE pg_catalog.default AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default;
+      WHERE c.relname = quote_ident(tblname) COLLATE pg_catalog.default AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default;
   
       -- RAISE NOTICE ' buffer = %   buffer2 = %',buffer, buffer2;
       qry := buffer || ') PARTITION BY ' || buffer2 || ';';
@@ -338,7 +342,7 @@ BEGIN
       WHERE old.schemaname = source_schema
         AND new.schemaname = dest_schema
         AND old.tablename = new.tablename
-        AND old.tablename = object
+        AND old.tablename = tblname
         AND old.indexname <> new.indexname
         AND regexp_replace(old.indexdef, E'.*USING','') = regexp_replace(new.indexdef, E'.*USING','')
         ORDER BY old.indexname, new.indexname
@@ -353,17 +357,19 @@ BEGIN
     IF include_recs
       THEN
       -- Insert records from source table
-      RAISE NOTICE 'Populating cloned table, %', buffer;
+      
+      -- 2021-03-03  MJV FIX
+      RAISE NOTICE 'Populating cloned table, %', tblname;
+      buffer := dest_schema || '.' || quote_ident(tblname);
 	  
       -- 2020/06/18 - Issue #31 fix: add "OVERRIDING SYSTEM VALUE" for IDENTITY columns marked as GENERATED ALWAYS.
       select count(*) into cnt from pg_class c, pg_attribute a, pg_namespace n  
-	  where a.attrelid = c.oid and c.relname = quote_ident(object) and n.oid = c.relnamespace and n.nspname = quote_ident(source_schema) and a.attidentity = 'a';
+	  where a.attrelid = c.oid and c.relname = quote_ident(tblname) and n.oid = c.relnamespace and n.nspname = quote_ident(source_schema) and a.attidentity = 'a';
       buffer3 := '';
       IF cnt > 0 THEN
           buffer3 := ' OVERRIDING SYSTEM VALUE';
       END IF;
-	  
-      EXECUTE 'INSERT INTO ' || buffer || buffer3 || ' SELECT * FROM ' || quote_ident(source_schema) || '.' || quote_ident(object) || ';';
+      EXECUTE 'INSERT INTO ' || buffer || buffer3 || ' SELECT * FROM ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ';';
     END IF;
 
     SET search_path = '';
@@ -372,7 +378,7 @@ BEGIN
              REPLACE(column_default::text, source_schema, dest_schema)
         FROM information_schema.COLUMNS
        WHERE table_schema = source_schema
-         AND TABLE_NAME = object
+         AND TABLE_NAME = tblname
          AND column_default LIKE 'nextval(%' || quote_ident(source_schema) || '%::regclass)'
     LOOP
       IF ddl_only THEN
