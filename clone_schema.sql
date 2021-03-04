@@ -1,5 +1,6 @@
 -- Change History:
 -- 2021-03-03  MJV FIX: Fixed population of tables with rows section. "buffer" variable was not initialized correctly. Used new variable, tblname, to fix it.
+-- 2021-03-03  MJV FIX: Fixed Issue#34 where user-defined types in declare section of functions caused runtime errors.
 -- Function: clone_schema(text, text, boolean, boolean) 
 
 -- DROP FUNCTION clone_schema(text, text, boolean, boolean);
