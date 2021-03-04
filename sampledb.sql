@@ -173,6 +173,8 @@ ALTER COLLATION sample."und-u-co-emoji-x-icu" OWNER TO postgres;
 -- Name: addr; Type: DOMAIN; Schema: sample; Owner: postgres
 --
 
+CREATE TYPE udt_myint AS (myint INTEGER);
+
 CREATE DOMAIN sample.addr AS character varying(90) NOT NULL;
 
 
@@ -298,6 +300,21 @@ ALTER DOMAIN sample.us_postal_code OWNER TO postgres;
 -- Name: aaa(); Type: FUNCTION; Schema: sample; Owner: postgres
 --
 
+CREATE OR REPLACE FUNCTION database_principal_id()
+RETURNS INTEGER
+AS
+$BODY$
+DECLARE
+ownerid  integer;
+myint    udt_myint;
+BEGIN
+    SELECT U.oid into ownerid FROM pg_roles AS U JOIN pg_database AS D ON (D.datdba = U.oid) WHERE D.datname = current_database();	   
+    RETURN ownerid;
+END;
+$BODY$
+LANGUAGE  plpgsql;
+                                                                             
+                                                                              
 CREATE FUNCTION sample.aaa() RETURNS void
     LANGUAGE plpgsql
     AS $_$
