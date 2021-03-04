@@ -1,6 +1,5 @@
 -- Change History:
 -- 2021-03-03  MJV FIX: Fixed population of tables with rows section. "buffer" variable was not initialized correctly. Used new variable, tblname, to fix it.
-
 -- Function: clone_schema(text, text, boolean, boolean) 
 
 -- DROP FUNCTION clone_schema(text, text, boolean, boolean);
@@ -485,7 +484,10 @@ BEGIN
 -- Create functions
   action := 'Functions';
   cnt := 0;
-  SET search_path = '';
+  -- MJV FIX per issue# 34
+  -- SET search_path = '';
+  EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
+  
   FOR func_oid IN
     SELECT oid
       FROM pg_proc
