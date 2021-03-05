@@ -420,7 +420,21 @@ END;
 $BODY$
 LANGUAGE plpgsql;
 GRANT EXECUTE ON PROCEDURE get_userscans(text, text, integer, boolean) TO postgres;                       
-                                                                                                                           
+
+CREATE OR REPLACE FUNCTION aaa(IN akey integer default 0)
+RETURNS integer
+AS
+$BODY$
+DECLARE
+    var_start INTEGER;
+    var_end INTEGER;
+BEGIN
+    Return 1;
+END;
+$BODY$
+LANGUAGE  plpgsql;
+GRANT EXECUTE ON FUNCTION aaa(IN akey integer) to PUBLIC;
+                       
 SET default_tablespace = '';
 
 SET default_with_oids = false;
