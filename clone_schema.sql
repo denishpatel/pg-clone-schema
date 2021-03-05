@@ -2,7 +2,7 @@
 -- 2021-03-03  MJV FIX: Fixed population of tables with rows section. "buffer" variable was not initialized correctly. Used new variable, tblname, to fix it.
 -- 2021-03-03  MJV FIX: Fixed Issue#34 where user-defined types in declare section of functions caused runtime errors.
 -- 2021-03-04  MJV FIX: Fixed Issue#35 where privileges for functions were not being set correctly causing the program to bomb and giving privileges to other users that should not have gotten them.
--- 2021-03-05  MJV FIX: Fixed Issue#36 in progress
+-- 2021-03-05  MJV FIX: Fixed Issue#36 Fixed table and other object permissions
 -- Function: clone_schema(text, text, boolean, boolean) 
 
 -- DROP FUNCTION clone_schema(text, text, boolean, boolean);
@@ -757,24 +757,28 @@ BEGIN
   -- regular, partitioned, and foreign tables plus view and materialized view permissions. TODO: implement foreign table defs.
   cnt := 0;
   FOR arec IN
-    SELECT 'GRANT ' || p.perm::perm_type || CASE WHEN t.relkind in ('r', 'p', 'f') THEN ' ON TABLE ' WHEN t.relkind in ('v', 'm')  THEN ' ON ' END || quote_ident(dest_schema) || '.' || t.relname::text || ' TO "' || r.rolname || '";' as tbl_ddl,
-    has_table_privilege(r.oid, t.oid, p.perm) AS granted, t.relkind
-    FROM pg_catalog.pg_class AS t CROSS JOIN pg_catalog.pg_roles AS r CROSS JOIN (VALUES (TEXT 'SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'), ('TRUNCATE'), ('REFERENCES'), ('TRIGGER')) AS p(perm)
-    WHERE t.relnamespace::regnamespace::name = quote_ident(source_schema)  AND t.relkind in ('r', 'p', 'f', 'v', 'm')  AND NOT r.rolsuper AND has_table_privilege(r.oid, t.oid, p.perm) order by t.relname::text, t.relkind
+    -- SELECT 'GRANT ' || p.perm::perm_type || CASE WHEN t.relkind in ('r', 'p', 'f') THEN ' ON TABLE ' WHEN t.relkind in ('v', 'm')  THEN ' ON ' END || quote_ident(dest_schema) || '.' || t.relname::text || ' TO "' || r.rolname || '";' as tbl_ddl,
+    -- has_table_privilege(r.oid, t.oid, p.perm) AS granted, t.relkind
+    -- FROM pg_catalog.pg_class AS t CROSS JOIN pg_catalog.pg_roles AS r CROSS JOIN (VALUES (TEXT 'SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'), ('TRUNCATE'), ('REFERENCES'), ('TRIGGER')) AS p(perm)
+    -- WHERE t.relnamespace::regnamespace::name = quote_ident(source_schema)  AND t.relkind in ('r', 'p', 'f', 'v', 'm')  AND NOT r.rolsuper AND has_table_privilege(r.oid, t.oid, p.perm) order by t.relname::text, t.relkind
+    -- 2021-03-05  MJV FIX: Fixed Issue#36 for tables
+    SELECT c.relkind, 'GRANT ' || tb.privilege_type || CASE WHEN c.relkind in ('r', 'p') THEN ' ON TABLE ' WHEN c.relkind in ('v', 'm')  THEN ' ON ' END || 
+    quote_ident(dest_schema) || '.' || tb.table_name || ' TO ' || string_agg(tb.grantee, ',') || ';' as tbl_dcl 
+    FROM information_schema.table_privileges tb, pg_class c, pg_namespace n where tb.table_schema = quote_ident(source_schema) and tb.table_name = c.relname and c.relkind in ('r', 'p', 'v', 'm') and 
+    c.relnamespace = n.oid and n.nspname = quote_ident(source_schema) group by c.relkind, tb.privilege_type, tb.table_schema, tb.table_name
   LOOP
     BEGIN
       cnt := cnt + 1;
-      -- RAISE NOTICE 'ddl=%', arec.tbl_ddl;
+      -- RAISE NOTICE 'ddl=%', arec.dcl;
       IF arec.relkind = 'f' THEN
         RAISE WARNING 'Foreign tables are not currently implemented, so skipping privs for them. ddl=%', arec.tbl_ddl;
       ELSE
-        IF ddl_only THEN
-          RAISE INFO '%', arec.tbl_ddl;
-        ELSE
-          EXECUTE arec.tbl_ddl;
-        END IF;
-
-      END IF;
+          IF ddl_only THEN
+              RAISE INFO '%', arec.tbl_dcl;
+          ELSE
+              EXECUTE arec.tbl_dcl;
+          END IF;
+    END IF;
     END;
   END LOOP;
   RAISE NOTICE ' TABLE PRIVS cloned: %', LPAD(cnt::text, 5, ' ');
