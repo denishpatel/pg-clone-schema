@@ -407,7 +407,18 @@ END;
 $BODY$
 LANGUAGE plpgsql;
 GRANT EXECUTE ON PROCEDURE get_userscans(text, text, integer) TO postgres;
-                                                                                                              
+
+CREATE PROCEDURE get_userscans(IN aschema text, IN atable text, INOUT scans INTEGER, INOUT ok boolean) AS
+$BODY$
+BEGIN
+-- Select seq_scan into scans FROM pg_stat_user_tables where schemaname = aschema and relname = atable;
+Select seq_scan FROM pg_stat_user_tables where schemaname = aschema and relname = atable INTO scans;
+ok := True;
+RETURN;
+END;
+$BODY$
+LANGUAGE plpgsql;
+GRANT EXECUTE ON PROCEDURE get_userscans(text, text, integer, boolean) TO postgres;                       
                                                                                                                            
 SET default_tablespace = '';
 
