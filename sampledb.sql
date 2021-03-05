@@ -368,9 +368,36 @@ CREATE FUNCTION sample.emp_stamp() RETURNS trigger
     END;
 $$;
 
-
 ALTER FUNCTION sample.emp_stamp() OWNER TO postgres;
 
+CREATE OR REPLACE FUNCTION fnsplitstring(IN par_string VARCHAR, IN par_delimiter CHAR)
+RETURNS TABLE (splitdata VARCHAR)
+AS
+$BODY$
+# variable_conflict use_column
+DECLARE
+    var_start INTEGER;
+    var_end INTEGER;
+BEGIN
+    CREATE TEMPORARY TABLE IF NOT EXISTS fnsplitstring$tmptbl    (splitdata VARCHAR) ON COMMIT DELETE ROWS;
+    SELECT 1, STRPOS(par_string, par_delimiter) INTO var_start, var_end;
+
+    WHILE var_start < LENGTH(par_string) + 1 LOOP
+        IF var_end = 0 THEN
+            var_end := (LENGTH(par_string) + 1)::INT;
+        END IF;
+        INSERT INTO fnsplitstring$tmptbl (splitdata)
+        VALUES (SUBSTR(par_string, var_start, var_end - var_start));
+        var_start := (var_end + 1)::INT;
+        var_end := aws_sqlserver_ext.STRPOS3(par_delimiter, par_string, var_start);
+    END LOOP;
+    RETURN QUERY (SELECT * FROM fnsplitstring$tmptbl);    
+END;
+$BODY$
+LANGUAGE  plpgsql;
+GRANT EXECUTE ON FUNCTION fnsplitstring(varchar, char) TO postgres;                                                                                                                            
+                                                                                                                            
+                                                                                                                            
 SET default_tablespace = '';
 
 SET default_with_oids = false;
