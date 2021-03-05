@@ -1,6 +1,7 @@
 -- Change History:
 -- 2021-03-03  MJV FIX: Fixed population of tables with rows section. "buffer" variable was not initialized correctly. Used new variable, tblname, to fix it.
 -- 2021-03-03  MJV FIX: Fixed Issue#34 where user-defined types in declare section of functions caused runtime errors.
+-- 2021-03-04  MJV FIX: Fixed Issue#35 where privileges for functions were not being set correctly causing the program to bomb and giving privileges to other users that should not have gotten them.
 -- Function: clone_schema(text, text, boolean, boolean) 
 
 -- DROP FUNCTION clone_schema(text, text, boolean, boolean);
@@ -724,18 +725,25 @@ BEGIN
   -- MV: PRIVS: functions
   action := 'PRIVS: Functions';
   cnt := 0;
-  EXECUTE 'SET search_path = ' || quote_ident(dest_schema) ;
+  -- EXECUTE 'SET search_path = ' || quote_ident(dest_schema) ;
+  set search_path = '';
+  RAISE NOTICE 'source_schema=%  dest_schema=%',source_schema, dest_schema;
   FOR arec IN
-    SELECT 'GRANT EXECUTE ON FUNCTION ' || quote_ident(dest_schema) || '.' || replace(regexp_replace(f.oid::regprocedure::text, '^((("[^"]*")|([^"][^.]*))\.)?', ''), source_schema, dest_schema) || ' TO "' || r.rolname || '";' as func_ddl 
-    FROM pg_catalog.pg_proc f CROSS JOIN pg_catalog.pg_roles AS r WHERE f.pronamespace::regnamespace::name = quote_ident(source_schema) AND NOT r.rolsuper AND has_function_privilege(r.oid, f.oid, 'EXECUTE')
-    order by regexp_replace(f.oid::regprocedure::text, '^((("[^"]*")|([^"][^.]*))\.)?', '')
+    -- 2021-03-05 MJV FIX: issue#35: caused exception in some functions with parameters and gave privileges to other users that should not have gotten them.
+    -- SELECT 'GRANT EXECUTE ON FUNCTION ' || quote_ident(dest_schema) || '.' || replace(regexp_replace(f.oid::regprocedure::text, '^((("[^"]*")|([^"][^.]*))\.)?', ''), source_schema, dest_schema) || ' TO "' || r.rolname || '";' as func_ddl 
+    -- FROM pg_catalog.pg_proc f CROSS JOIN pg_catalog.pg_roles AS r WHERE f.pronamespace::regnamespace::name = quote_ident(source_schema) AND NOT r.rolsuper AND has_function_privilege(r.oid, f.oid, 'EXECUTE')
+    -- order by regexp_replace(f.oid::regprocedure::text, '^((("[^"]*")|([^"][^.]*))\.)?', '')
+    SELECT 'GRANT ' || r.privilege_type || ' ON FUNCTION ' || quote_ident(dest_schema) || '.' || r.routine_name || ' (' || pg_get_function_arguments(p.oid) || ') TO ' || string_agg(r.grantee, ',') || ';' as func_dcl
+    FROM information_schema.routine_privileges r, pg_proc p, pg_namespace n 
+    where r.routine_schema = quote_ident(source_schema) and r.is_grantable = 'YES' and r.routine_schema = n.nspname and n.oid = p.pronamespace and p.proname = r.routine_name 
+    group by r.privilege_type, r.routine_name, pg_get_function_arguments(p.oid)
   LOOP
     BEGIN
       cnt := cnt + 1;
       IF ddl_only THEN
-        RAISE INFO '%', arec.func_ddl;
+        RAISE INFO '%', arec.func_dcl;
       ELSE
-        EXECUTE arec.func_ddl;
+        EXECUTE arec.func_dcl;
       END IF;
 
     END;
