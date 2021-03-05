@@ -3,6 +3,7 @@
 -- 2021-03-03  MJV FIX: Fixed Issue#34 where user-defined types in declare section of functions caused runtime errors.
 -- 2021-03-04  MJV FIX: Fixed Issue#35 where privileges for functions were not being set correctly causing the program to bomb and giving privileges to other users that should not have gotten them.
 -- 2021-03-05  MJV FIX: Fixed Issue#36 Fixed table and other object permissions
+-- 2021-03-05  MJV FIX: Fixed Issue#37 Fixed function grants again for case where parameters have default values.
 
 -- count validations:
 -- \set aschema sample
@@ -739,10 +740,12 @@ BEGIN
     -- SELECT 'GRANT EXECUTE ON FUNCTION ' || quote_ident(dest_schema) || '.' || replace(regexp_replace(f.oid::regprocedure::text, '^((("[^"]*")|([^"][^.]*))\.)?', ''), source_schema, dest_schema) || ' TO "' || r.rolname || '";' as func_ddl 
     -- FROM pg_catalog.pg_proc f CROSS JOIN pg_catalog.pg_roles AS r WHERE f.pronamespace::regnamespace::name = quote_ident(source_schema) AND NOT r.rolsuper AND has_function_privilege(r.oid, f.oid, 'EXECUTE')
     -- order by regexp_replace(f.oid::regprocedure::text, '^((("[^"]*")|([^"][^.]*))\.)?', '')
-    SELECT 'GRANT ' || rp.privilege_type || ' ON ' || r.routine_type || ' ' || quote_ident(dest_schema) || '.' || rp.routine_name || ' (' || pg_get_function_arguments(p.oid) || ') TO ' || string_agg(distinct rp.grantee, ',') || ';' as func_dcl
+    
+    -- 2021-03-05 MJV FIX: issue#37: defaults cause problems, use system function that returns args WITHOUT DEFAULTS
+    SELECT 'GRANT ' || rp.privilege_type || ' ON ' || r.routine_type || ' ' || quote_ident(dest_schema) || '.' || rp.routine_name || ' (' || pg_get_function_identity_arguments(p.oid) || ') TO ' || string_agg(distinct rp.grantee, ',') || ';' as func_dcl
     FROM information_schema.routine_privileges rp, information_schema.routines r, pg_proc p, pg_namespace n 
     where rp.routine_schema = quote_ident(source_schema) and rp.is_grantable = 'YES' and rp.routine_schema = r.routine_schema and rp.routine_name = r.routine_name and rp.routine_schema = n.nspname and n.oid = p.pronamespace and p.proname = r.routine_name 
-    group by rp.privilege_type, r.routine_type, rp.routine_name, pg_get_function_arguments(p.oid)
+    group by rp.privilege_type, r.routine_type, rp.routine_name, pg_get_function_identity_arguments(p.oid)
   LOOP
     BEGIN
       cnt := cnt + 1;
