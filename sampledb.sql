@@ -396,8 +396,19 @@ END;
 $BODY$
 LANGUAGE  plpgsql;
 GRANT EXECUTE ON FUNCTION fnsplitstring(varchar, char) TO postgres;                                                                                                                            
-                                                                                                                            
-                                                                                                                            
+
+CREATE OR REPLACE PROCEDURE get_userscans(IN aschema text, IN atable text, INOUT scans INTEGER) AS
+$BODY$
+BEGIN
+-- Select seq_scan into scans FROM pg_stat_user_tables where schemaname = aschema and relname = atable;
+Select seq_scan FROM pg_stat_user_tables where schemaname = aschema and relname = atable INTO scans;
+RETURN;
+END;
+$BODY$
+LANGUAGE plpgsql;
+GRANT EXECUTE ON PROCEDURE get_userscans(text, text, integer) TO postgres;
+                                                                                                              
+                                                                                                                           
 SET default_tablespace = '';
 
 SET default_with_oids = false;
