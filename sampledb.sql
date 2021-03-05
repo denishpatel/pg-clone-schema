@@ -408,6 +408,7 @@ $BODY$
 LANGUAGE plpgsql;
 GRANT EXECUTE ON PROCEDURE get_userscans(text, text, integer) TO postgres;
 
+-- overload a function
 CREATE PROCEDURE get_userscans(IN aschema text, IN atable text, INOUT scans INTEGER, INOUT ok boolean) AS
 $BODY$
 BEGIN
