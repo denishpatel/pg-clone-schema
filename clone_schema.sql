@@ -4,6 +4,7 @@
 -- 2021-03-04  MJV FIX: Fixed Issue#35 where privileges for functions were not being set correctly causing the program to bomb and giving privileges to other users that should not have gotten them.
 -- 2021-03-05  MJV FIX: Fixed Issue#36 Fixed table and other object permissions
 -- 2021-03-05  MJV FIX: Fixed Issue#37 Fixed function grants again for case where parameters have default values.
+-- 2021-03-08  MJV FIX: #38 fixed issue where source schema specified for executed trigger function action
 
 -- count validations:
 -- \set aschema sample
@@ -512,16 +513,25 @@ BEGIN
     END IF;
 
   END LOOP;
-  EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
-  RAISE NOTICE '   FUNCTIONS cloned: %', LPAD(cnt::text, 5, ' ');
+    RAISE NOTICE '   FUNCTIONS cloned: %', LPAD(cnt::text, 5, ' ');
 
   -- MV: Create Triggers
+
+  -- MJV FIX: #38
+  -- EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
+  set search_path = '';
+  
   action := 'Triggers';
   cnt := 0;
   FOR arec IN
+    -- 2021-03-08 MJV FIX: #38 fixed issue where source schema specified for executed trigger function action
+    -- SELECT trigger_schema, trigger_name, event_object_table, action_order, action_condition, action_statement, action_orientation, action_timing, array_to_string(array_agg(event_manipulation::text), ' OR '),
+    -- 'CREATE TRIGGER ' || trigger_name || ' ' || action_timing || ' ' || array_to_string(array_agg(event_manipulation::text), ' OR ') || ' ON ' || quote_ident(dest_schema) || '.' || event_object_table ||
+    -- ' FOR EACH ' || action_orientation || ' ' || action_statement || ';' as TRIG_DDL
+    -- FROM information_schema.triggers where trigger_schema = quote_ident(source_schema) GROUP BY 1,2,3,4,5,6,7,8
     SELECT trigger_schema, trigger_name, event_object_table, action_order, action_condition, action_statement, action_orientation, action_timing, array_to_string(array_agg(event_manipulation::text), ' OR '),
     'CREATE TRIGGER ' || trigger_name || ' ' || action_timing || ' ' || array_to_string(array_agg(event_manipulation::text), ' OR ') || ' ON ' || quote_ident(dest_schema) || '.' || event_object_table ||
-    ' FOR EACH ' || action_orientation || ' ' || action_statement || ';' as TRIG_DDL
+    ' FOR EACH ' || action_orientation || ' ' || REPLACE (action_statement, quote_ident(source_schema), quote_ident(dest_schema)) || ';' as TRIG_DDL
     FROM information_schema.triggers where trigger_schema = quote_ident(source_schema) GROUP BY 1,2,3,4,5,6,7,8
   LOOP
     BEGIN
@@ -539,6 +549,7 @@ BEGIN
   -- ---------------------
   -- MV: Permissions: Defaults
   -- ---------------------
+  EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
   action := 'PRIVS: Defaults';
   cnt := 0;
   FOR arec IN
