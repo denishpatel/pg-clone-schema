@@ -445,9 +445,9 @@ SET default_with_oids = false;
 
 CREATE TABLE sample.address (
     id bigint NOT NULL,
+    id2 udt_myint,
     addr text
 );
-
 
 ALTER TABLE sample.address OWNER TO postgres;
 
