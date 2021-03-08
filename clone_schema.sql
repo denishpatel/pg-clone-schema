@@ -287,7 +287,7 @@ BEGIN
 -- Create tables including partitioned ones (parent/children) and unlogged ones.  Order by is critical since child partition range logic is dependent on it.
   action := 'Tables';
   cnt := 0;
-  RAISE WARNING ' Table that have columns with user-defined types will reference the source schema after they are created with the CREATE TABLE LIKE construct. Please modify after cloning.';
+  RAISE WARNING ' Tables that have columns with user-defined types will reference the source schema after they are created with the CREATE TABLE LIKE construct. Please modify after cloning.';
   FOR tblname, relpersist, relispart, relknd  IN
     select c.relname, c.relpersistence, c.relispartition, c.relkind
     FROM pg_class c join pg_namespace n on (n.oid = c.relnamespace) 
