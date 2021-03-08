@@ -443,12 +443,12 @@ SET default_with_oids = false;
 -- Name: address; Type: TABLE; Schema: sample; Owner: postgres
 --
 
-CREATE TABLE sample.address (
+                       CREATE TABLE sample.address (
     id bigint NOT NULL,
     id2 udt_myint,
+    id3 udt_myint,
     addr text
 );
-
 ALTER TABLE sample.address OWNER TO postgres;
 
 --
