@@ -22,17 +22,17 @@ Arguments:
 
 You can call function like this to copy schema with data:
 <br/>
->select clone_schema('development', 'development_clone', true, false);
+>select clone_schema('sample', 'sample_clone', true, false);
 <br/>
 
 Alternatively, if you want to copy only schema without data:
 <br/>
->select clone_schema('development', 'development_clone', false, false);
+>select clone_schema('sample', 'sample_clone', false, false);
 <br/>
 
 If you just want to generate the DDL, call it like this:
 <br/>
->select clone_schema('development', 'development_clone', false, true);
+>select clone_schema('sample', 'sample_clone', false, true);
 
 In this case, standard output with "INFO" lines are the generated DDL.
 <br/><br/><br/>
