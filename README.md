@@ -41,7 +41,7 @@ The **schema_object_counts.sql** file is useful for validating the cloning resul
 
 # Limitations
 * Foreign Tables are not handled at the present time.  They must be done manually.
-* DDL only option is not complete since it depends on objects that aren;t created yet. See issue#29
+* DDL only option is not complete since it depends on objects that aren't created yet. See issue#29
 <br/>
 <br/>
 Sponsor:
