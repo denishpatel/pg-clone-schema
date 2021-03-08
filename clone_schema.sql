@@ -5,6 +5,7 @@
 -- 2021-03-05  MJV FIX: Fixed Issue#36 Fixed table and other object permissions
 -- 2021-03-05  MJV FIX: Fixed Issue#37 Fixed function grants again for case where parameters have default values.
 -- 2021-03-08  MJV FIX: #38 fixed issue where source schema specified for executed trigger function action
+-- 2021-03-08  MJV FIX: #39 Add warnings for table columns that are user-defined since the probably refer back to the source schema!  No fix for it at this time.
 
 -- count validations:
 -- \set aschema sample
@@ -44,6 +45,7 @@ DECLARE
   relpersist       text;
   relispart        text;
   relknd           text;
+  data_type        text;
   adef             text;
   dest_qry         text;
   v_def            text;
@@ -287,13 +289,21 @@ BEGIN
 -- Create tables including partitioned ones (parent/children) and unlogged ones.  Order by is critical since child partition range logic is dependent on it.
   action := 'Tables';
   cnt := 0;
-  RAISE WARNING ' Tables that have columns with user-defined types will reference the source schema after they are created with the CREATE TABLE LIKE construct. Please modify after cloning.';
-  FOR tblname, relpersist, relispart, relknd  IN
-    select c.relname, c.relpersistence, c.relispartition, c.relkind
-    FROM pg_class c join pg_namespace n on (n.oid = c.relnamespace) 
-    WHERE n.nspname = quote_ident(source_schema) and c.relkind in ('r','p') order by c.relkind desc, c.relname
+  FOR tblname, relpersist, relispart, relknd, data_type  IN
+    -- 2021-03-08 MJV #39 fix: change sql to get indicator of user-defined columns to issue warnings
+    -- select c.relname, c.relpersistence, c.relispartition, c.relkind
+    -- FROM pg_class c, pg_namespace n where n.oid = c.relnamespace and n.nspname = quote_ident(source_schema) and c.relkind in ('r','p') and 
+    -- order by c.relkind desc, c.relname
+    SELECT distinct c.relname, c.relpersistence, c.relispartition, c.relkind, co.data_type
+    FROM pg_class c JOIN pg_namespace n ON (n.oid = c.relnamespace and n.nspname = quote_ident(source_schema) and c.relkind in ('r','p')) 
+    LEFT JOIN information_schema.columns co ON (co.table_schema = n.nspname and co.table_name = c.relname and co.data_type = 'USER-DEFINED')
+    ORDER BY c.relkind desc, c.relname
   LOOP
     cnt := cnt + 1;
+    IF data_type = 'USER-DEFINED' THEN
+        RAISE WARNING ' Table (%) has column(s) with user-defined types that will reference the source schema after they are created with the CREATE TABLE LIKE construct. Please modify after cloning.',tblname;
+    END IF;
+    
     buffer := quote_ident(dest_schema) || '.' || quote_ident(tblname);
     buffer2 := '';
     IF relpersist = 'u' THEN
