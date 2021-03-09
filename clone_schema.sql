@@ -4,8 +4,9 @@
 -- 2021-03-04  MJV FIX: Fixed Issue#35 where privileges for functions were not being set correctly causing the program to bomb and giving privileges to other users that should not have gotten them.
 -- 2021-03-05  MJV FIX: Fixed Issue#36 Fixed table and other object permissions
 -- 2021-03-05  MJV FIX: Fixed Issue#37 Fixed function grants again for case where parameters have default values.
--- 2021-03-08  MJV FIX: #38 fixed issue where source schema specified for executed trigger function action
--- 2021-03-08  MJV FIX: #39 Add warnings for table columns that are user-defined since the probably refer back to the source schema!  No fix for it at this time.
+-- 2021-03-08  MJV FIX: Fixed Issue#38 fixed issue where source schema specified for executed trigger function action
+-- 2021-03-08  MJV FIX: Fixed Issue#39 Add warnings for table columns that are user-defined since the probably refer back to the source schema!  No fix for it at this time.
+-- 2021-03-09  MJV FIX: Fixed Issue#40 Rewrote trigger SQL instead to simply things for all cases
 
 -- count validations:
 -- \set aschema sample
@@ -535,15 +536,18 @@ BEGIN
   action := 'Triggers';
   cnt := 0;
   FOR arec IN
-    -- 2021-03-08 MJV FIX: #38 fixed issue where source schema specified for executed trigger function action
     -- SELECT trigger_schema, trigger_name, event_object_table, action_order, action_condition, action_statement, action_orientation, action_timing, array_to_string(array_agg(event_manipulation::text), ' OR '),
     -- 'CREATE TRIGGER ' || trigger_name || ' ' || action_timing || ' ' || array_to_string(array_agg(event_manipulation::text), ' OR ') || ' ON ' || quote_ident(dest_schema) || '.' || event_object_table ||
     -- ' FOR EACH ' || action_orientation || ' ' || action_statement || ';' as TRIG_DDL
     -- FROM information_schema.triggers where trigger_schema = quote_ident(source_schema) GROUP BY 1,2,3,4,5,6,7,8
-    SELECT trigger_schema, trigger_name, event_object_table, action_order, action_condition, action_statement, action_orientation, action_timing, array_to_string(array_agg(event_manipulation::text), ' OR '),
-    'CREATE TRIGGER ' || trigger_name || ' ' || action_timing || ' ' || array_to_string(array_agg(event_manipulation::text), ' OR ') || ' ON ' || quote_ident(dest_schema) || '.' || event_object_table ||
-    ' FOR EACH ' || action_orientation || ' ' || REPLACE (action_statement, quote_ident(source_schema), quote_ident(dest_schema)) || ';' as TRIG_DDL
-    FROM information_schema.triggers where trigger_schema = quote_ident(source_schema) GROUP BY 1,2,3,4,5,6,7,8
+    -- 2021-03-08 MJV FIX: #38 fixed issue where source schema specified for executed trigger function action    
+    -- SELECT trigger_schema, trigger_name, event_object_table, action_order, action_condition, action_statement, action_orientation, action_timing, array_to_string(array_agg(event_manipulation::text), ' OR '),
+    -- 'CREATE TRIGGER ' || trigger_name || ' ' || action_timing || ' ' || array_to_string(array_agg(event_manipulation::text), ' OR ') || ' ON ' || quote_ident(dest_schema) || '.' || event_object_table ||
+    -- ' FOR EACH ' || action_orientation || ' ' || REPLACE (action_statement, quote_ident(source_schema), quote_ident(dest_schema)) || ';' as TRIG_DDL
+    -- FROM information_schema.triggers where trigger_schema = quote_ident(source_schema) GROUP BY 1,2,3,4,5,6,7,8
+    -- 2021-03-09 MJV FIX: #39 fixed sql to get the def using pg_get_triggerdef() sql
+    SELECT n.nspname, c.relname, t.tgname, p.proname, REPLACE(pg_get_triggerdef(t.oid), quote_ident(source_schema), quote_ident(dest_schema)) || ';' AS trig_ddl FROM pg_trigger t, pg_class c, pg_namespace n, pg_proc p
+    WHERE n.nspname = quote_ident(source_schema) and n.oid = c.relnamespace and c.relkind in ('r','p') and n.oid = p.pronamespace and c.oid = t.tgrelid and p.oid = t.tgfoid ORDER BY c.relname, t.tgname
   LOOP
     BEGIN
       cnt := cnt + 1;
