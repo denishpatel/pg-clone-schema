@@ -1,4 +1,4 @@
-# pg-clone-schema
+# clone_schema
 
 Handles following objects:
 
