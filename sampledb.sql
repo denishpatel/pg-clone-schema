@@ -1044,5 +1044,4 @@ ALTER DEFAULT PRIVILEGES FOR ROLE mydb_owner IN SCHEMA sample GRANT SELECT,INSER
 -- End Sample database
 --
 
-                                                                                                                            
-                                                                                                                                                                                                                                                        
+                                                                                                                                                                                                                                                                                                                                                                                   
