@@ -52,8 +52,6 @@ CREATE ROLE mydb_update;
 ALTER ROLE mydb_update WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOLOGIN NOREPLICATION NOBYPASSRLS;
 CREATE ROLE myuser1;
 ALTER ROLE myuser1 WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB LOGIN NOREPLICATION NOBYPASSRLS PASSWORD 'md53c769cae3570d6ed52d58c5fdfd5a1e0';
-CREATE ROLE postgres;
-ALTER ROLE postgres WITH SUPERUSER INHERIT CREATEROLE CREATEDB LOGIN REPLICATION BYPASSRLS PASSWORD 'md54182a4fed857c8024598a0b0fe47fcb7';
 CREATE ROLE readonly;
 ALTER ROLE readonly WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOLOGIN NOREPLICATION NOBYPASSRLS;
 CREATE ROLE sysdba;
@@ -122,6 +120,7 @@ CREATE USER MAPPING FOR sysdba SERVER my_foreign_server OPTIONS (
 --
 
 CREATE SCHEMA sample;
+SET search_path = sample, public;
 
 
 ALTER SCHEMA sample OWNER TO postgres;
@@ -173,7 +172,7 @@ ALTER COLLATION sample."und-u-co-emoji-x-icu" OWNER TO postgres;
 -- Name: addr; Type: DOMAIN; Schema: sample; Owner: postgres
 --
 
-CREATE TYPE udt_myint AS (myint INTEGER);
+CREATE TYPE sample.udt_myint AS (myint INTEGER);
 
 CREATE DOMAIN sample.addr AS character varying(90) NOT NULL;
 
@@ -396,8 +395,8 @@ END;
 $BODY$
 LANGUAGE  plpgsql;
 GRANT EXECUTE ON FUNCTION fnsplitstring(varchar, char) TO postgres;                                                                                                                            
-
-CREATE OR REPLACE PROCEDURE get_userscans(IN aschema text, IN atable text, INOUT scans INTEGER) AS
+                             
+CREATE PROCEDURE get_userscans(IN aschema text, IN atable text, INOUT scans INTEGER) AS
 $BODY$
 BEGIN
 -- Select seq_scan into scans FROM pg_stat_user_tables where schemaname = aschema and relname = atable;
@@ -408,7 +407,6 @@ $BODY$
 LANGUAGE plpgsql;
 GRANT EXECUTE ON PROCEDURE get_userscans(text, text, integer) TO postgres;
 
--- overload a function
 CREATE PROCEDURE get_userscans(IN aschema text, IN atable text, INOUT scans INTEGER, INOUT ok boolean) AS
 $BODY$
 BEGIN
@@ -419,9 +417,9 @@ RETURN;
 END;
 $BODY$
 LANGUAGE plpgsql;
-GRANT EXECUTE ON PROCEDURE get_userscans(text, text, integer, boolean) TO postgres;                       
+GRANT EXECUTE ON PROCEDURE get_userscans(text, text, integer, boolean) TO postgres;
 
-CREATE OR REPLACE FUNCTION aaa(IN akey integer default 0)
+CREATE OR REPLACE FUNCTION sample.aaa(IN akey integer default 0)
 RETURNS integer
 AS
 $BODY$
@@ -434,7 +432,7 @@ END;
 $BODY$
 LANGUAGE  plpgsql;
 GRANT EXECUTE ON FUNCTION aaa(IN akey integer) to PUBLIC;
-                       
+
 SET default_tablespace = '';
 
 SET default_with_oids = false;
@@ -443,12 +441,14 @@ SET default_with_oids = false;
 -- Name: address; Type: TABLE; Schema: sample; Owner: postgres
 --
 
-                       CREATE TABLE sample.address (
+CREATE TABLE sample.address (
     id bigint NOT NULL,
-    id2 udt_myint,
-    id3 udt_myint,
+    id2 sample.udt_myint,
+    id3 sample.udt_myint,
     addr text
 );
+
+
 ALTER TABLE sample.address OWNER TO postgres;
 
 --
@@ -1045,5 +1045,4 @@ ALTER DEFAULT PRIVILEGES FOR ROLE mydb_owner IN SCHEMA sample GRANT SELECT,INSER
 --
 
                                                                                                                             
-                                                                                                                            
-                                                                                                                            
+                                                                                                                                                                                                                                                        
