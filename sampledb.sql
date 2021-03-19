@@ -493,6 +493,47 @@ CREATE TABLE sample.foo (
 
 ALTER TABLE sample.foo OWNER TO postgres;
 
+-- -----------------------------------------------
+-- Create partitions the old way using inheritance
+-- -----------------------------------------------
+CREATE TABLE sample.measurement (
+    city_id         int not null,
+    logdate         date not null,
+    peaktemp        int,
+    unitsales       int
+);
+CREATE TABLE sample.measurement_y2006m02 (
+    CHECK ( logdate >= DATE '2006-02-01' AND logdate < DATE '2006-03-01' )
+) INHERITS (sample.measurement);
+CREATE TABLE sample.measurement_y2006m03 (
+    CHECK ( logdate >= DATE '2006-03-01' AND logdate < DATE '2006-04-01' )
+) INHERITS (sample.measurement);
+CREATE INDEX measurement_y2006m02_logdate ON sample.measurement_y2006m02 (logdate);
+CREATE INDEX measurement_y2006m03_logdate ON sample.measurement_y2006m02 (logdate);
+CREATE OR REPLACE FUNCTION sample.measurement_insert_trigger()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF ( NEW.logdate >= DATE '2006-02-01' AND
+         NEW.logdate < DATE '2006-03-01' ) THEN
+        INSERT INTO sample.measurement_y2006m02 VALUES (NEW.*);
+    ELSIF ( NEW.logdate >= DATE '2006-03-01' AND
+            NEW.logdate < DATE '2006-04-01' ) THEN
+        INSERT INTO sample.measurement_y2006m03 VALUES (NEW.*);
+    ELSE
+        RAISE EXCEPTION 'Date out of range.  Fix the measurement_insert_trigger() function!';
+    END IF;
+    RETURN NULL;
+END;
+$$
+LANGUAGE plpgsql;
+
+CREATE TRIGGER insert_measurement_trigger
+    BEFORE INSERT ON sample.measurement
+    FOR EACH ROW EXECUTE PROCEDURE sample.measurement_insert_trigger();
+                       
+                       
+                       
+                       
 --
 -- Name: foo_bar_baz; Type: TABLE; Schema: sample; Owner: postgres
 --
