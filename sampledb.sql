@@ -436,6 +436,8 @@ GRANT EXECUTE ON FUNCTION aaa(IN akey integer) to PUBLIC;
 SET default_tablespace = '';
 
 SET default_with_oids = false;
+                       
+CREATE UNLOGGED TABLE sample.myunloggedtble (id integer PRIMARY KEY, val text NOT NULL) WITH (autovacuum_enabled = off);                       
 
 --
 -- Name: address; Type: TABLE; Schema: sample; Owner: postgres
