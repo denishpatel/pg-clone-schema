@@ -7,6 +7,7 @@
 -- 2021-03-08  MJV FIX: Fixed Issue#38 fixed issue where source schema specified for executed trigger function action
 -- 2021-03-08  MJV FIX: Fixed Issue#39 Add warnings for table columns that are user-defined since the probably refer back to the source schema!  No fix for it at this time.
 -- 2021-03-09  MJV FIX: Fixed Issue#40 Rewrote trigger SQL instead to simply things for all cases
+-- 2021-03-19  MJV FIX: Fixed Issue#39 Added new function to generate table ddl instead of using the CREATE TABLE LIKE statement only for use cases with user-defined column datatypes.
 
 -- count validations:
 -- \set aschema sample
@@ -26,7 +27,7 @@ $BODY$
 
 --  This function will clone all sequences, tables, data, views & functions from any existing schema to a new one
 -- SAMPLE CALL:
--- SELECT clone_schema('public', 'new_schema', True, False);
+-- SELECT clone_schema('sample', 'sample_clone2', True, False);
 
 DECLARE
   src_oid          oid;
@@ -290,6 +291,7 @@ BEGIN
 -- Create tables including partitioned ones (parent/children) and unlogged ones.  Order by is critical since child partition range logic is dependent on it.
   action := 'Tables';
   cnt := 0;
+  SET search_path = '';
   FOR tblname, relpersist, relispart, relknd, data_type  IN
     -- 2021-03-08 MJV #39 fix: change sql to get indicator of user-defined columns to issue warnings
     -- select c.relname, c.relpersistence, c.relispartition, c.relkind
@@ -302,7 +304,8 @@ BEGIN
   LOOP
     cnt := cnt + 1;
     IF data_type = 'USER-DEFINED' THEN
-        RAISE WARNING ' Table (%) has column(s) with user-defined types that will reference the source schema after they are created with the CREATE TABLE LIKE construct. Please modify after cloning.',tblname;
+        -- RAISE WARNING ' Table (%) has column(s) with user-defined types that will reference the source schema after they are created with the CREATE TABLE LIKE construct. Please modify after cloning.',tblname;
+        RAISE WARNING ' Table (%) has column(s) with user-defined types so using get_table_ddl() instead of CREATE TABLE LIKE construct.',tblname;
     END IF;
     
     buffer := quote_ident(dest_schema) || '.' || quote_ident(tblname);
@@ -313,9 +316,23 @@ BEGIN
     
     IF relknd = 'r' THEN
       IF ddl_only THEN
-        RAISE INFO '%', 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
+        IF data_type = 'USER-DEFINED' THEN      
+          SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
+          buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
+          -- RAISE INFO '%', buffer3;
+        ELSE
+          RAISE INFO '%', 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
+        END IF;
+
       ELSE
-        EXECUTE 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
+        IF data_type = 'USER-DEFINED' THEN            
+          SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
+          buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
+          -- RAISE INFO '%', buffer3;
+          EXECUTE buffer3;
+        ELSE
+          EXECUTE 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
+        END IF;
       END IF;
     ELSIF relknd = 'p' THEN
       -- define parent table and assume child tables have already been created based on top level sort order.
