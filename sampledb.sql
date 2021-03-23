@@ -2,7 +2,6 @@
 -- Sample database
 --
 
-
 -- drop/create clone schema database
 drop database if exists clone_testing;
 create database clone_testing;
@@ -436,8 +435,9 @@ GRANT EXECUTE ON FUNCTION aaa(IN akey integer) to PUBLIC;
 SET default_tablespace = '';
 
 SET default_with_oids = false;
-                       
-CREATE UNLOGGED TABLE sample.myunloggedtbl (id integer PRIMARY KEY, val text NOT NULL) WITH (autovacuum_enabled = off);                       
+
+
+CREATE UNLOGGED TABLE sample.myunloggedtbl (id integer PRIMARY KEY, val text NOT NULL) WITH (autovacuum_enabled = off);
 
 --
 -- Name: address; Type: TABLE; Schema: sample; Owner: postgres
@@ -509,7 +509,7 @@ CREATE TABLE sample.measurement_y2006m03 (
     CHECK ( logdate >= DATE '2006-03-01' AND logdate < DATE '2006-04-01' )
 ) INHERITS (sample.measurement);
 CREATE INDEX measurement_y2006m02_logdate ON sample.measurement_y2006m02 (logdate);
-CREATE INDEX measurement_y2006m03_logdate ON sample.measurement_y2006m02 (logdate);
+CREATE INDEX measurement_y2006m03_logdate ON sample.measurement_y2006m03 (logdate);
 CREATE OR REPLACE FUNCTION sample.measurement_insert_trigger()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -530,10 +530,8 @@ LANGUAGE plpgsql;
 CREATE TRIGGER insert_measurement_trigger
     BEFORE INSERT ON sample.measurement
     FOR EACH ROW EXECUTE PROCEDURE sample.measurement_insert_trigger();
-                       
-                       
-                       
-                       
+
+
 --
 -- Name: foo_bar_baz; Type: TABLE; Schema: sample; Owner: postgres
 --
@@ -1087,4 +1085,4 @@ ALTER DEFAULT PRIVILEGES FOR ROLE mydb_owner IN SCHEMA sample GRANT SELECT,INSER
 -- End Sample database
 --
 
-                                                                                                                                                                                                                                                                                                                                                                                   
+                                                                                                                                                                                                                                                                                                                                                                                 
