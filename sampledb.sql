@@ -701,12 +701,9 @@ ALTER TABLE sample.person ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
 -- Name: sampletable; Type: TABLE; Schema: sample; Owner: postgres
 --
 
-CREATE TABLE sample.sampletable (
-    x numeric
-);
-
-
+CREATE TABLE sample.sampletable (x numeric);
 ALTER TABLE sample.sampletable OWNER TO postgres;
+CREATE VIEW sample.v_sampletable AS Select * from sample.sampletable;
 
 --
 -- Name: seq111; Type: SEQUENCE; Schema: sample; Owner: postgres
@@ -1085,4 +1082,4 @@ ALTER DEFAULT PRIVILEGES FOR ROLE mydb_owner IN SCHEMA sample GRANT SELECT,INSER
 -- End Sample database
 --
 
-                                                                                                                                                                                                                                                                                                                                                                                 
+                                                                                                                                                                                                                                                                                                                                                                                
