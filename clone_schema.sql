@@ -8,6 +8,7 @@
 -- 2021-03-08  MJV FIX: Fixed Issue#39 Add warnings for table columns that are user-defined since the probably refer back to the source schema!  No fix for it at this time.
 -- 2021-03-09  MJV FIX: Fixed Issue#40 Rewrote trigger SQL instead to simply things for all cases
 -- 2021-03-19  MJV FIX: Fixed Issue#39 Added new function to generate table ddl instead of using the CREATE TABLE LIKE statement only for use cases with user-defined column datatypes.
+-- 2021-04-02  MJV FIX: Fixed Issue#43 Fixed views case where view was created successfully in target schema, but referenced table was not.
 
 -- count validations:
 -- \set aschema sample
@@ -583,6 +584,8 @@ BEGIN
 
 -- Create views
   action := 'Views';
+  -- MJV FIX #43: also had to reset search_path from source schema to empty.
+  SET search_path = '';
   cnt := 0;
   FOR object IN
     SELECT table_name::text,
@@ -593,15 +596,20 @@ BEGIN
   LOOP
     cnt := cnt + 1;
     buffer := quote_ident(dest_schema) || '.' || quote_ident(object);
-    SELECT view_definition INTO v_def
+    -- MJV FIX: #43
+    -- SELECT view_definition INTO v_def
+    SELECT REPLACE(view_definition, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO v_def 
       FROM information_schema.views
      WHERE table_schema = quote_ident(source_schema)
        AND table_name = quote_ident(object);
 
+    -- NOTE: definition already includes the closing statement semicolon
     IF ddl_only THEN
-      RAISE INFO '%', 'CREATE OR REPLACE VIEW ' || buffer || ' AS ' || v_def || ';' ;
+      -- RAISE INFO '%', 'CREATE OR REPLACE VIEW ' || buffer || ' AS ' || v_def || ';' ;
+      RAISE INFO '%', 'CREATE OR REPLACE VIEW ' || buffer || ' AS ' || v_def;
     ELSE
-    EXECUTE 'CREATE OR REPLACE VIEW ' || buffer || ' AS ' || v_def || ';' ;
+    -- EXECUTE 'CREATE OR REPLACE VIEW ' || buffer || ' AS ' || v_def || ';' ;
+    EXECUTE 'CREATE OR REPLACE VIEW ' || buffer || ' AS ' || v_def;
     END IF;
   END LOOP;
   RAISE NOTICE '       VIEWS cloned: %', LPAD(cnt::text, 5, ' ');
