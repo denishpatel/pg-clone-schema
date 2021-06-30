@@ -10,6 +10,8 @@
 -- 2021-03-19  MJV FIX: Fixed Issue#39 Added new function to generate table ddl instead of using the CREATE TABLE LIKE statement only for use cases with user-defined column datatypes.
 -- 2021-04-02  MJV FIX: Fixed Issue#43 Fixed views case where view was created successfully in target schema, but referenced table was not.
 -- 2021-06-30  MJV FIX: Fixed Issue#46 Invalid record reference, tbl_ddl.  Changed to tbl_dcl in PRIVS section.
+-- 2021-06-30  MJV FIX: Fixed Issue#46 Invalid record reference, tbl_ddl.  Changed to tbl_dcl in PRIVS section. Thanks to dpmillerau for this fix.
+-- 2021-06-30  MJV FIX: Fixed Issue#47 Fixed resetting search path to what it was before.  Thanks to dpmillerau for this fix.
 
 -- count validations:
 -- \set aschema sample
@@ -972,7 +974,10 @@ BEGIN
   RAISE NOTICE ' TABLE PRIVS cloned: %', LPAD(cnt::text, 5, ' ');
 
   -- Set the search_path back to what it was before
-  EXECUTE 'SET search_path = ' || src_path_old;
+  -- MJV FIX: Issue#47
+  -- EXECUTE 'SET search_path = ' || src_path_old;
+  EXECUTE 'SET search_path = ' || quote_literal(src_path_old);  
+  
 
   EXCEPTION
      WHEN others THEN
@@ -982,7 +987,9 @@ BEGIN
          v_ret := 'line=' || v_diag6 || '. '|| v_diag4 || '. ' || v_diag1;
          RAISE EXCEPTION 'Action: %  Diagnostics: %',action, v_ret;
          -- Set the search_path back to what it was before
-         EXECUTE 'SET search_path = ' || src_path_old;
+         -- MJV FIX: Issue#47
+         -- EXECUTE 'SET search_path = ' || src_path_old;
+         EXECUTE 'SET search_path = ' || quote_literal(src_path_old);           
          RETURN;
      END;
 
