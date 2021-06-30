@@ -9,6 +9,9 @@
 -- 2021-03-09  MJV FIX: Fixed Issue#40 Rewrote trigger SQL instead to simply things for all cases
 -- 2021-03-19  MJV FIX: Fixed Issue#39 Added new function to generate table ddl instead of using the CREATE TABLE LIKE statement only for use cases with user-defined column datatypes.
 -- 2021-04-02  MJV FIX: Fixed Issue#43 Fixed views case where view was created successfully in target schema, but referenced table was not.
+-- 2021-06-30  MJV FIX: Fixed Issue#46 Invalid record reference, tbl_ddl.  Changed to tbl_dcl in PRIVS section.
+
+eference to non existent field in PRIVS section 
 
 -- count validations:
 -- \set aschema sample
@@ -955,9 +958,10 @@ BEGIN
   LOOP
     BEGIN
       cnt := cnt + 1;
-      -- RAISE NOTICE 'ddl=%', arec.dcl;
+      -- RAISE NOTICE 'ddl=%', arec.tbl_dcl;
+      -- Issue#46. Fixed reference to invalid record name (tbl_ddl --> tbl_dcl).
       IF arec.relkind = 'f' THEN
-        RAISE WARNING 'Foreign tables are not currently implemented, so skipping privs for them. ddl=%', arec.tbl_ddl;
+        RAISE WARNING 'Foreign tables are not currently implemented, so skipping privs for them. ddl=%', arec.tbl_dcl;
       ELSE
           IF ddl_only THEN
               RAISE INFO '%', arec.tbl_dcl;
