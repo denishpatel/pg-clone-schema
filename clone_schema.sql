@@ -544,7 +544,7 @@ BEGIN
     SET search_path = '';
     FOR column_, default_ IN
       SELECT column_name::text,
-             REPLACE(column_default::text, source_schema, dest_schema)
+             REPLACE(column_default::text, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.')
         FROM information_schema.COLUMNS
        WHERE table_schema = source_schema
          AND TABLE_NAME = tblname
@@ -568,7 +568,7 @@ BEGIN
   SET search_path = '';
   FOR qry IN
     SELECT 'ALTER TABLE ' || quote_ident(dest_schema) || '.' || quote_ident(rn.relname)
-                          || ' ADD CONSTRAINT ' || quote_ident(ct.conname) || ' ' || REPLACE(pg_get_constraintdef(ct.oid), 'REFERENCES ' ||quote_ident(source_schema), 'REFERENCES ' || quote_ident(dest_schema)) || ';'
+                          || ' ADD CONSTRAINT ' || quote_ident(ct.conname) || ' ' || REPLACE(pg_get_constraintdef(ct.oid), 'REFERENCES ' || quote_ident(source_schema) || '.', 'REFERENCES ' || quote_ident(dest_schema) || '.') || ';'
       FROM pg_constraint ct
       JOIN pg_class rn ON rn.oid = ct.conrelid
      WHERE connamespace = src_oid
@@ -645,7 +645,7 @@ BEGIN
       END IF;
 
       FOR aname, adef IN
-        SELECT indexname, replace(indexdef, quote_ident(source_schema), quote_ident(dest_schema)) as newdef FROM pg_indexes where schemaname = quote_ident(source_schema) and tablename = object order by indexname
+        SELECT indexname, replace(indexdef, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') as newdef FROM pg_indexes where schemaname = quote_ident(source_schema) and tablename = object order by indexname
       LOOP
         IF ddl_only THEN
           RAISE INFO '%', adef || ';';
@@ -672,7 +672,7 @@ BEGIN
   LOOP
     cnt := cnt + 1;
     SELECT pg_get_functiondef(func_oid) INTO qry;
-    SELECT replace(qry, source_schema, dest_schema) INTO dest_qry;
+    SELECT replace(qry, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO dest_qry;
     IF ddl_only THEN
       RAISE INFO '%', dest_qry;
     ELSE
