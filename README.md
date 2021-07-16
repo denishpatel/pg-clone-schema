@@ -42,6 +42,7 @@ The **schema_object_counts.sql** file is useful for validating the cloning resul
 # Limitations
 * Foreign Tables are not handled at the present time.  They must be done manually.
 * DDL only option is not complete since it depends on objects that aren't created yet. See issue#29
+* Functions that reference schema-qualified objects will not clone successfully.  The target schema will still reference the source schema in these cases.  To use this utility at the present time, you need to remove schema-qualified references within your functions.
 <br/>
 <br/>
 Sponsor:
