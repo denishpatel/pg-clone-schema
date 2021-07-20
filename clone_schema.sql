@@ -656,6 +656,7 @@ BEGIN
     SELECT oid
       FROM pg_proc
      WHERE pronamespace = src_oid
+       AND prokind != 'a'
   LOOP
     SELECT pg_get_functiondef(func_oid) INTO qry;
     -- Replace function body by an empty body in plpgsql language.
@@ -664,7 +665,43 @@ BEGIN
     IF NOT ddl_only THEN
       EXECUTE dest_qry;
     END IF;
+  END LOOP;
 
+  -- Create aggregate functions.
+  FOR func_oid IN
+    SELECT oid
+    FROM pg_proc
+    WHERE
+      pronamespace = src_oid
+      AND prokind = 'a'
+  LOOP
+    cnt := cnt + 1;
+    SELECT
+      'CREATE AGGREGATE '
+      || dest_schema
+      || '.'
+      || p.proname
+      || '('
+      || format_type(a.aggtranstype, NULL)
+      || ') (sfunc = '
+      || regexp_replace(a.aggtransfn::text, '(^|\W)' || quote_ident(source_schema) || '\.', '\1' || quote_ident(dest_schema) || '.')
+      || ', stype = '
+      || format_type(a.aggtranstype, NULL)
+      || CASE
+          WHEN op.oprname IS NULL THEN ''
+          ELSE ', sortop = ' || op.oprname
+        END
+      || CASE
+          WHEN a.agginitval IS NULL THEN ''
+          ELSE ', initcond = ''' || a.agginitval || ''''
+        END
+      || ')'
+    INTO dest_qry
+    FROM pg_proc p
+      JOIN pg_aggregate a ON a.aggfnoid = p.oid
+      LEFT JOIN pg_operator op ON op.oid = a.aggsortop
+    WHERE p.oid = func_oid;
+    EXECUTE dest_qry;
   END LOOP;
 
   -- Second pass to add full function definition.
