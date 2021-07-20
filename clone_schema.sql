@@ -247,6 +247,9 @@ BEGIN
   -- returned unquoted by some applications, we ensure it remains double quoted.
   -- FIX: Issue#47
   SELECT REPLACE(REPLACE(setting, '"$user"', '$user'), '$user', '"$user"') INTO src_path_old FROM pg_settings WHERE name = 'search_path';
+  IF src_path_old = '' THEN
+    src_path_old := '''''';
+  END IF;
   EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
   -- RAISE NOTICE 'Using source search_path=%', buffer;
 
