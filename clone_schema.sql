@@ -514,7 +514,7 @@ BEGIN
         AND old.tablename = tblname
         AND old.indexname <> new.indexname
         AND regexp_replace(old.indexdef, E'.*USING','') = regexp_replace(new.indexdef, E'.*USING','')
-        ORDER BY old.indexname, new.indexname
+        ORDER BY old.indexdef, new.indexdef
     LOOP
       IF ddl_only THEN
         RAISE INFO '%', 'ALTER INDEX ' || quote_ident(dest_schema) || '.'  || quote_ident(ix_new_name) || ' RENAME TO ' || quote_ident(ix_old_name) || ';';
