@@ -422,7 +422,11 @@ BEGIN
 -- Create tables including partitioned ones (parent/children) and unlogged ones.  Order by is critical since child partition range logic is dependent on it.
   action := 'Tables';
   cnt := 0;
-  SET search_path = '';
+  -- SET search_path = '';
+  -- We want objects used in table definitions to be taken from the new schema,
+  -- however some objects may not have been created yet so we use source schema
+  -- as source first and will reassign things to the new schema later.
+  EXECUTE 'SET search_path = ' || quote_ident(source_schema);
   FOR tblname, relpersist, relispart, relknd, data_type  IN
     -- 2021-03-08 MJV #39 fix: change sql to get indicator of user-defined columns to issue warnings
     -- select c.relname, c.relpersistence, c.relispartition, c.relkind
@@ -540,25 +544,6 @@ BEGIN
       END IF;
       EXECUTE 'INSERT INTO ' || buffer || buffer3 || ' SELECT * FROM ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ';';
     END IF;
-
-    SET search_path = '';
-    FOR column_, default_ IN
-      SELECT column_name::text,
-             REPLACE(column_default::text, source_schema, dest_schema)
-        FROM information_schema.COLUMNS
-       WHERE table_schema = source_schema
-         AND TABLE_NAME = tblname
-         AND column_default LIKE 'nextval(%' || quote_ident(source_schema) || '%::regclass)'
-    LOOP
-      IF ddl_only THEN
-        -- May need to come back and revisit this since previous sql will not return anything since no schema as created!
-        RAISE INFO '%', 'ALTER TABLE ' || buffer || ' ALTER COLUMN ' || column_ || ' SET DEFAULT ' || default_ || ';';
-      ELSE
-        EXECUTE 'ALTER TABLE ' || buffer || ' ALTER COLUMN ' || column_ || ' SET DEFAULT ' || default_;
-      END IF;
-    END LOOP;
-    EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
-
   END LOOP;
   RAISE NOTICE '      TABLES cloned: %', LPAD(cnt::text, 5, ' ');
 
@@ -663,16 +648,36 @@ BEGIN
   cnt := 0;
   -- MJV FIX per issue# 34
   -- SET search_path = '';
-  EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
-  
+  -- We want to use objects in the new schema by default.
+  EXECUTE 'SET search_path = ' || quote_ident(dest_schema);
+
+  -- First pass to create prototype functions for function inter-dependencies.
   FOR func_oid IN
     SELECT oid
       FROM pg_proc
      WHERE pronamespace = src_oid
   LOOP
+    SELECT pg_get_functiondef(func_oid) INTO qry;
+    -- Replace function body by an empty body in plpgsql language.
+    SELECT regexp_replace(qry, '\sLANGUAGE\s+''?\w+''?(.*?)\sAS\s+.*', ' LANGUAGE plpgsql \1 AS $_$BEGIN END;$_$;', 'i') INTO dest_qry;
+    SELECT replace(dest_qry, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO dest_qry;
+    IF NOT ddl_only THEN
+      EXECUTE dest_qry;
+    END IF;
+
+  END LOOP;
+
+  -- Second pass to add full function definition.
+  FOR func_oid IN
+    SELECT oid
+      FROM pg_proc
+     WHERE pronamespace = src_oid
+       AND prokind != 'a'
+  LOOP
     cnt := cnt + 1;
     SELECT pg_get_functiondef(func_oid) INTO qry;
-    SELECT replace(qry, source_schema, dest_schema) INTO dest_qry;
+    SELECT regexp_replace(qry, '^\s*CREATE\s+FUNCTION', 'CREATE OR REPLACE FUNCTION', 'i') INTO dest_qry;
+    SELECT replace(dest_qry, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO dest_qry;
     IF ddl_only THEN
       RAISE INFO '%', dest_qry;
     ELSE
@@ -680,7 +685,65 @@ BEGIN
     END IF;
 
   END LOOP;
-    RAISE NOTICE '   FUNCTIONS cloned: %', LPAD(cnt::text, 5, ' ');
+  
+  -- Third pass on tables to update columns and indexes to make them use the new
+  -- schema functions.
+  EXECUTE 'SET search_path = ' || quote_ident(dest_schema);
+  FOR tblname  IN
+    SELECT DISTINCT c.relname
+    FROM pg_class c
+      JOIN pg_namespace n ON (
+        n.oid = c.relnamespace
+        AND n.nspname = quote_ident(source_schema)
+        AND c.relkind = 'r'
+      )
+    ORDER BY c.relname
+  LOOP
+    buffer := quote_ident(dest_schema) || '.' || quote_ident(tblname);
+
+    -- Update columns defaults.
+    FOR column_, default_ IN
+      SELECT column_name::text,
+             regexp_replace(column_default::text, '(^|\W)' || quote_ident(source_schema) || '\.', '\1' || quote_ident(dest_schema) || '.')
+        FROM information_schema.COLUMNS
+       WHERE table_schema = source_schema
+         AND TABLE_NAME = tblname
+         AND column_default ~* ('(^|\W)' || quote_ident(source_schema) || '\.')
+    LOOP
+      IF ddl_only THEN
+        -- May need to come back and revisit this since previous sql will not return anything since no schema as created!
+        RAISE INFO '%', 'ALTER TABLE ' || buffer || ' ALTER COLUMN ' || column_ || ' SET DEFAULT ' || default_ || ';';
+      ELSE
+        EXECUTE 'ALTER TABLE ' || buffer || ' ALTER COLUMN ' || column_ || ' SET DEFAULT ' || default_;
+      END IF;
+    END LOOP;
+
+    -- Update indexes.
+    FOR buffer IN
+      SELECT indexdef
+      FROM pg_indexes
+      WHERE
+        tablename = tblname
+        AND schemaname = dest_schema
+    LOOP
+      -- Only change indexes with the old schema name.
+      IF buffer ~* ('\W' || quote_ident(source_schema) || '\.') THEN
+        IF ddl_only THEN
+          -- Drop previous definition.
+          RAISE INFO '%', regexp_replace(buffer::text, '^\s*CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w\$]+)\s+ON\s+.+$', 'DROP INDEX ' || quote_ident(dest_schema) || '.\1;');
+          -- Recreate it.
+          RAISE INFO '%', regexp_replace(buffer::text, '(\W)' || quote_ident(source_schema) || '\.', '\1' || quote_ident(dest_schema) || '.');
+        ELSE
+          -- Drop previous definition.
+          EXECUTE regexp_replace(buffer::text, '^\s*CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w\$]+)\s+ON\s+.+$', 'DROP INDEX ' || quote_ident(dest_schema) || '.\1;');
+          -- Recreate it.
+          EXECUTE regexp_replace(buffer::text, '(\W)' || quote_ident(source_schema) || '\.', '\1' || quote_ident(dest_schema) || '.');
+        END IF;
+      END IF;
+    END LOOP;
+
+  END LOOP;
+  RAISE NOTICE '   FUNCTIONS cloned: %', LPAD(cnt::text, 5, ' ');
 
   -- MV: Create Triggers
 
@@ -701,7 +764,7 @@ BEGIN
     -- ' FOR EACH ' || action_orientation || ' ' || REPLACE (action_statement, quote_ident(source_schema), quote_ident(dest_schema)) || ';' as TRIG_DDL
     -- FROM information_schema.triggers where trigger_schema = quote_ident(source_schema) GROUP BY 1,2,3,4,5,6,7,8
     -- 2021-03-09 MJV FIX: #40 fixed sql to get the def using pg_get_triggerdef() sql
-    SELECT n.nspname, c.relname, t.tgname, p.proname, REPLACE(pg_get_triggerdef(t.oid), quote_ident(source_schema), quote_ident(dest_schema)) || ';' AS trig_ddl FROM pg_trigger t, pg_class c, pg_namespace n, pg_proc p
+    SELECT n.nspname, c.relname, t.tgname, p.proname, REPLACE(pg_get_triggerdef(t.oid), quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') || ';' AS trig_ddl FROM pg_trigger t, pg_class c, pg_namespace n, pg_proc p
     WHERE n.nspname = quote_ident(source_schema) and n.oid = c.relnamespace and c.relkind in ('r','p') and n.oid = p.pronamespace and c.oid = t.tgrelid and p.oid = t.tgfoid ORDER BY c.relname, t.tgname
   LOOP
     BEGIN
