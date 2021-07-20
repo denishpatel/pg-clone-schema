@@ -699,7 +699,7 @@ BEGIN
       || '('
       || format_type(a.aggtranstype, NULL)
       || ') (sfunc = '
-      || a.aggtransfn
+      || regexp_replace(a.aggtransfn::text, '(^|\W)' || quote_ident(source_schema) || '\.', '\1' || quote_ident(dest_schema) || '.')
       || ', stype = '
       || format_type(a.aggtranstype, NULL)
       || CASE
