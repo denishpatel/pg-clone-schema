@@ -243,7 +243,13 @@ BEGIN
   END IF;
 
   -- Set the search_path to source schema. Before exiting set it back to what it was before.
-  SELECT setting INTO src_path_old FROM pg_settings WHERE name='search_path';
+  -- In order to avoid issues with the special schema name "$user" that may be
+  -- returned unquoted by some applications, we ensure it remains double quoted.
+  -- FIX: Issue#47
+  SELECT REPLACE(REPLACE(setting, '"$user"', '$user'), '$user', '"$user"') INTO src_path_old FROM pg_settings WHERE name = 'search_path';
+  IF src_path_old = '' THEN
+    src_path_old := '''''';
+  END IF;
   EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
   -- RAISE NOTICE 'Using source search_path=%', buffer;
 
@@ -975,8 +981,7 @@ BEGIN
 
   -- Set the search_path back to what it was before
   -- MJV FIX: Issue#47
-  -- EXECUTE 'SET search_path = ' || src_path_old;
-  EXECUTE 'SET search_path = ' || quote_literal(src_path_old);  
+  EXECUTE 'SET search_path = ' || src_path_old;
   
 
   EXCEPTION
@@ -988,8 +993,7 @@ BEGIN
          RAISE EXCEPTION 'Action: %  Diagnostics: %',action, v_ret;
          -- Set the search_path back to what it was before
          -- MJV FIX: Issue#47
-         -- EXECUTE 'SET search_path = ' || src_path_old;
-         EXECUTE 'SET search_path = ' || quote_literal(src_path_old);           
+         EXECUTE 'SET search_path = ' || src_path_old;
          RETURN;
      END;
 
