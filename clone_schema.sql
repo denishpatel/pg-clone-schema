@@ -521,12 +521,31 @@ BEGIN
         AND old.tablename = tblname
         AND old.indexname <> new.indexname
         AND regexp_replace(old.indexdef, E'.*USING','') = regexp_replace(new.indexdef, E'.*USING','')
-        ORDER BY old.indexname, new.indexname
+        ORDER BY old.indexdef, new.indexdef
     LOOP
       IF ddl_only THEN
         RAISE INFO '%', 'ALTER INDEX ' || quote_ident(dest_schema) || '.'  || quote_ident(ix_new_name) || ' RENAME TO ' || quote_ident(ix_old_name) || ';';
       ELSE
-        EXECUTE 'ALTER INDEX ' || quote_ident(dest_schema) || '.'  || quote_ident(ix_new_name) || ' RENAME TO ' || quote_ident(ix_old_name) || ';';
+        -- The SELECT query above may return duplicate names when a column is
+        -- indexed twice the same manner with 2 different names. Therefore, to
+        -- avoid a 'relation "xxx" already exists' we test if the index name
+        -- is in use or free. Skipping existing index will fallback on unused
+        -- ones and every duplicate will be mapped to distinct old names.
+        IF NOT EXISTS (
+            SELECT TRUE
+            FROM pg_indexes
+            WHERE schemaname = dest_schema
+              AND tablename = tblname
+              AND indexname = quote_ident(ix_old_name))
+          AND EXISTS (
+            SELECT TRUE
+            FROM pg_indexes
+            WHERE schemaname = dest_schema
+              AND tablename = tblname
+              AND indexname = quote_ident(ix_new_name))
+          THEN
+          EXECUTE 'ALTER INDEX ' || quote_ident(dest_schema) || '.' || quote_ident(ix_new_name) || ' RENAME TO ' || quote_ident(ix_old_name) || ';';
+        END IF;
       END IF;
     END LOOP;
 
