@@ -179,6 +179,7 @@ DECLARE
   relispart        text;
   relknd           text;
   data_type        text;
+  ocomment         text;
   adef             text;
   dest_qry         text;
   v_def            text;
@@ -430,15 +431,29 @@ BEGIN
   action := 'Tables';
   cnt := 0;
   SET search_path = '';
-  FOR tblname, relpersist, relispart, relknd, data_type  IN
+  FOR tblname, relpersist, relispart, relknd, data_type, ocomment  IN
     -- 2021-03-08 MJV #39 fix: change sql to get indicator of user-defined columns to issue warnings
     -- select c.relname, c.relpersistence, c.relispartition, c.relkind
     -- FROM pg_class c, pg_namespace n where n.oid = c.relnamespace and n.nspname = quote_ident(source_schema) and c.relkind in ('r','p') and 
     -- order by c.relkind desc, c.relname
-    SELECT distinct c.relname, c.relpersistence, c.relispartition, c.relkind, co.data_type
-    FROM pg_class c JOIN pg_namespace n ON (n.oid = c.relnamespace and n.nspname = quote_ident(source_schema) and c.relkind in ('r','p')) 
-    LEFT JOIN information_schema.columns co ON (co.table_schema = n.nspname and co.table_name = c.relname and co.data_type = 'USER-DEFINED')
-    ORDER BY c.relkind desc, c.relname
+    SELECT DISTINCT c.relname,
+      c.relpersistence,
+      c.relispartition,
+      c.relkind,
+      co.data_type,
+      obj_description(c.oid)
+    FROM pg_class c
+      JOIN pg_namespace n ON (
+        n.oid = c.relnamespace
+        AND n.nspname = quote_ident(source_schema)
+        AND c.relkind IN ('r','p')
+      ) 
+      LEFT JOIN information_schema.columns co ON (
+        co.table_schema = n.nspname
+        AND co.table_name = c.relname
+        AND co.data_type = 'USER-DEFINED'
+      )
+    ORDER BY c.relkind DESC, c.relname
   LOOP
     cnt := cnt + 1;
     IF data_type = 'USER-DEFINED' THEN
@@ -471,16 +486,66 @@ BEGIN
         ELSE
           EXECUTE 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
         END IF;
+        -- Add table comment.
+        IF ocomment IS NOT NULL THEN
+          EXECUTE 'COMMENT ON TABLE ' || buffer || ' IS ' || quote_literal(ocomment);
+        END IF;
       END IF;
     ELSIF relknd = 'p' THEN
       -- define parent table and assume child tables have already been created based on top level sort order.
-      SELECT 'CREATE TABLE ' || quote_ident(dest_schema) || '.' || pc.relname || E'(\n' || string_agg(pa.attname || ' ' || pg_catalog.format_type(pa.atttypid, pa.atttypmod) || 
-      coalesce(' DEFAULT ' || (SELECT pg_catalog.pg_get_expr(d.adbin, d.adrelid) FROM pg_catalog.pg_attrdef d  
-      WHERE d.adrelid = pa.attrelid AND d.adnum = pa.attnum AND pa.atthasdef), '') || ' ' || CASE pa.attnotnull WHEN TRUE THEN 'NOT NULL' ELSE 'NULL' END, E',\n') || 
-      coalesce((SELECT E',\n' || string_agg('CONSTRAINT ' || pc1.conname || ' ' || pg_get_constraintdef(pc1.oid), E',\n' ORDER BY pc1.conindid) 
-      FROM pg_constraint pc1 WHERE pc1.conrelid = pa.attrelid), '') into buffer FROM pg_catalog.pg_attribute pa JOIN pg_catalog.pg_class pc ON pc.oid = pa.attrelid AND 
-      pc.relname = quote_ident(tblname) JOIN pg_catalog.pg_namespace pn ON pn.oid = pc.relnamespace AND pn.nspname = quote_ident(source_schema) 
-      WHERE pa.attnum > 0 AND NOT pa.attisdropped GROUP BY pn.nspname, pc.relname, pa.attrelid;
+      SELECT 'CREATE TABLE '
+        || quote_ident(dest_schema)
+        || '.'
+        || pc.relname
+        || E'(\n'
+        || string_agg(
+          pa.attname
+            || ' '
+            || pg_catalog.format_type(pa.atttypid, pa.atttypmod)
+            || coalesce(
+              ' DEFAULT '
+                || (
+                  SELECT pg_catalog.pg_get_expr(d.adbin, d.adrelid)
+                  FROM pg_catalog.pg_attrdef d  
+                  WHERE d.adrelid = pa.attrelid
+                    AND d.adnum = pa.attnum
+                    AND pa.atthasdef
+                ),
+              ''
+            )
+            || ' '
+            || CASE pa.attnotnull
+              WHEN TRUE THEN 'NOT NULL'
+              ELSE 'NULL'
+              END,
+          E',\n'
+        )
+        || coalesce(
+          (
+            SELECT
+              E',\n'
+              || string_agg(
+                'CONSTRAINT '
+                  || pc1.conname
+                  || ' '
+                  || pg_get_constraintdef(pc1.oid),
+                E',\n'
+                ORDER BY pc1.conindid
+              )
+            FROM pg_constraint pc1
+            WHERE pc1.conrelid = pa.attrelid
+          ),
+          ''
+        )
+      INTO buffer
+      FROM pg_catalog.pg_attribute pa
+        JOIN pg_catalog.pg_class pc ON pc.oid = pa.attrelid
+          AND pc.relname = quote_ident(tblname)
+        JOIN pg_catalog.pg_namespace pn ON pn.oid = pc.relnamespace
+          AND pn.nspname = quote_ident(source_schema) 
+      WHERE pa.attnum > 0
+        AND NOT pa.attisdropped
+      GROUP BY pn.nspname, pc.relname, pa.attrelid;
       
       -- append partition keyword to it
       SELECT pg_catalog.pg_get_partkeydef(c.oid::pg_catalog.oid) into buffer2 FROM pg_catalog.pg_class c  LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace 
@@ -492,6 +557,15 @@ BEGIN
         RAISE INFO '%', qry;
       ELSE
         EXECUTE qry;
+        -- Add table comment.
+        IF ocomment IS NOT NULL THEN
+          EXECUTE 'COMMENT ON TABLE '
+            || quote_ident(dest_schema)
+            || '.'
+            || pc.relname
+            || ' IS '
+            || quote_literal(ocomment);
+        END IF;
       END IF;
 
       -- loop for child tables and alter them to attach to parent for specific partition method.
@@ -637,8 +711,21 @@ BEGIN
       -- RAISE INFO '%', 'CREATE OR REPLACE VIEW ' || buffer || ' AS ' || v_def || ';' ;
       RAISE INFO '%', 'CREATE OR REPLACE VIEW ' || buffer || ' AS ' || v_def;
     ELSE
-    -- EXECUTE 'CREATE OR REPLACE VIEW ' || buffer || ' AS ' || v_def || ';' ;
-    EXECUTE 'CREATE OR REPLACE VIEW ' || buffer || ' AS ' || v_def;
+      -- EXECUTE 'CREATE OR REPLACE VIEW ' || buffer || ' AS ' || v_def || ';' ;
+      EXECUTE 'CREATE OR REPLACE VIEW ' || buffer || ' AS ' || v_def;
+      -- Add comment.
+      SELECT obj_description(c.oid)
+      INTO ocomment
+      FROM pg_class c,
+        pg_namespace n
+      WHERE n.nspname = quote_ident(source_schema)
+        AND c.relnamespace = n.oid
+        AND c.relkind = 'v'
+        AND c.relname = object;
+      IF ocomment IS NOT NULL THEN
+        EXECUTE 'COMMENT ON VIEW ' || buffer || ' IS ' || quote_literal(ocomment);
+      END IF;
+
     END IF;
   END LOOP;
   RAISE NOTICE '       VIEWS cloned: %', LPAD(cnt::text, 5, ' ');
