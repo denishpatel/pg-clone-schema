@@ -711,7 +711,7 @@ BEGIN
     END IF;
 
   END LOOP;
-  RAISE NOTICE '   SEQUENCES assigning: %', LPAD(cnt::text, 5, ' ');
+  RAISE NOTICE '   SEQUENCES assigning: %', LPAD(cnt::text, 2, ' ');
 
   --  add FK constraint
   action := 'FK Constraints';
