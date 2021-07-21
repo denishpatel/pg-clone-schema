@@ -539,10 +539,10 @@ BEGIN
       buffer := dest_schema || '.' || quote_ident(tblname);
 	  
       -- 2020/06/18 - Issue #31 fix: add "OVERRIDING SYSTEM VALUE" for IDENTITY columns marked as GENERATED ALWAYS.
-      select count(*) into cnt from pg_class c, pg_attribute a, pg_namespace n  
+      select count(*) into cnt2 from pg_class c, pg_attribute a, pg_namespace n  
 	  where a.attrelid = c.oid and c.relname = quote_ident(tblname) and n.oid = c.relnamespace and n.nspname = quote_ident(source_schema) and a.attidentity = 'a';
       buffer3 := '';
-      IF cnt > 0 THEN
+      IF cnt2 > 0 THEN
           buffer3 := ' OVERRIDING SYSTEM VALUE';
       END IF;
       EXECUTE 'INSERT INTO ' || buffer || buffer3 || ' SELECT * FROM ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ';';
