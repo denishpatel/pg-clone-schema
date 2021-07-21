@@ -987,10 +987,17 @@ BEGIN
     -- order by regexp_replace(f.oid::regprocedure::text, '^((("[^"]*")|([^"][^.]*))\.)?', '')
     
     -- 2021-03-05 MJV FIX: issue#37: defaults cause problems, use system function that returns args WITHOUT DEFAULTS
-    SELECT 'GRANT ' || rp.privilege_type || ' ON ' || r.routine_type || ' ' || quote_ident(dest_schema) || '.' || rp.routine_name || ' (' || pg_get_function_identity_arguments(p.oid) || ') TO ' || string_agg(distinct rp.grantee, ',') || ';' as func_dcl
+    -- COALESCE(r.routine_type, 'FUNCTION'): for aggregate functions, information_schema.routines contains NULL as routine_type value.
+    SELECT 'GRANT ' || rp.privilege_type || ' ON ' || COALESCE(r.routine_type, 'FUNCTION') || ' ' || quote_ident(dest_schema) || '.' || rp.routine_name || ' (' || pg_get_function_identity_arguments(p.oid) || ') TO ' || string_agg(distinct rp.grantee, ',') || ';' as func_dcl
     FROM information_schema.routine_privileges rp, information_schema.routines r, pg_proc p, pg_namespace n 
-    where rp.routine_schema = quote_ident(source_schema) and rp.is_grantable = 'YES' and rp.routine_schema = r.routine_schema and rp.routine_name = r.routine_name and rp.routine_schema = n.nspname and n.oid = p.pronamespace and p.proname = r.routine_name 
-    group by rp.privilege_type, r.routine_type, rp.routine_name, pg_get_function_identity_arguments(p.oid)
+    WHERE rp.routine_schema = quote_ident(source_schema)
+      AND rp.is_grantable = 'YES'
+      AND rp.routine_schema = r.routine_schema
+      AND rp.routine_name = r.routine_name
+      AND rp.routine_schema = n.nspname
+      AND n.oid = p.pronamespace
+      AND p.proname = r.routine_name 
+    GROUP BY rp.privilege_type, r.routine_type, rp.routine_name, pg_get_function_identity_arguments(p.oid)
   LOOP
     BEGIN
       cnt := cnt + 1;
