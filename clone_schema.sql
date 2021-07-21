@@ -200,6 +200,7 @@ DECLARE
   sq_is_cycled     boolean;
   sq_data_type     text;
   sq_cycled        char(10);
+  sq_owned         text;
   arec             RECORD;
   cnt              integer;
   cnt2             integer;
@@ -368,7 +369,6 @@ BEGIN
   -- Create sequences
   action := 'Sequences';
   cnt := 0;
-  -- TODO: Find a way to make this sequence's owner is the correct table.
   FOR object IN
     SELECT sequence_name::text
       FROM information_schema.sequences
@@ -661,6 +661,57 @@ BEGIN
 
   END LOOP;
   RAISE NOTICE '      TABLES cloned: %', LPAD(cnt::text, 5, ' ');
+
+  -- Assigning sequences to table columns.
+  action := 'Sequences assigning';
+  cnt := 0;
+  FOR object IN
+    SELECT sequence_name::text
+      FROM information_schema.sequences
+     WHERE sequence_schema = quote_ident(source_schema)
+  LOOP
+    cnt := cnt + 1;
+    srctbl := quote_ident(source_schema) || '.' || quote_ident(object);
+
+    -- Get owning column, inspired from Sadique Ali post at:
+    -- https://sadique.io/blog/2019/05/07/viewing-sequence-ownership-information-in-postgres/
+    SELECT ' OWNED BY '
+      || quote_ident(dest_schema)
+      || '.'
+      || quote_ident(dc.relname)
+      || '.'
+      || quote_ident(a.attname)
+    INTO sq_owned
+    FROM pg_class AS c
+      JOIN pg_depend AS d ON (c.relfilenode = d.objid)
+      JOIN pg_class AS dc ON (d.refobjid = dc.relfilenode)
+      JOIN pg_attribute AS a ON (
+        a.attnum = d.refobjsubid
+        AND a.attrelid = d.refobjid
+      )
+      JOIN pg_namespace n ON c.relnamespace = n.oid
+    WHERE n.nspname = quote_ident(source_schema)
+      AND c.relkind = 'S'
+      AND c.relname = object;
+
+    IF sq_owned IS NOT NULL THEN
+      qry := 'ALTER SEQUENCE '
+        || quote_ident(dest_schema)
+        || '.'
+        || quote_ident(object)
+        || sq_owned
+        || ';';
+
+      IF ddl_only THEN
+        RAISE INFO '%', qry;
+      ELSE
+        EXECUTE qry;
+      END IF;
+
+    END IF;
+
+  END LOOP;
+  RAISE NOTICE '   SEQUENCES assigning: %', LPAD(cnt::text, 5, ' ');
 
   --  add FK constraint
   action := 'FK Constraints';
