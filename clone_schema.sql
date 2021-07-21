@@ -11,7 +11,7 @@
 -- 2021-04-02  MJV FIX: Fixed Issue#43 Fixed views case where view was created successfully in target schema, but referenced table was not.
 -- 2021-06-30  MJV FIX: Fixed Issue#46 Invalid record reference, tbl_ddl.  Changed to tbl_dcl in PRIVS section.
 -- 2021-06-30  MJV FIX: Fixed Issue#46 Invalid record reference, tbl_ddl.  Changed to tbl_dcl in PRIVS section. Thanks to dpmillerau for this fix.
--- 2021-06-30  MJV FIX: Fixed Issue#47 Fixed resetting search path to what it was before.  Thanks to dpmillerau for this fix.
+-- 2021-07-21  MJV FIX: Fixed Issue#47 Fixed resetting search path to what it was before.  Thanks to dpmillerau for this fix. 
 
 -- count validations:
 -- \set aschema sample
@@ -245,13 +245,14 @@ BEGIN
   -- Set the search_path to source schema. Before exiting set it back to what it was before.
   -- In order to avoid issues with the special schema name "$user" that may be
   -- returned unquoted by some applications, we ensure it remains double quoted.
-  -- FIX: Issue#47
+  -- MJV FIX: #47
   SELECT REPLACE(REPLACE(setting, '"$user"', '$user'), '$user', '"$user"') INTO src_path_old FROM pg_settings WHERE name = 'search_path';
-  IF src_path_old = '' THEN
-    src_path_old := '''''';
+    IF src_path_old = '' THEN
+      src_path_old := '''''';
   END IF;
   EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
-  -- RAISE NOTICE 'Using source search_path=%', buffer;
+  SELECT setting INTO buffer FROM pg_settings WHERE name='search_path';
+  -- RAISE NOTICE 'Old Search Path=%  New search_path=%', src_path_old, buffer;
 
   -- Validate required types exist.  If not, create them.
   select a.objtypecnt, b.permtypecnt INTO cnt, cnt2 FROM
@@ -980,9 +981,12 @@ BEGIN
   RAISE NOTICE ' TABLE PRIVS cloned: %', LPAD(cnt::text, 5, ' ');
 
   -- Set the search_path back to what it was before
-  -- MJV FIX: Issue#47
-  EXECUTE 'SET search_path = ' || src_path_old;
+  -- RAISE NOTICE 'old search path = %', src_path_old;
   
+  -- MJV FIX: #47
+  --EXECUTE 'SET search_path = ' || quote_literal(src_path_old);  
+  EXECUTE 'SET search_path = ' || src_path_old;  
+  -- RAISE NOTICE 'Restoring Old Search Path=%', src_path_old;
 
   EXCEPTION
      WHEN others THEN
@@ -993,6 +997,7 @@ BEGIN
          RAISE EXCEPTION 'Action: %  Diagnostics: %',action, v_ret;
          -- Set the search_path back to what it was before
          -- MJV FIX: Issue#47
+         -- EXECUTE 'SET search_path = ' || quote_literal(src_path_old);           
          EXECUTE 'SET search_path = ' || src_path_old;
          RETURN;
      END;
