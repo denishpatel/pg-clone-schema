@@ -490,8 +490,20 @@ CREATE TABLE sample.foo (
     foo_name character varying(10)
 );
 
+CREATE TABLE sample.foo2 (
+    foo_id integer NOT NULL,
+    foo_name character varying(10)
+);
+
 
 ALTER TABLE sample.foo OWNER TO postgres;
+ALTER TABLE sample.foo2 OWNER TO postgres;
+
+INSERT INTO sample.foo  (foo_id, foo_name) VALUES(1,'haha');
+INSERT INTO sample.foo2 (foo_id, foo_name) VALUES(1,'hoho');
+
+CREATE RULE "_RETURN" AS ON SELECT TO sample.foo DO INSTEAD SELECT * FROM sample.foo2;
+CREATE RULE notify_me AS ON UPDATE TO sample.foo DO ALSO NOTIFY foo;
 
 -- -----------------------------------------------
 -- Create partitions the old way using inheritance
@@ -935,7 +947,9 @@ GRANT ALL ON TABLE sample.emp TO mydb_update;
 --
 
 GRANT SELECT ON TABLE sample.foo TO mydb_read;
+GRANT SELECT ON TABLE sample.foo2 TO mydb_read;
 GRANT ALL ON TABLE sample.foo TO mydb_update;
+GRANT ALL ON TABLE sample.foo2 TO mydb_update;
 
 
 --
@@ -1082,4 +1096,4 @@ ALTER DEFAULT PRIVILEGES FOR ROLE mydb_owner IN SCHEMA sample GRANT SELECT,INSER
 -- End Sample database
 --
 
-                                                                                                                                                                                                                                                                                                                                                                                
+                                                                                                                                                                                                                                                                                                                                                                                 
