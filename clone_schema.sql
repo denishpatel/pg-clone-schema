@@ -660,7 +660,12 @@ BEGIN
   LOOP
     SELECT pg_get_functiondef(func_oid) INTO qry;
     -- Replace function body by an empty body in plpgsql language.
-    SELECT regexp_replace(qry, '\sLANGUAGE\s+''?\w+''?(.*?)\sAS\s+.*', ' LANGUAGE plpgsql \1 AS $_$BEGIN END;$_$;', 'i') INTO dest_qry;
+    -- Matches everything till the first ')' included and replace the rest.
+    SELECT regexp_replace(qry, '^([^\)]+\)).*$', '\1 RETURNS VOID LANGUAGE plpgsql AS $_$BEGIN END;$_$;', 'is') INTO dest_qry;
+    -- Matches everything inside the parenthesis (function parameters) that has
+    -- something like " OUT,", " INOUT,", " INOUT)" or " OUT)" and removes the
+    -- "RETURNS VOID" part if so, to avoid inconsistencies.
+    SELECT regexp_replace(dest_qry, '(\((?:.+\s(?:IN)?OUT\s*,.+|.+\s(?:IN)?OUT\s*)\))\s* RETURNS VOID ', '\1', 'is') INTO dest_qry;
     SELECT replace(dest_qry, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO dest_qry;
     IF NOT ddl_only THEN
       EXECUTE dest_qry;
