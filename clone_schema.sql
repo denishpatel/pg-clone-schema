@@ -736,6 +736,30 @@ BEGIN
   EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
   RAISE NOTICE '       FKEYS cloned: %', LPAD(cnt::text, 5, ' ');
 
+  -- Add comments on indexes.
+  FOR qry IN
+    SELECT 'COMMENT ON INDEX '
+      || quote_ident(dest_schema)
+      || '.'
+      || quote_ident(c.relname)
+      || ' IS '
+      || quote_literal(d.description)
+      || ';'
+    FROM pg_class c
+      JOIN pg_namespace n ON (n.oid = c.relnamespace)
+      JOIN pg_index i ON (i.indexrelid = c.oid)
+      JOIN pg_description d ON (d.objoid = c.oid)
+    WHERE
+      c.reltype = 0
+      AND n.nspname = quote_ident(source_schema)
+  LOOP
+    IF ddl_only THEN
+      RAISE INFO '%', qry;
+    ELSE
+      EXECUTE qry;
+    END IF;
+  END LOOP;
+
 -- Create views
   action := 'Views';
   -- MJV FIX #43: also had to reset search_path from source schema to empty.
