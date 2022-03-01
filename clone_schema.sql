@@ -13,6 +13,7 @@
 -- 2021-06-30  MJV FIX: Fixed Issue#46 Invalid record reference, tbl_ddl.  Changed to tbl_dcl in PRIVS section. Thanks to dpmillerau for this fix.
 -- 2021-07-21  MJV FIX: Fixed Issue#47 Fixed resetting search path to what it was before.  Thanks to dpmillerau for this fix. 
 -- 2022-03-01  MJV FIX: Fixed Issue#61 Fixed more search_path problems. Modified get_table_ddl() to hard code search_path to public. Using set_config() for empty string instead of trying to set empty string directly and incorrectly. 
+-- 2022-03-01  MJV FIX: Fixed Issue#62 Added comments for indexes only (Thanks to @guignonv).  Still need to add comments for other objects.
 
 -- count validations:
 -- \set aschema sample
@@ -758,6 +759,34 @@ BEGIN
   END LOOP;
   EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
   RAISE NOTICE '       FKEYS cloned: %', LPAD(cnt::text, 5, ' ');
+
+ -- Issue#62: Add comments on indexes.
+ -- SELECT 'COMMENT ON INDEX ' || 'sample_clone' || '.' || quote_ident(c.relname) || ' IS ' || quote_literal(d.description) || ';' FROM pg_class c JOIN pg_namespace n ON (n.oid = c.relnamespace) JOIN pg_index i ON (i.indexrelid = c.oid) JOIN pg_description d ON (d.objoid = c.oid) WHERE c.reltype = 0 AND n.nspname = 'sample';
+ cnt := 0;
+ FOR qry IN
+    SELECT 'COMMENT ON INDEX '
+      || quote_ident(dest_schema)
+      || '.'
+      || quote_ident(c.relname)
+      || ' IS '
+      || quote_literal(d.description)
+      || ';'
+    FROM pg_class c
+      JOIN pg_namespace n ON (n.oid = c.relnamespace)
+      JOIN pg_index i ON (i.indexrelid = c.oid)
+      JOIN pg_description d ON (d.objoid = c.oid)
+    WHERE
+      c.reltype = 0
+      AND n.nspname = quote_ident(source_schema)
+  LOOP
+    cnt := cnt + 1;
+    IF ddl_only THEN
+      RAISE INFO '%', qry;
+    ELSE
+      EXECUTE qry;
+    END IF;
+  END LOOP;
+  RAISE NOTICE 'IDX COMMENTS cloned: %', LPAD(cnt::text, 5, ' ');  
 
 -- Create views
   action := 'Views';
