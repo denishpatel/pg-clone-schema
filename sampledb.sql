@@ -1,5 +1,6 @@
 --
 -- Sample database
+-- psql -b postgres < ./sampledb.sql
 --
 
 -- drop/create clone schema database
@@ -466,6 +467,8 @@ ALTER TABLE sample.address ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     CACHE 1
 );
 
+CREATE TYPE sample.status AS ENUM ('Notconfirmed','Coming', 'Notcoming', 'Maycome');
+CREATE TABLE sample.statuses (id serial, s status default 'Notconfirmed');
 
 --
 -- Name: emp; Type: TABLE; Schema: sample; Owner: postgres
@@ -499,11 +502,11 @@ CREATE TABLE sample.foo2 (
 ALTER TABLE sample.foo OWNER TO postgres;
 ALTER TABLE sample.foo2 OWNER TO postgres;
 
-INSERT INTO sample.foo  (foo_id, foo_name) VALUES(1,'haha');
-INSERT INTO sample.foo2 (foo_id, foo_name) VALUES(1,'hoho');
-
 CREATE RULE "_RETURN" AS ON SELECT TO sample.foo DO INSTEAD SELECT * FROM sample.foo2;
 CREATE RULE notify_me AS ON UPDATE TO sample.foo DO ALSO NOTIFY foo;
+
+INSERT INTO sample.foo  (foo_id, foo_name) VALUES(1,'haha');
+INSERT INTO sample.foo2 (foo_id, foo_name) VALUES(1,'hoho');
 
 -- -----------------------------------------------
 -- Create partitions the old way using inheritance
@@ -1096,4 +1099,4 @@ ALTER DEFAULT PRIVILEGES FOR ROLE mydb_owner IN SCHEMA sample GRANT SELECT,INSER
 -- End Sample database
 --
 
-                                                                                                                                                                                                                                                                                                                                                                                 
+                                                                                                                                                                                                                                                                                                                                                                                
