@@ -1,6 +1,8 @@
 --
--- Sample database
+-- Sample database used for clone_schema() testing
 -- psql -b postgres < ./sampledb.sql
+-- psql clone_testing < /var/lib/pgsql/temp/clone_schema.sql
+-- psql clone_testing; select clone_schema('sample', 'sample_clone1', false, false);
 --
 
 -- drop/create clone schema database
@@ -450,7 +452,7 @@ CREATE TABLE sample.address (
     id3 sample.udt_myint,
     addr text
 );
-
+COMMENT ON TABLE sample.address IS 'This table is where I keep address info.';
 
 ALTER TABLE sample.address OWNER TO postgres;
 
@@ -469,6 +471,7 @@ ALTER TABLE sample.address ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
 
 CREATE TYPE sample.status AS ENUM ('Notconfirmed','Coming', 'Notcoming', 'Maycome');
 CREATE TABLE sample.statuses (id serial, s status default 'Notconfirmed');
+COMMENT ON TABLE sample.statuses IS 'This table is where I keep status info.';
 
 --
 -- Name: emp; Type: TABLE; Schema: sample; Owner: postgres
@@ -480,7 +483,8 @@ CREATE TABLE sample.emp (
     last_date timestamp without time zone,
     last_user text
 );
-
+COMMENT ON TABLE sample.emp IS 'Employee info';
+COMMENT ON COLUMN sample.emp.salary IS 'Employee Salary info';
 
 ALTER TABLE sample.emp OWNER TO postgres;
 
@@ -831,6 +835,7 @@ ALTER TABLE ONLY sample.test
 --
 
 CREATE INDEX idx_x ON sample.sampletable USING btree (x);
+COMMENT ON INDEX idx_x IS 'just another btree index';
 
 
 --
@@ -838,7 +843,7 @@ CREATE INDEX idx_x ON sample.sampletable USING btree (x);
 --
 
 CREATE INDEX minor_idx ON sample.test USING btree (major, minor);
-
+COMMENT ON INDEX minor_idx IS 'just another btree index';
 
 --
 -- Name: foo_bar_baz_0_pkey; Type: INDEX ATTACH; Schema: sample; Owner:
@@ -1099,4 +1104,4 @@ ALTER DEFAULT PRIVILEGES FOR ROLE mydb_owner IN SCHEMA sample GRANT SELECT,INSER
 -- End Sample database
 --
 
-                                                                                                                                                                                                                                                                                                                                                                                
+                                                                                                                                                                                                                                                                                                                                                                                 
