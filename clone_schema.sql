@@ -12,6 +12,7 @@
 -- 2021-06-30  MJV FIX: Fixed Issue#46 Invalid record reference, tbl_ddl.  Changed to tbl_dcl in PRIVS section.
 -- 2021-06-30  MJV FIX: Fixed Issue#46 Invalid record reference, tbl_ddl.  Changed to tbl_dcl in PRIVS section. Thanks to dpmillerau for this fix.
 -- 2021-07-21  MJV FIX: Fixed Issue#47 Fixed resetting search path to what it was before.  Thanks to dpmillerau for this fix. 
+-- 2022-03-01  MJV FIX: Fixed Issue#61 Fixed more search_path problems. Modified get_table_ddl() to hard code search_path to public. Using set_config() for empty string instead of trying to set empty string directly and incorrectly. 
 
 -- count validations:
 -- \set aschema sample
@@ -41,7 +42,18 @@ $$
     v_indexrec record;
     v_primary boolean := False;
     v_constraint_name text;
+    v_src_path_old text := '';
+    v_src_path_new text := '';
+    v_dummy text;
   BEGIN
+  
+    -- Issue#61 FIX: set search_path = public before we do anything to force explicit schema qualification but dont forget to set it back before exiting...
+    SELECT setting INTO v_src_path_old FROM pg_settings WHERE name = 'search_path';
+    SELECT REPLACE(REPLACE(setting, '"$user"', '$user'), '$user', '"$user"') INTO v_src_path_old FROM pg_settings WHERE name = 'search_path';
+    EXECUTE 'SET search_path = "public"';
+    SELECT setting INTO v_src_path_new FROM pg_settings WHERE name='search_path';
+    -- RAISE NOTICE 'get_ddl: Old Search Path=%  New search_path=%', v_src_path_old, v_src_path_new;
+
     -- grab the oid of the table; https://www.postgresql.org/docs/8.3/catalog-pg-class.html
     SELECT c.oid INTO v_table_oid
     FROM pg_catalog.pg_class c
@@ -139,6 +151,15 @@ $$
         || ';' || E'\n';
     END LOOP;
 
+    -- reset search_path back to what it was
+    IF v_src_path_old = '' THEN
+      -- RAISE NOTICE 'setting old search_path to empty string';
+      SELECT set_config('search_path', '', false) into v_dummy;
+    ELSE
+      -- RAISE NOTICE 'setting old search_path to:%', v_src_path_old;
+      EXECUTE 'SET search_path = ' || v_src_path_old;  
+    END IF;
+    
     -- return the ddl
     RETURN v_table_ddl;
   END;
@@ -185,6 +206,7 @@ DECLARE
   v_def            text;
   part_range       text;
   src_path_old     text;
+  src_path_new     text;
   aclstr           text;
   grantor          text;
   grantee          text;
@@ -214,7 +236,7 @@ DECLARE
   v_diag4          text;
   v_diag5          text;
   v_diag6          text;
-
+  v_dummy          text;
 BEGIN
 
   -- Make sure NOTICE are shown
@@ -249,12 +271,9 @@ BEGIN
   -- returned unquoted by some applications, we ensure it remains double quoted.
   -- MJV FIX: #47
   SELECT REPLACE(REPLACE(setting, '"$user"', '$user'), '$user', '"$user"') INTO src_path_old FROM pg_settings WHERE name = 'search_path';
-    IF src_path_old = '' THEN
-      src_path_old := '''''';
-  END IF;
   EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
-  SELECT setting INTO buffer FROM pg_settings WHERE name='search_path';
-  -- RAISE NOTICE 'Old Search Path=%  New search_path=%', src_path_old, buffer;
+  SELECT setting INTO src_path_new FROM pg_settings WHERE name='search_path';
+  -- RAISE NOTICE 'Old Search Path=%  New search_path=%', src_path_old, src_path_new;
 
   -- Validate required types exist.  If not, create them.
   select a.objtypecnt, b.permtypecnt INTO cnt, cnt2 FROM
@@ -430,7 +449,9 @@ BEGIN
 -- Create tables including partitioned ones (parent/children) and unlogged ones.  Order by is critical since child partition range logic is dependent on it.
   action := 'Tables';
   cnt := 0;
-  SET search_path = '';
+  -- Issue#61 FIX: use set_config for empty string
+  -- SET search_path = '';
+  SELECT set_config('search_path', '', false) into v_dummy;
   FOR tblname, relpersist, relispart, relknd, data_type, ocomment  IN
     -- 2021-03-08 MJV #39 fix: change sql to get indicator of user-defined columns to issue warnings
     -- select c.relname, c.relpersistence, c.relispartition, c.relkind
@@ -460,19 +481,17 @@ BEGIN
         -- RAISE WARNING ' Table (%) has column(s) with user-defined types that will reference the source schema after they are created with the CREATE TABLE LIKE construct. Please modify after cloning.',tblname;
         RAISE WARNING ' Table (%) has column(s) with user-defined types so using get_table_ddl() instead of CREATE TABLE LIKE construct.',tblname;
     END IF;
-    
     buffer := quote_ident(dest_schema) || '.' || quote_ident(tblname);
     buffer2 := '';
     IF relpersist = 'u' THEN
       buffer2 := 'UNLOGGED ';
     END IF;
-    
     IF relknd = 'r' THEN
       IF ddl_only THEN
         IF data_type = 'USER-DEFINED' THEN      
           SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
-          -- RAISE INFO '%', buffer3;
+          RAISE INFO '%', buffer3;
         ELSE
           RAISE INFO '%', 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
         END IF;
@@ -481,7 +500,6 @@ BEGIN
         IF data_type = 'USER-DEFINED' THEN            
           SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
-          -- RAISE INFO '%', buffer3;
           EXECUTE buffer3;
         ELSE
           EXECUTE 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
@@ -567,7 +585,6 @@ BEGIN
             || quote_literal(ocomment);
         END IF;
       END IF;
-
       -- loop for child tables and alter them to attach to parent for specific partition method.
       FOR aname, part_range, object IN
         SELECT quote_ident(dest_schema) || '.' || c1.relname as tablename, pg_catalog.pg_get_expr(c1.relpartbound, c1.oid) as partrange, quote_ident(dest_schema) || '.' || c2.relname as object
@@ -583,7 +600,6 @@ BEGIN
         
       END LOOP;    
     END IF;
-
     -- INCLUDING ALL creates new index names, we restore them to the old name.
     -- There should be no conflicts since they live in different schemas
     FOR ix_old_name, ix_new_name IN
@@ -641,7 +657,10 @@ BEGIN
       EXECUTE 'INSERT INTO ' || buffer || buffer3 || ' SELECT * FROM ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ';';
     END IF;
 
-    SET search_path = '';
+    -- Issue#61 FIX: use set_config for empty string
+    -- SET search_path = '';
+    SELECT set_config('search_path', '', false) into v_dummy;
+
     FOR column_, default_ IN
       SELECT column_name::text,
              REPLACE(column_default::text, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.')
@@ -716,7 +735,11 @@ BEGIN
   --  add FK constraint
   action := 'FK Constraints';
   cnt := 0;
-  SET search_path = '';
+  
+  -- Issue#61 FIX: use set_config for empty string
+  -- SET search_path = '';
+  SELECT set_config('search_path', '', false) into v_dummy;
+  
   FOR qry IN
     SELECT 'ALTER TABLE ' || quote_ident(dest_schema) || '.' || quote_ident(rn.relname)
                           || ' ADD CONSTRAINT ' || quote_ident(ct.conname) || ' ' || REPLACE(pg_get_constraintdef(ct.oid), 'REFERENCES ' || quote_ident(source_schema) || '.', 'REFERENCES ' || quote_ident(dest_schema) || '.') || ';'
@@ -738,8 +761,12 @@ BEGIN
 
 -- Create views
   action := 'Views';
+  
+  -- Issue#61 FIX: use set_config for empty string
   -- MJV FIX #43: also had to reset search_path from source schema to empty.
-  SET search_path = '';
+  -- SET search_path = '';
+  SELECT set_config('search_path', '', false) into v_dummy;
+
   cnt := 0;
   FOR object IN
     SELECT table_name::text,
@@ -888,7 +915,10 @@ BEGIN
 
   -- MJV FIX: #38
   -- EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
-  set search_path = '';
+
+  -- Issue#61 FIX: use set_config for empty string
+  -- SET search_path = '';
+  SELECT set_config('search_path', '', false) into v_dummy;
   
   action := 'Triggers';
   cnt := 0;
@@ -1115,8 +1145,11 @@ BEGIN
   -- MV: PRIVS: functions
   action := 'PRIVS: Functions/Procedures';
   cnt := 0;
-  -- EXECUTE 'SET search_path = ' || quote_ident(dest_schema) ;
-  set search_path = '';
+
+  -- Issue#61 FIX: use set_config for empty string
+  -- SET search_path = '';
+  SELECT set_config('search_path', '', false) into v_dummy;
+
   -- RAISE NOTICE 'source_schema=%  dest_schema=%',source_schema, dest_schema;
   FOR arec IN
     -- 2021-03-05 MJV FIX: issue#35: caused exception in some functions with parameters and gave privileges to other users that should not have gotten them.
@@ -1182,13 +1215,13 @@ BEGIN
   END LOOP;
   RAISE NOTICE ' TABLE PRIVS cloned: %', LPAD(cnt::text, 5, ' ');
 
-  -- Set the search_path back to what it was before
-  -- RAISE NOTICE 'old search path = %', src_path_old;
-  
-  -- MJV FIX: #47
-  --EXECUTE 'SET search_path = ' || quote_literal(src_path_old);  
-  EXECUTE 'SET search_path = ' || src_path_old;  
-  -- RAISE NOTICE 'Restoring Old Search Path=%', src_path_old;
+  IF src_path_old = '' THEN
+    -- RAISE NOTICE 'Restoring old search_path to empty string';
+    SELECT set_config('search_path', '', false) into v_dummy;
+  ELSE
+    -- RAISE NOTICE 'Restoring old search_path to:%', src_path_old;
+    EXECUTE 'SET search_path = ' || src_path_old;
+  END IF;
 
   EXCEPTION
      WHEN others THEN
@@ -1197,10 +1230,15 @@ BEGIN
          -- v_ret := 'line=' || v_diag6 || '. '|| v_diag4 || '. ' || v_diag1 || ' .' || v_diag2 || ' .' || v_diag3;
          v_ret := 'line=' || v_diag6 || '. '|| v_diag4 || '. ' || v_diag1;
          RAISE EXCEPTION 'Action: %  Diagnostics: %',action, v_ret;
-         -- Set the search_path back to what it was before
-         -- MJV FIX: Issue#47
-         -- EXECUTE 'SET search_path = ' || quote_literal(src_path_old);           
-         EXECUTE 'SET search_path = ' || src_path_old;
+
+         IF src_path_old = '' THEN
+           -- RAISE NOTICE 'setting old search_path to empty string';
+           SELECT set_config('search_path', '', false);
+         ELSE
+           -- RAISE NOTICE 'setting old search_path to:%', src_path_old;
+           EXECUTE 'SET search_path = ' || src_path_old;
+         END IF;
+
          RETURN;
      END;
 
