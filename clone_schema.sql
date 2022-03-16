@@ -679,6 +679,28 @@ BEGIN
     END LOOP;
     EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
 
+    -- Issue#63 Fix: Update sequences for identity columns
+    SELECT set_config('search_path', '', false) into v_dummy;
+    FOR column_ IN
+      SELECT column_name::text
+        FROM information_schema.COLUMNS
+       WHERE table_schema = source_schema
+         AND TABLE_NAME = tblname
+         AND is_identity::bool = true
+    loop
+      buffer := quote_ident(tblname) || '_' || column_ || '_seq';
+      buffer2 := quote_ident(source_schema) || '.' || quote_ident(buffer);
+      buffer3 := quote_ident(dest_schema) || '.' || quote_ident(buffer);
+      EXECUTE 'SELECT last_value, is_called FROM ' || buffer2 || ';'
+          INTO sq_last_value, sq_is_called;
+      IF ddl_only THEN
+        RAISE INFO '%', 'SELECT setval( ''' || buffer3 || ''', ' || sq_last_value || ', ' || sq_is_called || ');' ;
+      ELSE
+        EXECUTE 'SELECT setval( ''' || buffer3 || ''', ' || sq_last_value || ', ' || sq_is_called || ');' ;
+      END IF;
+    END LOOP;
+    EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
+
   END LOOP;
   RAISE NOTICE '      TABLES cloned: %', LPAD(cnt::text, 5, ' ');
 
