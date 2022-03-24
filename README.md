@@ -40,6 +40,9 @@ In this case, standard output with "INFO" lines are the generated DDL.
 The **schema_object_counts.sql** file is useful for validating the cloning results.  Just run it against source and target schemas to validate object counts after changing default schema name, **sample**.
 <br/><br/>
 
+# Regression Testing Overview
+Regression Testing is done using:
+
 # Limitations
 * You should not clone the "public" schema.  The resulting output may not be accurate even if it finishes without any errors.
 * Foreign Tables are not handled at the present time.  They must be done manually.
