@@ -297,9 +297,40 @@ CREATE DOMAIN sample.us_postal_code AS text NOT NULL
 
 ALTER DOMAIN sample.us_postal_code OWNER TO postgres;
 
---
--- Name: aaa(); Type: FUNCTION; Schema: sample; Owner: postgres
---
+CREATE AGGREGATE avg (float8)
+(
+    sfunc = float8_accum,
+    stype = float8[],
+    finalfunc = float8_avg,
+    initcond = '{0,0,0}'
+);
+
+CREATE AGGREGATE array_accum (anyelement)
+(
+    sfunc = array_append,
+    stype = anyarray,
+    initcond = '{}'
+);
+
+create function greaterint (int, int)
+returns int language sql
+as $$
+    select case when $1 < $2 then $2 else $1 end
+$$;
+
+create function intplus10 (int)
+returns int language sql
+as $$
+    select $1+ 10;
+$$;
+
+create aggregate incremented_max (int) (
+    sfunc = greaterint,
+    finalfunc = intplus10,
+    stype = integer,
+    initcond = 0
+);
+
 
 CREATE OR REPLACE FUNCTION database_principal_id()
 RETURNS INTEGER
