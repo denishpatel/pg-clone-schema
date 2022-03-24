@@ -14,6 +14,8 @@
 -- 2021-07-21  MJV FIX: Fixed Issue#47 Fixed resetting search path to what it was before.  Thanks to dpmillerau for this fix. 
 -- 2022-03-01  MJV FIX: Fixed Issue#61 Fixed more search_path problems. Modified get_table_ddl() to hard code search_path to public. Using set_config() for empty string instead of trying to set empty string directly and incorrectly. 
 -- 2022-03-01  MJV FIX: Fixed Issue#62 Added comments for indexes only (Thanks to @guignonv).  Still need to add comments for other objects.
+-- 2022-03-24  MJV FIX: Fixed Issue#63 Use last used value for sequence not the start value
+-- 2022-03-24  MJV FIX: Fixed Issue#65 Check column availability in selecting query to use for pg_proc table.  Also do some explicit datatype mappings for certain aggregate functions. Also, fix cloning of inherited tables
 
 -- count validations:
 -- \set aschema sample
@@ -221,6 +223,7 @@ DECLARE
   sq_cache_value   bigint;
   sq_is_called     boolean;
   sq_is_cycled     boolean;
+  is_prokind       boolean;
   sq_data_type     text;
   sq_cycled        char(10);
   sq_owned         text;
@@ -301,6 +304,15 @@ BEGIN
     RAISE NOTICE '%', 'CREATE SCHEMA ' || quote_ident(dest_schema);
   ELSE
     EXECUTE 'CREATE SCHEMA ' || quote_ident(dest_schema) ;
+  END IF;
+
+  -- Do system table validations for subsequent system table queries
+  -- Issue#65 Fix
+  SELECT count(*) into cnt FROM pg_attribute WHERE  attrelid = 'pg_proc'::regclass AND attname = 'prokind';
+  IF cnt = 0 THEN
+      is_prokind = False;
+  ELSE
+      is_prokind = True;
   END IF;
 
   -- MV: Create Collations
@@ -389,10 +401,11 @@ BEGIN
   -- Create sequences
   action := 'Sequences';
   cnt := 0;
+  -- fix#63  get from pg_sequences not information_schema           
   FOR object IN
-    SELECT sequence_name::text
-      FROM information_schema.sequences
-     WHERE sequence_schema = quote_ident(source_schema)
+    SELECT sequencename::text
+      FROM pg_sequences
+     WHERE schemaname = quote_ident(source_schema)
   LOOP
     cnt := cnt + 1;
     IF ddl_only THEN
@@ -402,7 +415,7 @@ BEGIN
     END IF;
     srctbl := quote_ident(source_schema) || '.' || quote_ident(object);
 
-    EXECUTE 'SELECT last_value, is_called
+    EXECUTE 'SELECT COALESCE(last_value, 1), is_called
               FROM ' || quote_ident(source_schema) || '.' || quote_ident(object) || ';'
               INTO sq_last_value, sq_is_called;
 
@@ -422,11 +435,11 @@ BEGIN
            || ' INCREMENT BY ' || sq_increment_by
            || ' MINVALUE '     || sq_min_value
            || ' MAXVALUE '     || sq_max_value
+           -- will update current sequence value after this
            || ' START WITH '   || sq_start_value
            || ' RESTART '      || sq_min_value
            || ' CACHE '        || sq_cache_value
            || ' '              || sq_cycled || ' ;' ;
-
     IF ddl_only THEN
       RAISE INFO '%', qry;
     ELSE
@@ -438,9 +451,13 @@ BEGIN
       EXECUTE 'SELECT setval( ''' || buffer || ''', ' || sq_last_value || ', ' || sq_is_called || ');' ;
     ELSE
       if ddl_only THEN
-        RAISE INFO '%', 'SELECT setval( ''' || buffer || ''', ' || sq_start_value || ', ' || sq_is_called || ');' ;
+        -- fix#63           
+        --  RAISE INFO '%', 'SELECT setval( ''' || buffer || ''', ' || sq_start_value || ', ' || sq_is_called || ');' ;
+        RAISE INFO '%', 'SELECT setval( ''' || buffer || ''', ' || sq_last_value || ', ' || sq_is_called || ');' ;
       ELSE
-        EXECUTE 'SELECT setval( ''' || buffer || ''', ' || sq_start_value || ', ' || sq_is_called || ');' ;
+        -- fix#63           
+        -- EXECUTE 'SELECT setval( ''' || buffer || ''', ' || sq_start_value || ', ' || sq_is_called || ');' ;
+        EXECUTE 'SELECT setval( ''' || buffer || ''', ' || sq_last_value || ', ' || sq_is_called || ');' ;
       END IF;
 
     END IF;
@@ -685,10 +702,11 @@ BEGIN
   -- Assigning sequences to table columns.
   action := 'Sequences assigning';
   cnt := 0;
+  -- fix#63 use pg_sequences not information_schema.sequences
   FOR object IN
-    SELECT sequence_name::text
-      FROM information_schema.sequences
-     WHERE sequence_schema = quote_ident(source_schema)
+    SELECT sequencename::text
+      FROM pg_sequences
+     WHERE schemaname = quote_ident(source_schema)
   LOOP
     cnt := cnt + 1;
     srctbl := quote_ident(source_schema) || '.' || quote_ident(object);
@@ -884,61 +902,118 @@ BEGIN
   -- MJV FIX per issue# 34
   -- SET search_path = '';
   EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
+
+  -- Fixed Issue#65
+  -- FOR func_oid IN SELECT oid FROM pg_proc WHERE pronamespace = src_oid AND prokind != 'a'
+  IF is_prokind THEN
+    FOR func_oid IN SELECT oid FROM pg_proc WHERE pronamespace = src_oid AND prokind != 'a'
+    LOOP
+      cnt := cnt + 1;
+      SELECT pg_get_functiondef(func_oid) INTO qry;
+      SELECT replace(qry, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO dest_qry;
+      IF ddl_only THEN
+        RAISE INFO '%', dest_qry;
+      ELSE
+        EXECUTE dest_qry;
+      END IF;
+    END LOOP;    
+  ELSE
+    FOR func_oid IN SELECT oid FROM pg_proc WHERE pronamespace = src_oid AND not proisagg
+    LOOP
+      cnt := cnt + 1;
+      SELECT pg_get_functiondef(func_oid) INTO qry;
+      SELECT replace(qry, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO dest_qry;
+      IF ddl_only THEN
+        RAISE INFO '%', dest_qry;
+      ELSE
+        EXECUTE dest_qry;
+      END IF;
+    END LOOP;    
+  END IF;
   
-  FOR func_oid IN
-    SELECT oid
-      FROM pg_proc
-     WHERE pronamespace = src_oid
-       AND prokind != 'a'
-  LOOP
-    cnt := cnt + 1;
-    SELECT pg_get_functiondef(func_oid) INTO qry;
-    SELECT replace(qry, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO dest_qry;
-    IF ddl_only THEN
-      RAISE INFO '%', dest_qry;
-    ELSE
-      EXECUTE dest_qry;
-    END IF;
-
-  END LOOP;
-
   -- Create aggregate functions.
-  FOR func_oid IN
-    SELECT oid
-    FROM pg_proc
-    WHERE
-      pronamespace = src_oid
-      AND prokind = 'a'
-  LOOP
-    cnt := cnt + 1;
-    SELECT
-      'CREATE AGGREGATE '
-      || dest_schema
-      || '.'
-      || p.proname
-      || '('
-      || format_type(a.aggtranstype, NULL)
-      || ') (sfunc = '
-      || regexp_replace(a.aggtransfn::text, '(^|\W)' || quote_ident(source_schema) || '\.', '\1' || quote_ident(dest_schema) || '.')
-      || ', stype = '
-      || format_type(a.aggtranstype, NULL)
-      || CASE
-          WHEN op.oprname IS NULL THEN ''
-          ELSE ', sortop = ' || op.oprname
-        END
-      || CASE
-          WHEN a.agginitval IS NULL THEN ''
-          ELSE ', initcond = ''' || a.agginitval || ''''
-        END
-      || ')'
-    INTO dest_qry
-    FROM pg_proc p
-      JOIN pg_aggregate a ON a.aggfnoid = p.oid
-      LEFT JOIN pg_operator op ON op.oid = a.aggsortop
-    WHERE p.oid = func_oid;
-    EXECUTE dest_qry;
-  END LOOP;
+  -- Fixed Issue#65
+  -- FOR func_oid IN SELECT oid FROM pg_proc WHERE pronamespace = src_oid AND prokind = 'a'
+  IF is_prokind THEN
+    FOR func_oid IN SELECT oid FROM pg_proc WHERE pronamespace = src_oid AND prokind = 'a'
+    LOOP
+      cnt := cnt + 1;
+      -- RAISE INFO 'funcoid=%', func_oid;
+      SELECT
+        'CREATE AGGREGATE '
+        || dest_schema
+        || '.'
+        || p.proname
+        || '('
+        -- || format_type(a.aggtranstype, NULL)
+        -- Issue#65 Fixes for specific datatype mappings
+        || CASE WHEN format_type(a.aggtranstype, NULL) = 'double precision[]' THEN 'float8' 
+                WHEN format_type(a.aggtranstype, NULL) = 'anyarray'           THEN 'anyelement' 
+           ELSE format_type(a.aggtranstype, NULL) END        
+        || ') (sfunc = '
+        || regexp_replace(a.aggtransfn::text, '(^|\W)' || quote_ident(source_schema) || '\.', '\1' || quote_ident(dest_schema) || '.')
+        || ', stype = '
+        -- || format_type(a.aggtranstype, NULL)
+        -- Issue#65 Fixes for specific datatype mappings
+        || CASE WHEN format_type(a.aggtranstype, NULL) = 'double precision[]' THEN 'float8[]' ELSE format_type(a.aggtranstype, NULL) END
+        || CASE
+            WHEN op.oprname IS NULL THEN ''
+            ELSE ', sortop = ' || op.oprname
+          END
+        || CASE
+            WHEN a.agginitval IS NULL THEN ''
+            ELSE ', initcond = ''' || a.agginitval || ''''
+          END
+        || ')'
+      INTO dest_qry
+      FROM pg_proc p
+        JOIN pg_aggregate a ON a.aggfnoid = p.oid
+        LEFT JOIN pg_operator op ON op.oid = a.aggsortop
+      WHERE p.oid = func_oid;
+      EXECUTE dest_qry;
+    END LOOP;
     RAISE NOTICE '   FUNCTIONS cloned: %', LPAD(cnt::text, 5, ' ');
+    
+  ELSE
+    FOR func_oid IN SELECT oid FROM pg_proc WHERE pronamespace = src_oid AND proisagg 
+    LOOP
+      cnt := cnt + 1;
+      SELECT
+        'CREATE AGGREGATE '
+        || dest_schema
+        || '.'
+        || p.proname
+        || '('
+        -- || format_type(a.aggtranstype, NULL)
+        -- Issue#65 Fixes for specific datatype mappings
+        || CASE WHEN format_type(a.aggtranstype, NULL) = 'double precision[]' THEN 'float8' 
+                WHEN format_type(a.aggtranstype, NULL) = 'anyarray'           THEN 'anyelement' 
+           ELSE format_type(a.aggtranstype, NULL) END        
+        || ') (sfunc = '
+        || regexp_replace(a.aggtransfn::text, '(^|\W)' || quote_ident(source_schema) || '\.', '\1' || quote_ident(dest_schema) || '.')
+        || ', stype = '
+        -- || format_type(a.aggtranstype, NULL)
+        -- Issue#65 Fixes for specific datatype mappings
+        || CASE WHEN format_type(a.aggtranstype, NULL) = 'double precision[]' THEN 'float8[]' ELSE format_type(a.aggtranstype, NULL) END
+        || CASE
+            WHEN op.oprname IS NULL THEN ''
+            ELSE ', sortop = ' || op.oprname
+          END
+        || CASE
+            WHEN a.agginitval IS NULL THEN ''
+            ELSE ', initcond = ''' || a.agginitval || ''''
+          END
+        || ')'
+      INTO dest_qry
+      FROM pg_proc p
+        JOIN pg_aggregate a ON a.aggfnoid = p.oid
+        LEFT JOIN pg_operator op ON op.oid = a.aggsortop
+      WHERE p.oid = func_oid;
+      EXECUTE dest_qry;
+    END LOOP;
+    RAISE NOTICE '   FUNCTIONS cloned: %', LPAD(cnt::text, 5, ' ');
+  END IF;
+
 
   -- MV: Create Triggers
 
