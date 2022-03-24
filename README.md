@@ -8,8 +8,8 @@ Handles following objects:
 * Sequences
 * Functions/Procedures
 * Types (composite and enum)
-* Collations and Domains
-* Triggers
+* Collations, Domains, and Rules
+* Triggers, Trigger Functions
 * Comments (in progress: see Issue#62)
 * Permissions/GRANTs
 
