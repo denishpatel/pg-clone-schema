@@ -16,6 +16,7 @@
 -- 2022-03-01  MJV FIX: Fixed Issue#62 Added comments for indexes only (Thanks to @guignonv).  Still need to add comments for other objects.
 -- 2022-03-24  MJV FIX: Fixed Issue#63 Use last used value for sequence not the start value
 -- 2022-03-24  MJV FIX: Fixed Issue#65 Check column availability in selecting query to use for pg_proc table.  Also do some explicit datatype mappings for certain aggregate functions. TODO: fix cloning of inherited tables
+-- 2022-03-24  MJV FIX: Fixed Issue#59 Implement Rules
 
 -- count validations:
 -- \set aschema sample
@@ -1071,6 +1072,27 @@ BEGIN
     END;
   END LOOP;
   RAISE NOTICE '    TRIGGERS cloned: %', LPAD(cnt::text, 5, ' ');
+
+
+  -- MV: Create Rules
+  -- Fixes Issue#59 Implement Rules
+  action := 'Rules';
+  cnt := 0;
+  FOR arec IN
+    SELECT regexp_replace(definition, E'[\\n\\r]+', ' ', 'g' ) as definition from pg_rules where schemaname = quote_ident(source_schema)
+  LOOP
+    cnt := cnt + 1;
+    buffer := REPLACE(arec.definition, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');  
+    -- RAISE INFO 'rules def: %', buffer;
+    IF ddl_only THEN
+      RAISE INFO '%', buffer;
+    ELSE
+      EXECUTE buffer;
+    END IF;
+  END LOOP;
+  RAISE NOTICE '    RULES    cloned: %', LPAD(cnt::text, 5, ' ');  
+
+
 
   -- ---------------------
   -- MV: Permissions: Defaults
