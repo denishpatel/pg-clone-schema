@@ -15,7 +15,7 @@
 -- 2022-03-01  MJV FIX: Fixed Issue#61 Fixed more search_path problems. Modified get_table_ddl() to hard code search_path to public. Using set_config() for empty string instead of trying to set empty string directly and incorrectly. 
 -- 2022-03-01  MJV FIX: Fixed Issue#62 Added comments for indexes only (Thanks to @guignonv).  Still need to add comments for other objects.
 -- 2022-03-24  MJV FIX: Fixed Issue#63 Use last used value for sequence not the start value
--- 2022-03-24  MJV FIX: Fixed Issue#65 Check column availability in selecting query to use for pg_proc table.  Also do some explicit datatype mappings for certain aggregate functions. Also, fix cloning of inherited tables
+-- 2022-03-24  MJV FIX: Fixed Issue#65 Check column availability in selecting query to use for pg_proc table.  Also do some explicit datatype mappings for certain aggregate functions. TODO: fix cloning of inherited tables
 
 -- count validations:
 -- \set aschema sample
@@ -221,7 +221,7 @@ DECLARE
   sq_increment_by  bigint;
   sq_min_value     bigint;
   sq_cache_value   bigint;
-  sq_is_called     boolean;
+  sq_is_called     boolean := True;
   sq_is_cycled     boolean;
   is_prokind       boolean;
   sq_data_type     text;
@@ -402,10 +402,11 @@ BEGIN
   action := 'Sequences';
   cnt := 0;
   -- fix#63  get from pg_sequences not information_schema           
+  -- fix#63  take 2: get it from information_schema.sequences since we need to treat IDENTITY columns differently. 
   FOR object IN
-    SELECT sequencename::text
-      FROM pg_sequences
-     WHERE schemaname = quote_ident(source_schema)
+    SELECT sequence_name::text
+      FROM information_schema.sequences
+     WHERE sequence_schema = quote_ident(source_schema)
   LOOP
     cnt := cnt + 1;
     IF ddl_only THEN
@@ -415,13 +416,9 @@ BEGIN
     END IF;
     srctbl := quote_ident(source_schema) || '.' || quote_ident(object);
 
-    EXECUTE 'SELECT COALESCE(last_value, 1), is_called
-              FROM ' || quote_ident(source_schema) || '.' || quote_ident(object) || ';'
-              INTO sq_last_value, sq_is_called;
-
-    EXECUTE 'SELECT max_value, start_value, increment_by, min_value, cache_size, cycle, data_type
-              FROM pg_catalog.pg_sequences WHERE schemaname='|| quote_literal(source_schema) || ' AND sequencename=' || quote_literal(object) || ';'
-              INTO sq_max_value, sq_start_value, sq_increment_by, sq_min_value, sq_cache_value, sq_is_cycled, sq_data_type ;
+    EXECUTE 'SELECT max_value, start_value, increment_by, min_value, cache_size, cycle, data_type, COALESCE(last_value, 1)
+              FROM pg_catalog.pg_sequences WHERE schemaname='|| quote_literal(source_schema) || ' AND sequencename=' || quote_literal(object) || ';' 
+              INTO sq_max_value, sq_start_value, sq_increment_by, sq_min_value, sq_cache_value, sq_is_cycled, sq_data_type, sq_last_value;
 
     IF sq_is_cycled
       THEN
@@ -463,6 +460,7 @@ BEGIN
     END IF;
   END LOOP;
   RAISE NOTICE '   SEQUENCES cloned: %', LPAD(cnt::text, 5, ' ');
+  
 
 -- Create tables including partitioned ones (parent/children) and unlogged ones.  Order by is critical since child partition range logic is dependent on it.
   action := 'Tables';
@@ -702,11 +700,10 @@ BEGIN
   -- Assigning sequences to table columns.
   action := 'Sequences assigning';
   cnt := 0;
-  -- fix#63 use pg_sequences not information_schema.sequences
   FOR object IN
-    SELECT sequencename::text
-      FROM pg_sequences
-     WHERE schemaname = quote_ident(source_schema)
+    SELECT sequence_name::text
+      FROM information_schema.sequences
+     WHERE sequence_schema = quote_ident(source_schema)
   LOOP
     cnt := cnt + 1;
     srctbl := quote_ident(source_schema) || '.' || quote_ident(object);
@@ -750,6 +747,29 @@ BEGIN
 
   END LOOP;
   RAISE NOTICE '   SEQUENCES assigning: %', LPAD(cnt::text, 2, ' ');
+
+  -- Update IDENTITY sequences to the last value
+  cnt := 0;
+  FOR object, sq_last_value IN
+    SELECT sequencename::text, last_value from pg_sequences where schemaname = quote_ident(source_schema) AND NOT EXISTS 
+    (select 1 from information_schema.sequences where sequence_schema = quote_ident(source_schema) and sequence_name = sequencename)
+  LOOP
+    cnt := cnt + 1;
+    buffer := quote_ident(dest_schema) || '.' || quote_ident(object);
+    IF include_recs THEN
+      EXECUTE 'SELECT setval( ''' || buffer || ''', ' || sq_last_value || ', ' || sq_is_called || ');' ;
+    ELSE
+      if ddl_only THEN
+        -- fix#63           
+        RAISE INFO '%', 'SELECT setval( ''' || buffer || ''', ' || sq_last_value || ', ' || sq_is_called || ');' ;
+      ELSE
+        -- fix#63           
+        EXECUTE 'SELECT setval( ''' || buffer || ''', ' || sq_last_value || ', ' || sq_is_called || ');' ;
+      END IF;
+    END IF;
+  END LOOP;
+  RAISE NOTICE '   IDENTITIES set:      %', LPAD(cnt::text, 2, ' ');
+
 
   --  add FK constraint
   action := 'FK Constraints';
