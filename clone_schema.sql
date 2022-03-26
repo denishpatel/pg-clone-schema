@@ -15,8 +15,8 @@
 -- 2022-03-01  MJV FIX: Fixed Issue#61 Fixed more search_path problems. Modified get_table_ddl() to hard code search_path to public. Using set_config() for empty string instead of trying to set empty string directly and incorrectly. 
 -- 2022-03-01  MJV FIX: Fixed Issue#62 Added comments for indexes only (Thanks to @guignonv).  Still need to add comments for other objects.
 -- 2022-03-24  MJV FIX: Fixed Issue#63 Use last used value for sequence not the start value
--- 2022-03-24  MJV FIX: Fixed Issue#65 Check column availability in selecting query to use for pg_proc table.  Also do some explicit datatype mappings for certain aggregate functions. TODO: fix cloning of inherited tables
 -- 2022-03-24  MJV FIX: Fixed Issue#59 Implement Rules
+-- 2022-03-26  MJV FIX: Fixed Issue#65 Check column availability in selecting query to use for pg_proc table.  Also do some explicit datatype mappings for certain aggregate functions.  Also fixed inheritance derived tables.
 
 -- count validations:
 -- \set aschema sample
@@ -228,10 +228,13 @@ DECLARE
   sq_data_type     text;
   sq_cycled        char(10);
   sq_owned         text;
+  sq_server_version text;
+  sq_server_version_num integer;
   arec             RECORD;
   cnt              integer;
   cnt2             integer;
   pos              integer;
+  l_id             integer;
   action           text := 'N/A';
   tblname          text;
   v_ret            text;
@@ -243,6 +246,14 @@ DECLARE
   v_diag6          text;
   v_dummy          text;
 BEGIN
+
+  -- Get server version info to handle certain things differently based on the version.
+  SELECT setting INTO sq_server_version from pg_settings where name = 'server_version';
+  SELECT setting INTO sq_server_version_num from pg_settings where name = 'server_version_num';
+  IF sq_server_version_num < 100000 THEN
+    RAISE WARNING 'Server Version:%  Number:%  PG Versions older than v10 are not supported.', sq_server_version, sq_server_version_num;
+    RETURN;
+  END IF;
 
   -- Make sure NOTICE are shown
   set client_min_messages = 'notice';
@@ -319,20 +330,24 @@ BEGIN
   -- MV: Create Collations
   action := 'Collations';
   cnt := 0;
-  FOR arec IN
-    SELECT n.nspname as schemaname, a.rolname as ownername , c.collname, c.collprovider,  c.collcollate as locale,
-    'CREATE COLLATION ' || quote_ident(dest_schema) || '."' || c.collname || '" (provider = ' || CASE WHEN c.collprovider = 'i' THEN 'icu' WHEN c.collprovider = 'c' THEN 'libc' ELSE '' END || ', locale = ''' || c.collcollate || ''');' as COLL_DDL
-    FROM pg_collation c JOIN pg_namespace n ON (c.collnamespace = n.oid) JOIN pg_roles a ON (c.collowner = a.oid) WHERE n.nspname = quote_ident(source_schema) order by c.collname
-  LOOP
-    BEGIN
-      cnt := cnt + 1;
-      IF ddl_only THEN
-        RAISE INFO '%', arec.coll_ddl;
-      ELSE
-        EXECUTE arec.coll_ddl;
-      END IF;
-    END;
-  END LOOP;
+  IF sq_server_version_num < 100000 THEN
+    RAISE NOTICE 'Collation cloning is are not supported in PG versions older than v10.  Current version is %-%', sq_server_version, sq_server_version_num;
+  ELSE
+    FOR arec IN
+      SELECT n.nspname as schemaname, a.rolname as ownername , c.collname, c.collprovider,  c.collcollate as locale,
+      'CREATE COLLATION ' || quote_ident(dest_schema) || '."' || c.collname || '" (provider = ' || CASE WHEN c.collprovider = 'i' THEN 'icu' WHEN c.collprovider = 'c' THEN 'libc' ELSE '' END || ', locale = ''' || c.collcollate || ''');' as COLL_DDL
+      FROM pg_collation c JOIN pg_namespace n ON (c.collnamespace = n.oid) JOIN pg_roles a ON (c.collowner = a.oid) WHERE n.nspname = quote_ident(source_schema) order by c.collname
+    LOOP
+      BEGIN
+        cnt := cnt + 1;
+        IF ddl_only THEN
+          RAISE INFO '%', arec.coll_ddl;
+        ELSE
+          EXECUTE arec.coll_ddl;
+        END IF;
+      END;
+    END LOOP;
+  END IF;
   RAISE NOTICE '  COLLATIONS cloned: %', LPAD(cnt::text, 5, ' ');
 
   -- MV: Create Domains
@@ -405,9 +420,7 @@ BEGIN
   -- fix#63  get from pg_sequences not information_schema           
   -- fix#63  take 2: get it from information_schema.sequences since we need to treat IDENTITY columns differently. 
   FOR object IN
-    SELECT sequence_name::text
-      FROM information_schema.sequences
-     WHERE sequence_schema = quote_ident(source_schema)
+    SELECT sequence_name::text FROM information_schema.sequences WHERE sequence_schema = quote_ident(source_schema)
   LOOP
     cnt := cnt + 1;
     IF ddl_only THEN
@@ -417,27 +430,50 @@ BEGIN
     END IF;
     srctbl := quote_ident(source_schema) || '.' || quote_ident(object);
 
-    EXECUTE 'SELECT max_value, start_value, increment_by, min_value, cache_size, cycle, data_type, COALESCE(last_value, 1)
-              FROM pg_catalog.pg_sequences WHERE schemaname='|| quote_literal(source_schema) || ' AND sequencename=' || quote_literal(object) || ';' 
-              INTO sq_max_value, sq_start_value, sq_increment_by, sq_min_value, sq_cache_value, sq_is_cycled, sq_data_type, sq_last_value;
+    IF sq_server_version_num < 100000 THEN
+      EXECUTE 'SELECT last_value, is_called FROM ' || quote_ident(source_schema) || '.' || quote_ident(object) || ';' INTO sq_last_value, sq_is_called;
+      EXECUTE 'SELECT maximum_value, start_value, increment, minimum_value, 1 cache_size, cycle_option, data_type
+               FROM information_schema.sequences WHERE sequence_schema='|| quote_literal(source_schema) || ' AND sequence_name=' || quote_literal(object) || ';' 
+               INTO sq_max_value, sq_start_value, sq_increment_by, sq_min_value, sq_cache_value, sq_is_cycled, sq_data_type;    
+      IF sq_is_cycled
+        THEN
+          sq_cycled := 'CYCLE';
+      ELSE
+          sq_cycled := 'NO CYCLE';
+      END IF;
 
-    IF sq_is_cycled
-      THEN
-        sq_cycled := 'CYCLE';
+      qry := 'ALTER SEQUENCE '   || quote_ident(dest_schema) || '.' || quote_ident(object)
+             || ' INCREMENT BY ' || sq_increment_by
+             || ' MINVALUE '     || sq_min_value
+             || ' MAXVALUE '     || sq_max_value
+             -- will update current sequence value after this
+             || ' START WITH '   || sq_start_value
+             || ' RESTART '      || sq_min_value
+             || ' CACHE '        || sq_cache_value
+             || ' '              || sq_cycled || ' ;' ;
     ELSE
-        sq_cycled := 'NO CYCLE';
-    END IF;
+      EXECUTE 'SELECT max_value, start_value, increment_by, min_value, cache_size, cycle, data_type, COALESCE(last_value, 1)
+            FROM pg_catalog.pg_sequences WHERE schemaname='|| quote_literal(source_schema) || ' AND sequencename=' || quote_literal(object) || ';' 
+            INTO sq_max_value, sq_start_value, sq_increment_by, sq_min_value, sq_cache_value, sq_is_cycled, sq_data_type, sq_last_value;    
+      IF sq_is_cycled
+        THEN
+          sq_cycled := 'CYCLE';
+      ELSE
+          sq_cycled := 'NO CYCLE';
+      END IF;
 
-    qry := 'ALTER SEQUENCE '   || quote_ident(dest_schema) || '.' || quote_ident(object)
-           || ' AS ' || sq_data_type
-           || ' INCREMENT BY ' || sq_increment_by
-           || ' MINVALUE '     || sq_min_value
-           || ' MAXVALUE '     || sq_max_value
-           -- will update current sequence value after this
-           || ' START WITH '   || sq_start_value
-           || ' RESTART '      || sq_min_value
-           || ' CACHE '        || sq_cache_value
-           || ' '              || sq_cycled || ' ;' ;
+      qry := 'ALTER SEQUENCE '   || quote_ident(dest_schema) || '.' || quote_ident(object)
+             || ' AS ' || sq_data_type
+             || ' INCREMENT BY ' || sq_increment_by
+             || ' MINVALUE '     || sq_min_value
+             || ' MAXVALUE '     || sq_max_value
+             -- will update current sequence value after this
+             || ' START WITH '   || sq_start_value
+             || ' RESTART '      || sq_min_value
+             || ' CACHE '        || sq_cache_value
+             || ' '              || sq_cycled || ' ;' ;
+    END IF;
+           
     IF ddl_only THEN
       RAISE INFO '%', qry;
     ELSE
@@ -469,29 +505,17 @@ BEGIN
   -- Issue#61 FIX: use set_config for empty string
   -- SET search_path = '';
   SELECT set_config('search_path', '', false) into v_dummy;
-  FOR tblname, relpersist, relispart, relknd, data_type, ocomment  IN
+  FOR tblname, relpersist, relispart, relknd, data_type, ocomment, l_id  IN
     -- 2021-03-08 MJV #39 fix: change sql to get indicator of user-defined columns to issue warnings
     -- select c.relname, c.relpersistence, c.relispartition, c.relkind
     -- FROM pg_class c, pg_namespace n where n.oid = c.relnamespace and n.nspname = quote_ident(source_schema) and c.relkind in ('r','p') and 
     -- order by c.relkind desc, c.relname
-    SELECT DISTINCT c.relname,
-      c.relpersistence,
-      c.relispartition,
-      c.relkind,
-      co.data_type,
-      obj_description(c.oid)
-    FROM pg_class c
-      JOIN pg_namespace n ON (
-        n.oid = c.relnamespace
-        AND n.nspname = quote_ident(source_schema)
-        AND c.relkind IN ('r','p')
-      ) 
-      LEFT JOIN information_schema.columns co ON (
-        co.table_schema = n.nspname
-        AND co.table_name = c.relname
-        AND co.data_type = 'USER-DEFINED'
-      )
-    ORDER BY c.relkind DESC, c.relname
+    --Fix#65 add another left join to distinguish child tables by inheritance
+
+    SELECT DISTINCT c.relname, c.relpersistence, c.relispartition, c.relkind, co.data_type, obj_description(c.oid), COALESCE(i.inhrelid, -1)
+    FROM pg_class c JOIN pg_namespace n ON (n.oid = c.relnamespace AND n.nspname = quote_ident(source_schema)AND c.relkind IN ('r','p')) 
+    LEFT JOIN information_schema.columns co ON (co.table_schema = n.nspname AND co.table_name = c.relname AND co.data_type = 'USER-DEFINED')
+    LEFT JOIN pg_inherits i ON (c.oid = i.inhrelid and not c.relispartition) ORDER BY c.relkind DESC, c.relname
   LOOP
     cnt := cnt + 1;
     IF data_type = 'USER-DEFINED' THEN
@@ -506,20 +530,45 @@ BEGIN
     IF relknd = 'r' THEN
       IF ddl_only THEN
         IF data_type = 'USER-DEFINED' THEN      
-          SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
-          buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
-          RAISE INFO '%', buffer3;
+          IF l_id = -1 THEN
+            SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
+            buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
+            RAISE INFO '%', buffer3;
+          ELSE
+            -- FIXED #65
+            SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
+            buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
+            RAISE INFO '%', buffer3;
+          END IF;
         ELSE
-          RAISE INFO '%', 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
+          IF l_id = -1 THEN
+            RAISE INFO '%', 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
+          ELSE
+            SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
+            buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
+            RAISE INFO '%', buffer3;
+          END IF;
         END IF;
 
       ELSE
         IF data_type = 'USER-DEFINED' THEN            
-          SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
-          buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
-          EXECUTE buffer3;
+          IF l_id = -1 THEN
+            SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
+            buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
+            EXECUTE buffer3;
+          ELSE
+            SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
+            buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
+            EXECUTE buffer3;          
+          END IF;
         ELSE
-          EXECUTE 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
+          IF l_id = -1 THEN
+            EXECUTE 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
+          ELSE
+            SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
+            buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
+            EXECUTE buffer3;                    
+          END IF;
         END IF;
         -- Add table comment.
         IF ocomment IS NOT NULL THEN
@@ -750,11 +799,15 @@ BEGIN
   RAISE NOTICE '   SEQUENCES assigning: %', LPAD(cnt::text, 2, ' ');
 
   -- Update IDENTITY sequences to the last value
+  action := 'Identity updating';
   cnt := 0;
   FOR object, sq_last_value IN
-    SELECT sequencename::text, last_value from pg_sequences where schemaname = quote_ident(source_schema) AND NOT EXISTS 
+    SELECT sequencename::text, COALESCE(last_value, -999) from pg_sequences where schemaname = quote_ident(source_schema) AND NOT EXISTS 
     (select 1 from information_schema.sequences where sequence_schema = quote_ident(source_schema) and sequence_name = sequencename)
   LOOP
+    IF sq_last_value = -999 THEN
+      continue;
+    END IF;
     cnt := cnt + 1;
     buffer := quote_ident(dest_schema) || '.' || quote_ident(object);
     IF include_recs THEN
@@ -951,7 +1004,7 @@ BEGIN
       END IF;
     END LOOP;    
   END IF;
-  
+
   -- Create aggregate functions.
   -- Fixed Issue#65
   -- FOR func_oid IN SELECT oid FROM pg_proc WHERE pronamespace = src_oid AND prokind = 'a'
@@ -991,7 +1044,12 @@ BEGIN
         JOIN pg_aggregate a ON a.aggfnoid = p.oid
         LEFT JOIN pg_operator op ON op.oid = a.aggsortop
       WHERE p.oid = func_oid;
-      EXECUTE dest_qry;
+      IF ddl_only THEN     
+        RAISE INFO '%', dest_qry;
+      ELSE
+        EXECUTE dest_qry;
+      END IF;
+   
     END LOOP;
     RAISE NOTICE '   FUNCTIONS cloned: %', LPAD(cnt::text, 5, ' ');
     
@@ -1030,7 +1088,12 @@ BEGIN
         JOIN pg_aggregate a ON a.aggfnoid = p.oid
         LEFT JOIN pg_operator op ON op.oid = a.aggsortop
       WHERE p.oid = func_oid;
-      EXECUTE dest_qry;
+      IF ddl_only THEN     
+        RAISE INFO '%', dest_qry;
+      ELSE
+        EXECUTE dest_qry;
+      END IF;
+      
     END LOOP;
     RAISE NOTICE '   FUNCTIONS cloned: %', LPAD(cnt::text, 5, ' ');
   END IF;
