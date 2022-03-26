@@ -47,6 +47,7 @@ Regression Testing is done in the following order:
 * Run the **schema_object_counts.sql** queries to compare object counts from the source and target schemas.
 
 # Limitations
+* Only works for PG Versions 10 and up.
 * You should not clone the "public" schema.  The resulting output may not be accurate even if it finishes without any errors.
 * Foreign Tables are not handled at the present time.  They must be done manually.
 * DDL only option is not complete since it depends on objects that aren't created yet. See issue#29
