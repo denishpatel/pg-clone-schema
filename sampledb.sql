@@ -1,6 +1,7 @@
 --
 -- Sample database used for clone_schema() testing
 -- psql -b postgres < ./sampledb.sql
+-- psql -v ON_ERROR_STOP=1 -e -b postgres < ./sampledb.sql
 -- psql clone_testing < /var/lib/pgsql/temp/clone_schema.sql
 -- psql clone_testing; select clone_schema('sample', 'sample_clone1', false, false);
 --
@@ -21,23 +22,19 @@ SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
 
+-- drop roles related to this database
+DROP ROLE IF EXISTS mydb_admin;
+DROP ROLE IF EXISTS mydb_app;
+DROP ROLE IF EXISTS mydb_dev;
+DROP ROLE IF EXISTS mydb_owner;
+DROP ROLE IF EXISTS mydb_read;
+DROP ROLE IF EXISTS mydb_reader;
+DROP ROLE IF EXISTS mydb_update;
+DROP ROLE IF EXISTS sysdba;
+
 -- set global stuff: 
 
 -- don't worry if roles already exist, since they are cluster-wide, not just database-wide
-CREATE ROLE iodb_admin;
-ALTER ROLE iodb_admin WITH SUPERUSER INHERIT NOCREATEROLE NOCREATEDB LOGIN NOREPLICATION NOBYPASSRLS PASSWORD 'md5f0d8c0ad9329be789034a8f6fda63d97';
-CREATE ROLE iodb_app;
-ALTER ROLE iodb_app WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB LOGIN NOREPLICATION NOBYPASSRLS PASSWORD 'md56145cfc4b8d0620b81cd224e153a0200';
-CREATE ROLE iodb_dev;
-ALTER ROLE iodb_dev WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB LOGIN NOREPLICATION NOBYPASSRLS PASSWORD 'md55fb5893f7091e85194823cea292f57a6';
-CREATE ROLE iodb_owner;
-ALTER ROLE iodb_owner WITH NOSUPERUSER INHERIT CREATEROLE NOCREATEDB NOLOGIN NOREPLICATION NOBYPASSRLS;
-CREATE ROLE iodb_read;
-ALTER ROLE iodb_read WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOLOGIN NOREPLICATION NOBYPASSRLS;
-CREATE ROLE iodb_reader;
-ALTER ROLE iodb_reader WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB LOGIN NOREPLICATION NOBYPASSRLS PASSWORD 'md521b8b06eca27bb96e28c5e88462db2a6';
-CREATE ROLE iodb_update;
-ALTER ROLE iodb_update WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOLOGIN NOREPLICATION NOBYPASSRLS;
 CREATE ROLE mydb_admin;
 ALTER ROLE mydb_admin WITH SUPERUSER INHERIT NOCREATEROLE NOCREATEDB LOGIN NOREPLICATION NOBYPASSRLS PASSWORD 'md52a9d1ad681c50b59ac5490fe0ed52331';
 CREATE ROLE mydb_app;
@@ -52,37 +49,17 @@ CREATE ROLE mydb_reader;
 ALTER ROLE mydb_reader WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB LOGIN NOREPLICATION NOBYPASSRLS PASSWORD 'md53f632bcce057ab249fa3808470195eff';
 CREATE ROLE mydb_update;
 ALTER ROLE mydb_update WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOLOGIN NOREPLICATION NOBYPASSRLS;
-CREATE ROLE myuser1;
-ALTER ROLE myuser1 WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB LOGIN NOREPLICATION NOBYPASSRLS PASSWORD 'md53c769cae3570d6ed52d58c5fdfd5a1e0';
-CREATE ROLE readonly;
-ALTER ROLE readonly WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOLOGIN NOREPLICATION NOBYPASSRLS;
 CREATE ROLE sysdba;
 ALTER ROLE sysdba WITH SUPERUSER INHERIT CREATEROLE CREATEDB LOGIN REPLICATION NOBYPASSRLS PASSWORD 'md54f2192d28c96b5e38d4553264cb2f448';
-ALTER ROLE iodb_admin SET search_path TO 'io';
-ALTER ROLE iodb_app SET search_path TO 'io';
-ALTER ROLE iodb_dev SET search_path TO 'io';
-ALTER ROLE iodb_read SET search_path TO 'io';
-ALTER ROLE iodb_reader SET search_path TO 'io';
-ALTER ROLE iodb_update SET search_path TO 'io';
 ALTER ROLE mydb_admin SET search_path TO 'public, pg_catalog';
 ALTER ROLE mydb_app SET search_path TO 'public, pg_catalog';
 ALTER ROLE mydb_dev SET search_path TO 'public, pg_catalog';
 ALTER ROLE mydb_read SET search_path TO 'public, pg_catalog';
 ALTER ROLE mydb_reader SET search_path TO 'public, pg_catalog';
 ALTER ROLE mydb_update SET search_path TO 'public, pg_catalog';
-ALTER ROLE myuser1 SET search_path TO 't3';
-ALTER ROLE readonly SET search_path TO 't3';
+
 
 -- Role memberships
-GRANT iodb_owner TO iodb_admin GRANTED BY postgres;
-GRANT iodb_read TO iodb_app GRANTED BY iodb_owner;
-GRANT iodb_read TO iodb_dev GRANTED BY iodb_owner;
-GRANT iodb_read TO iodb_owner GRANTED BY postgres;
-GRANT iodb_read TO iodb_reader GRANTED BY iodb_owner;
-GRANT iodb_read TO iodb_update GRANTED BY iodb_owner;
-GRANT iodb_update TO iodb_app GRANTED BY iodb_owner;
-GRANT iodb_update TO iodb_dev GRANTED BY iodb_owner;
-GRANT iodb_update TO iodb_owner GRANTED BY postgres;
 GRANT mydb_owner TO mydb_admin GRANTED BY postgres;
 GRANT mydb_read TO mydb_app GRANTED BY mydb_owner;
 GRANT mydb_read TO mydb_dev GRANTED BY mydb_owner;
@@ -92,7 +69,6 @@ GRANT mydb_read TO mydb_update GRANTED BY mydb_owner;
 GRANT mydb_update TO mydb_app GRANTED BY mydb_owner;
 GRANT mydb_update TO mydb_dev GRANTED BY mydb_owner;
 GRANT mydb_update TO mydb_owner GRANTED BY postgres;
-GRANT readonly TO myuser1 GRANTED BY postgres;
 
 -- end of global stuff
 
@@ -305,12 +281,12 @@ CREATE AGGREGATE avg (float8)
     initcond = '{0,0,0}'
 );
 
-CREATE AGGREGATE array_accum (anyelement)
-(
-    sfunc = array_append,
-    stype = anyarray,
-    initcond = '{}'
-);
+-- CREATE AGGREGATE array_accum (anyelement)
+-- (
+--     sfunc = array_append,
+--     stype = anyarray,
+--     initcond = '{}'
+-- );
 
 create function greaterint (int, int)
 returns int language sql
@@ -939,12 +915,6 @@ ALTER TABLE ONLY sample.address
 
 GRANT ALL ON SCHEMA sample TO mydb_read;
 GRANT ALL ON SCHEMA sample TO pg_stat_scan_tables;
-GRANT ALL ON SCHEMA sample TO iodb_app;
-GRANT ALL ON SCHEMA sample TO iodb_dev;
-GRANT ALL ON SCHEMA sample TO iodb_owner;
-GRANT ALL ON SCHEMA sample TO iodb_read;
-GRANT ALL ON SCHEMA sample TO iodb_reader;
-GRANT ALL ON SCHEMA sample TO iodb_update;
 GRANT ALL ON SCHEMA sample TO mydb_app;
 GRANT ALL ON SCHEMA sample TO mydb_dev;
 GRANT ALL ON SCHEMA sample TO mydb_owner;
@@ -1130,6 +1100,77 @@ ALTER DEFAULT PRIVILEGES FOR ROLE mydb_update IN SCHEMA sample GRANT INSERT,DELE
 ALTER DEFAULT PRIVILEGES FOR ROLE mydb_owner IN SCHEMA sample REVOKE ALL ON TABLES  FROM mydb_owner;
 ALTER DEFAULT PRIVILEGES FOR ROLE mydb_owner IN SCHEMA sample GRANT SELECT,INSERT,REFERENCES,DELETE,TRIGGER,UPDATE ON TABLES  TO mydb_update;
 
+
+-- RLS and policies. See pg_policies;  https://www.postgresql.org/docs/current/ddl-rowsecurity.html
+set search_path = sample;
+DROP ROLE IF EXISTS managers;
+DROP ROLE IF EXISTS users;
+DROP ROLE IF EXISTS admin;
+DROP ROLE IF EXISTS bob;
+DROP ROLE IF EXISTS alice;
+
+CREATE ROLE managers;
+CREATE ROLE users;
+
+CREATE TABLE groups (group_id int PRIMARY KEY, group_name text NOT NULL);
+INSERT INTO groups VALUES (1, 'low'), (2, 'medium'), (5, 'high');
+CREATE TABLE users (user_name text PRIMARY KEY, group_id int NOT NULL REFERENCES groups);
+INSERT INTO users VALUES ('alice', 5), ('bob', 2), ('mallory', 2);
+CREATE TABLE accounts (manager text, company text, contact_email text);
+ALTER TABLE accounts ENABLE ROW LEVEL SECURITY;
+CREATE TABLE information (info text, group_id int NOT NULL REFERENCES groups);
+INSERT INTO information VALUES ('barely secret', 1), ('slightly secret', 2), ('very secret', 5);
+
+CREATE POLICY account_managers ON accounts TO managers  USING (manager = current_user);
+CREATE POLICY user_policy ON users USING (user_name = current_user);
+
+CREATE POLICY user_sel_policy ON users FOR SELECT USING (true);
+CREATE POLICY user_mod_policy ON users USING (user_name = current_user);
+CREATE TABLE passwd (
+  user_name             text UNIQUE NOT NULL,
+  pwhash                text,
+  uid                   int  PRIMARY KEY,
+  gid                   int  NOT NULL,
+  real_name             text NOT NULL,
+  home_phone            text,
+  extra_info            text,
+  home_dir              text NOT NULL,
+  shell                 text NOT NULL
+);
+CREATE ROLE admin;  -- Administrator
+CREATE ROLE bob;    -- Normal user
+CREATE ROLE alice;  -- Normal user
+
+INSERT INTO passwd VALUES ('admin','xxx',0,0,'Admin','111-222-3333',null,'/root','/bin/dash');
+INSERT INTO passwd VALUES ('bob','xxx',1,1,'Bob','123-456-7890',null,'/home/bob','/bin/zsh');
+INSERT INTO passwd VALUES ('alice','xxx',2,1,'Alice','098-765-4321',null,'/home/alice','/bin/zsh');
+
+ALTER TABLE passwd ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY admin_all ON passwd TO admin USING (true) WITH CHECK (true);
+CREATE POLICY all_view ON passwd FOR SELECT USING (true);
+CREATE POLICY user_mod ON passwd FOR UPDATE USING (current_user = user_name) WITH CHECK (current_user = user_name AND shell IN ('/bin/bash','/bin/sh','/bin/dash','/bin/zsh','/bin/tcsh'));
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON passwd TO admin;
+GRANT SELECT (user_name, uid, gid, real_name, home_phone, extra_info, home_dir, shell) ON passwd TO public;
+GRANT UPDATE (pwhash, real_name, home_phone, extra_info, shell) ON passwd TO public;
+
+CREATE POLICY admin_local_only ON passwd AS RESTRICTIVE TO admin USING (pg_catalog.inet_client_addr() IS NULL);
+
+GRANT ALL ON groups TO alice;  -- alice is the administrator
+GRANT SELECT ON groups TO public;
+
+GRANT ALL ON users TO alice;
+GRANT SELECT ON users TO public;
+
+ALTER TABLE information ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY fp_s ON information FOR SELECT USING (group_id <= (SELECT group_id FROM users WHERE user_name = current_user));
+CREATE POLICY fp_u ON information FOR UPDATE USING (group_id <= (SELECT group_id FROM users WHERE user_name = current_user));
+
+GRANT ALL ON information TO public;
+
+-- 
                                                                                                                             
 --
 -- End Sample database
