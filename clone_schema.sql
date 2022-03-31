@@ -17,6 +17,7 @@
 -- 2022-03-24  MJV FIX: Fixed Issue#63 Use last used value for sequence not the start value
 -- 2022-03-24  MJV FIX: Fixed Issue#59 Implement Rules
 -- 2022-03-26  MJV FIX: Fixed Issue#65 Check column availability in selecting query to use for pg_proc table.  Also do some explicit datatype mappings for certain aggregate functions.  Also fixed inheritance derived tables.
+-- 2022-03-31  MJV FIX: Fixed Issue#66 Implement Security Policies for RLS
 
 -- count validations:
 -- \set aschema sample
@@ -1155,6 +1156,24 @@ BEGIN
   END LOOP;
   RAISE NOTICE '    RULES    cloned: %', LPAD(cnt::text, 5, ' ');  
 
+
+  -- MV: Create Policies
+  -- Fixes Issue#66 Implement Security policies for RLS
+  action := 'Policies';
+  cnt := 0;
+  FOR arec IN
+    SELECT 'CREATE POLICY ' || policyname || ' ON ' || quote_ident(dest_schema) || '.' || tablename || ' AS ' || permissive || ' FOR ' || cmd || ' TO ' 
+    ||  array_to_string(roles, ',', '*') || ' USING (' || regexp_replace(qual, E'[\\n\\r]+', ' ', 'g' ) || ')' 
+    || CASE WHEN with_check IS NOT NULL THEN ' WITH CHECK (' ELSE '' END || coalesce(with_check, '') || CASE WHEN with_check IS NOT NULL THEN ');' ELSE ';' END as definition FROM pg_policies WHERE schemaname = 'sample' ORDER BY policyname
+  LOOP
+    cnt := cnt + 1;
+    IF ddl_only THEN
+      RAISE INFO '%', arec.definition;
+    ELSE
+      EXECUTE arec.definition;
+    END IF;
+  END LOOP;
+  RAISE NOTICE '    POLICIES cloned: %', LPAD(cnt::text, 5, ' ');  
 
 
   -- ---------------------
