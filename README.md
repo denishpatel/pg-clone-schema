@@ -10,7 +10,7 @@ Handles following objects:
 * Types (composite and enum)
 * Collations, Domains, Rules, Policies
 * Triggers, Trigger Functions
-* Comments (in progress: see Issue#62)
+* Comments
 * Permissions/GRANTs
 
 <br/>
