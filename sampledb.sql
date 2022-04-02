@@ -10,6 +10,7 @@
 drop database if exists clone_testing;
 create database clone_testing;
 \connect clone_testing;
+COMMENT ON DATABASE clone_testing IS 'just a comment on my sample database';
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -124,6 +125,7 @@ ALTER COLLATION sample."de-u-co-phonebk-x-icu" OWNER TO postgres;
 --
 
 CREATE COLLATION sample.french (provider = icu, locale = 'fr');
+COMMENT ON COLLATION sample.french IS 'my comments on french collation';
 
 
 ALTER COLLATION sample.french OWNER TO postgres;
@@ -153,6 +155,7 @@ ALTER COLLATION sample."und-u-co-emoji-x-icu" OWNER TO postgres;
 CREATE TYPE sample.udt_myint AS (myint INTEGER);
 
 CREATE DOMAIN sample.addr AS character varying(90) NOT NULL;
+COMMENT ON DOMAIN addr IS 'my domain comments on addr';
 
 
 ALTER DOMAIN sample.addr OWNER TO postgres;
@@ -185,6 +188,7 @@ CREATE TYPE sample.compfoo AS (
         f2 text
 );
 
+COMMENT ON TYPE sample.compfoo IS 'just a comment on compfoo type';
 
 ALTER TYPE sample.compfoo OWNER TO postgres;
 
@@ -344,8 +348,8 @@ RETURN;
 END;
 $_$;
 
-
 ALTER FUNCTION sample.aaa() OWNER TO postgres;
+COMMENT ON FUNCTION sample.aaa() IS 'comment on my aaa() function';
 
 
 --
@@ -415,6 +419,7 @@ END;
 $BODY$
 LANGUAGE plpgsql;
 GRANT EXECUTE ON PROCEDURE get_userscans(text, text, integer) TO postgres;
+COMMENT ON PROCEDURE get_userscans(text, text, integer) IS 'my comments on get_userscans procedure';
 
 CREATE PROCEDURE get_userscans(IN aschema text, IN atable text, INOUT scans INTEGER, INOUT ok boolean) AS
 $BODY$
@@ -441,6 +446,7 @@ END;
 $BODY$
 LANGUAGE  plpgsql;
 GRANT EXECUTE ON FUNCTION aaa(IN akey integer) to PUBLIC;
+COMMENT ON FUNCTION aaa(integer) IS 'comment on my aaa(int) function';
 
 SET default_tablespace = '';
 
@@ -571,6 +577,7 @@ PARTITION BY RANGE (foo_id);
 
 
 ALTER TABLE sample.foo_bar_baz OWNER TO postgres;
+COMMENT ON TABLE sample.foo_bar_baz IS 'just a comment on a partitioned table';
 
 --
 -- Name: foo_bar_baz_0; Type: TABLE; Schema: sample; Owner: postgres
@@ -669,7 +676,7 @@ OPTIONS (
     schema_name 'sample',
     table_name 'haha'
 );
-
+COMMENT ON FOREIGN TABLE sample.haha IS 'just a comment on a foreign table';
 
 ALTER FOREIGN TABLE sample.haha OWNER TO sysdba;
 
@@ -681,9 +688,8 @@ CREATE MATERIALIZED VIEW sample.hoho AS
  SELECT count(*) AS count
    FROM pg_stat_activity
   WITH NO DATA;
-
-
 ALTER TABLE sample.hoho OWNER TO postgres;
+COMMENT ON MATERIALIZED VIEW sample.hoho IS 'just a comment on the sample.hoho materialized view';
 
 --
 -- Name: hoho2; Type: VIEW; Schema: sample; Owner: postgres
@@ -730,6 +736,7 @@ ALTER TABLE sample.person ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
 CREATE TABLE sample.sampletable (x numeric);
 ALTER TABLE sample.sampletable OWNER TO postgres;
 CREATE VIEW sample.v_sampletable AS Select * from sample.sampletable;
+COMMENT ON VIEW sample.v_sampletable IS 'just a view on the sample table';
 
 --
 -- Name: seq111; Type: SEQUENCE; Schema: sample; Owner: postgres
@@ -741,6 +748,7 @@ CREATE SEQUENCE sample.seq111
     NO MINVALUE
     NO MAXVALUE
     CACHE 1;
+COMMENT ON SEQUENCE sample.seq111 IS 'just a comment on sample.seq111 sequence';    
 
 
 ALTER TABLE sample.seq111 OWNER TO postgres;
@@ -1122,6 +1130,7 @@ CREATE TABLE information (info text, group_id int NOT NULL REFERENCES groups);
 INSERT INTO information VALUES ('barely secret', 1), ('slightly secret', 2), ('very secret', 5);
 
 CREATE POLICY account_managers ON accounts TO managers  USING (manager = current_user);
+COMMENT ON POLICY account_managers ON ACCOUNTS IS 'my comments on account_managers policy';
 CREATE POLICY user_policy ON users USING (user_name = current_user);
 
 CREATE POLICY user_sel_policy ON users FOR SELECT USING (true);
