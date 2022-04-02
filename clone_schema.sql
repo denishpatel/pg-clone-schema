@@ -1204,6 +1204,7 @@ BEGIN
   -- MJV Fixed #62 for comments (PASS 2)
   action := 'Policies2';
   cnt2 := 0;
+  IF is_prokind THEN
   FOR qry IN
     SELECT 'COMMENT ON SCHEMA ' || n.nspname || ' IS ''' || d.description || ''';' as ddl from pg_namespace n, pg_description d where d.objoid = n.oid and n.nspname = quote_ident(source_schema) 
     UNION
@@ -1238,6 +1239,42 @@ BEGIN
       EXECUTE qry;
     END IF;
   END LOOP;
+  ELSE -- must be v 10 or less
+  FOR qry IN
+    SELECT 'COMMENT ON SCHEMA ' || n.nspname || ' IS ''' || d.description || ''';' as ddl from pg_namespace n, pg_description d where d.objoid = n.oid and n.nspname = quote_ident(source_schema) 
+    UNION
+    SELECT 'COMMENT ON TYPE ' || pg_catalog.format_type(t.oid, NULL) || ' IS ''' || pg_catalog.obj_description(t.oid, 'pg_type') || ''';' as ddl
+    FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+    WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class c WHERE c.oid = t.typrelid))
+    AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_type el WHERE el.oid = t.typelem AND el.typarray = t.oid)
+    AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default
+    AND pg_catalog.obj_description(t.oid, 'pg_type') IS NOT NULL and t.typtype = 'c'
+    UNION
+    SELECT 'COMMENT ON COLLATION ' || n.nspname || '.' || c.collname || ' IS ''' || pg_catalog.obj_description(c.oid, 'pg_collation') || ''';' as ddl
+    FROM pg_catalog.pg_collation c, pg_catalog.pg_namespace n WHERE n.oid = c.collnamespace AND c.collencoding IN (-1, pg_catalog.pg_char_to_encoding(pg_catalog.getdatabaseencoding()))
+    AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default AND pg_catalog.obj_description(c.oid, 'pg_collation') IS NOT NULL
+    UNION
+    SELECT 'COMMENT ON ' || CASE WHEN proisagg THEN 'AGGREGATE ' ELSE 'FUNCTION ' END || 
+    n.nspname || '.' || p.proname || ' (' || oidvectortypes(p.proargtypes) || ')'
+    ' IS ''' || d.description || ''';' as ddl
+    from pg_catalog.pg_namespace n JOIN pg_catalog.pg_proc p ON p.pronamespace = n.oid JOIN pg_description d ON (d.objoid = p.oid) WHERE n.nspname = quote_ident(source_schema)
+    UNION
+    SELECT 'COMMENT ON POLICY ' || p1.policyname || ' ON ' || p1.schemaname || '.' || p1.tablename || ' IS ''' || d.description || ''';' as ddl
+    from pg_policies p1, pg_policy p2, pg_class c, pg_namespace n, pg_description d WHERE p1.schemaname = n.nspname and p1.tablename = c.relname and n.oid = c.relnamespace and 
+    c.relkind in ('r','p') and p1.policyname = p2.polname and d.objoid = p2.oid and p1.schemaname = quote_ident(source_schema)
+    UNION
+    SELECT 'COMMENT ON DOMAIN ' || n.nspname || '.' || t.typname || ' IS ''' || d.description || ''';' as ddl
+    FROM pg_catalog.pg_type t LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace JOIN pg_catalog.pg_description d ON d.classoid = t.tableoid AND d.objoid = t.oid AND d.objsubid = 0
+        WHERE t.typtype = 'd' AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default ORDER BY 1
+  LOOP
+    cnt2 := cnt2 + 1;
+    IF ddl_only THEN
+      RAISE INFO '%', qry;
+    ELSE
+      EXECUTE qry;
+    END IF;
+  END LOOP;
+  END IF;
   RAISE NOTICE ' COMMENTS(2) cloned: %', LPAD(cnt2::text, 5, ' ');            
 
 
