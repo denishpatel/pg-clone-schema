@@ -18,6 +18,7 @@
 -- 2022-03-24  MJV FIX: Fixed Issue#59 Implement Rules
 -- 2022-03-26  MJV FIX: Fixed Issue#65 Check column availability in selecting query to use for pg_proc table.  Also do some explicit datatype mappings for certain aggregate functions.  Also fixed inheritance derived tables.
 -- 2022-03-31  MJV FIX: Fixed Issue#66 Implement Security Policies for RLS
+-- 2022-04-02  MJV FIX: Fixed Issue#62 Fixed all comments and reworked the way we generate index comments by @guignonv
 
 -- count validations:
 -- \set aschema sample
@@ -643,14 +644,19 @@ BEGIN
       ELSE
         EXECUTE qry;
         -- Add table comment.
-        IF ocomment IS NOT NULL THEN
-          EXECUTE 'COMMENT ON TABLE '
-            || quote_ident(dest_schema)
-            || '.'
-            || pc.relname
-            || ' IS '
-            || quote_literal(ocomment);
-        END IF;
+        -- do this separately below
+        -- IF ocomment IS NOT NULL THEN
+        --   buffer = 'COMMENT ON TABLE ' || quote_ident(dest_schema) || '.' || tblname || ' IS ' || quote_literal(ocomment);
+        --   RAISE INFO 'DEBUG 4: %', buffer;
+        --   EXECUTE 'COMMENT ON TABLE '
+        --     || quote_ident(dest_schema)
+        --     || '.'
+        --     -- FIXED BUG ??
+        --     -- || pc.relname
+        --     || tblname
+        --     || ' IS '
+        --     || quote_literal(ocomment);
+        -- END IF;
       END IF;
       -- loop for child tables and alter them to attach to parent for specific partition method.
       FOR aname, part_range, object IN
@@ -854,32 +860,31 @@ BEGIN
   RAISE NOTICE '       FKEYS cloned: %', LPAD(cnt::text, 5, ' ');
 
  -- Issue#62: Add comments on indexes.
- -- SELECT 'COMMENT ON INDEX ' || 'sample_clone' || '.' || quote_ident(c.relname) || ' IS ' || quote_literal(d.description) || ';' FROM pg_class c JOIN pg_namespace n ON (n.oid = c.relnamespace) JOIN pg_index i ON (i.indexrelid = c.oid) JOIN pg_description d ON (d.objoid = c.oid) WHERE c.reltype = 0 AND n.nspname = 'sample';
- cnt := 0;
- FOR qry IN
-    SELECT 'COMMENT ON INDEX '
-      || quote_ident(dest_schema)
-      || '.'
-      || quote_ident(c.relname)
-      || ' IS '
-      || quote_literal(d.description)
-      || ';'
-    FROM pg_class c
-      JOIN pg_namespace n ON (n.oid = c.relnamespace)
-      JOIN pg_index i ON (i.indexrelid = c.oid)
-      JOIN pg_description d ON (d.objoid = c.oid)
-    WHERE
-      c.reltype = 0
-      AND n.nspname = quote_ident(source_schema)
-  LOOP
-    cnt := cnt + 1;
-    IF ddl_only THEN
-      RAISE INFO '%', qry;
-    ELSE
-      EXECUTE qry;
-    END IF;
-  END LOOP;
-  RAISE NOTICE 'IDX COMMENTS cloned: %', LPAD(cnt::text, 5, ' ');  
+ -- cnt := 0;
+ -- FOR qry IN
+ --    SELECT 'COMMENT ON INDEX '
+ --      || quote_ident(dest_schema)
+ --      || '.'
+ --      || quote_ident(c.relname)
+ --      || ' IS '
+ --      || quote_literal(d.description)
+ --      || ';'
+ --    FROM pg_class c
+ --      JOIN pg_namespace n ON (n.oid = c.relnamespace)
+ --      JOIN pg_index i ON (i.indexrelid = c.oid)
+ --      JOIN pg_description d ON (d.objoid = c.oid)
+ --    WHERE
+ --      c.reltype = 0
+ --      AND n.nspname = quote_ident(source_schema)
+ --  LOOP
+ --    cnt := cnt + 1;
+ --    IF ddl_only THEN
+ --      RAISE INFO '%', qry;
+ --    ELSE
+ --      EXECUTE qry;
+ --    END IF;
+ --  END LOOP;
+ -- RAISE NOTICE 'IDX COMMENTS cloned: %', LPAD(cnt::text, 5, ' ');  
 
 -- Create views
   action := 'Views';
@@ -1164,7 +1169,7 @@ BEGIN
   FOR arec IN
     SELECT 'CREATE POLICY ' || policyname || ' ON ' || quote_ident(dest_schema) || '.' || tablename || ' AS ' || permissive || ' FOR ' || cmd || ' TO ' 
     ||  array_to_string(roles, ',', '*') || ' USING (' || regexp_replace(qual, E'[\\n\\r]+', ' ', 'g' ) || ')' 
-    || CASE WHEN with_check IS NOT NULL THEN ' WITH CHECK (' ELSE '' END || coalesce(with_check, '') || CASE WHEN with_check IS NOT NULL THEN ');' ELSE ';' END as definition FROM pg_policies WHERE schemaname = 'sample' ORDER BY policyname
+    || CASE WHEN with_check IS NOT NULL THEN ' WITH CHECK (' ELSE '' END || coalesce(with_check, '') || CASE WHEN with_check IS NOT NULL THEN ');' ELSE ';' END as definition FROM pg_policies WHERE schemaname = quote_ident(source_schema) ORDER BY policyname
   LOOP
     cnt := cnt + 1;
     IF ddl_only THEN
@@ -1174,6 +1179,67 @@ BEGIN
     END IF;
   END LOOP;
   RAISE NOTICE '    POLICIES cloned: %', LPAD(cnt::text, 5, ' ');  
+
+
+  -- MJV Fixed #62 for comments (PASS 1)
+  action := 'Policies1';
+  cnt := 0;
+  FOR qry IN
+    SELECT 'COMMENT ON ' || CASE WHEN c.relkind in ('r','p') AND a.attname IS NULL THEN 'TABLE ' WHEN c.relkind in ('r','p') AND 
+    a.attname IS NOT NULL THEN 'COLUMN ' WHEN c.relkind = 'f' THEN 'FOREIGN TABLE ' WHEN c.relkind = 'm' THEN 'MATERIALIZED VIEW ' WHEN c.relkind = 'v' THEN 'VIEW '
+    WHEN c.relkind = 'i' THEN 'INDEX ' WHEN c.relkind = 'S' THEN 'SEQUENCE ' ELSE 'XX' END || quote_ident(source_schema) || '.' || CASE WHEN c.relkind in ('r','p') AND 
+    a.attname IS NOT NULL THEN c.relname || '.' || a.attname ELSE c.relname END || ' IS ''' || d.description || ''';' as ddl 
+    FROM pg_class c JOIN pg_namespace n ON (n.oid = c.relnamespace) LEFT JOIN pg_description d ON (c.oid = d.objoid) 
+    LEFT JOIN pg_attribute a ON (c.oid = a.attrelid AND a.attnum > 0 and a.attnum = d.objsubid) WHERE d.description IS NOT NULL AND n.nspname = quote_ident(source_schema) order by ddl
+  LOOP
+    cnt := cnt + 1;
+    IF ddl_only THEN
+      RAISE INFO '%', qry;
+    ELSE
+      EXECUTE qry;
+    END IF;
+  END LOOP;
+  RAISE NOTICE ' COMMENTS(1) cloned: %', LPAD(cnt::text, 5, ' ');          
+
+  -- MJV Fixed #62 for comments (PASS 2)
+  action := 'Policies2';
+  cnt2 := 0;
+  FOR qry IN
+    SELECT 'COMMENT ON SCHEMA ' || n.nspname || ' IS ''' || d.description || ''';' as ddl from pg_namespace n, pg_description d where d.objoid = n.oid and n.nspname = quote_ident(source_schema) 
+    UNION
+    SELECT 'COMMENT ON TYPE ' || pg_catalog.format_type(t.oid, NULL) || ' IS ''' || pg_catalog.obj_description(t.oid, 'pg_type') || ''';' as ddl
+    FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+    WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class c WHERE c.oid = t.typrelid))
+    AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_type el WHERE el.oid = t.typelem AND el.typarray = t.oid)
+    AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default
+    AND pg_catalog.obj_description(t.oid, 'pg_type') IS NOT NULL and t.typtype = 'c'
+    UNION
+    SELECT 'COMMENT ON COLLATION ' || n.nspname || '.' || c.collname || ' IS ''' || pg_catalog.obj_description(c.oid, 'pg_collation') || ''';' as ddl
+    FROM pg_catalog.pg_collation c, pg_catalog.pg_namespace n WHERE n.oid = c.collnamespace AND c.collencoding IN (-1, pg_catalog.pg_char_to_encoding(pg_catalog.getdatabaseencoding()))
+    AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default AND pg_catalog.obj_description(c.oid, 'pg_collation') IS NOT NULL
+    UNION
+    SELECT 'COMMENT ON ' || CASE WHEN p.prokind = 'f' THEN 'FUNCTION ' WHEN p.prokind = 'p' THEN 'PROCEDURE ' WHEN p.prokind = 'a' THEN 'AGGREGATE ' END || 
+    n.nspname || '.' || p.proname || ' (' || oidvectortypes(p.proargtypes) || ')'
+    ' IS ''' || d.description || ''';' as ddl
+    from pg_catalog.pg_namespace n JOIN pg_catalog.pg_proc p ON p.pronamespace = n.oid JOIN pg_description d ON (d.objoid = p.oid) WHERE n.nspname = quote_ident(source_schema)
+    UNION
+    SELECT 'COMMENT ON POLICY ' || p1.policyname || ' ON ' || p1.schemaname || '.' || p1.tablename || ' IS ''' || d.description || ''';' as ddl
+    from pg_policies p1, pg_policy p2, pg_class c, pg_namespace n, pg_description d WHERE p1.schemaname = n.nspname and p1.tablename = c.relname and n.oid = c.relnamespace and 
+    c.relkind in ('r','p') and p1.policyname = p2.polname and d.objoid = p2.oid and p1.schemaname = quote_ident(source_schema)
+    UNION
+    SELECT 'COMMENT ON DOMAIN ' || n.nspname || '.' || t.typname || ' IS ''' || d.description || ''';' as ddl
+    FROM pg_catalog.pg_type t LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace JOIN pg_catalog.pg_description d ON d.classoid = t.tableoid AND d.objoid = t.oid AND d.objsubid = 0
+        WHERE t.typtype = 'd' AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default ORDER BY 1
+  LOOP
+    cnt2 := cnt2 + 1;
+    IF ddl_only THEN
+      RAISE INFO '%', qry;
+    ELSE
+      EXECUTE qry;
+    END IF;
+  END LOOP;
+  RAISE NOTICE ' COMMENTS(2) cloned: %', LPAD(cnt2::text, 5, ' ');            
+
 
 
   -- ---------------------
