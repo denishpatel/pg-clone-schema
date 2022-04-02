@@ -45,6 +45,7 @@ Regression Testing is done in the following order:
 * Execute the **sampledb.sql** script to create the **clone_testing** database and the **sample** schema within it as the basis for the source schema.
 * Clone the **sample** schema: select clone_schema('sample', 'sample_clone', false, false);
 * Run the **schema_object_counts.sql** queries to compare object counts from the source and target schemas.
+* Repeat all of the above for all supported versions of PG.
 
 # Limitations
 * Only works for PG Versions 10 and up.
