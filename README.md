@@ -43,8 +43,8 @@ The **schema_object_counts.sql** file is useful for validating the cloning resul
 # Regression Testing Overview
 Regression Testing is done in the following order:
 * Execute the **sampledb.sql** script to create the **clone_testing** database and the **sample** schema within it as the basis for the source schema.
-* Clone the **sample** schema: select clone_schema('sample', 'sample_clone', false, false);
-* Run the **schema_object_counts.sql** queries to compare object counts from the source and target schemas.
+* Clone the **sample** schema in the 3 ways possible (save ddl only, create ddl only, or create ddl and copy rows).
+* Run the **schema_object_counts.sql** queries to compare object counts and rows from the source and target schemas.
 * Repeat all of the above for all supported versions of PG.
 
 # Limitations
