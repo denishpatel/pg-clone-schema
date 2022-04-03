@@ -19,10 +19,7 @@
 -- 2022-03-26  MJV FIX: Fixed Issue#65 Check column availability in selecting query to use for pg_proc table.  Also do some explicit datatype mappings for certain aggregate functions.  Also fixed inheritance derived tables.
 -- 2022-03-31  MJV FIX: Fixed Issue#66 Implement Security Policies for RLS
 -- 2022-04-02  MJV FIX: Fixed Issue#62 Fixed all comments and reworked the way we generate index comments by @guignonv
-
--- count validations:
--- \set aschema sample
--- select rt.tbls_regular as tbls_regular, ut.unlogged_tables as tbls_unlogged, pt.partitions as tbls_child, pn.parents as tbls_parents, rt.tbls_regular + ut.unlogged_tables + pt.partitions + pn.parents as tbls_total, se.sequences as sequences, ix.indexes as indexes, vi.views as views, pv.pviews as pub_views, mv.mats as mat_views, fn.functions as functions, ty.types as types, tf.trigfuncs, tr.triggers as triggers, co.collations as collations, dom.domains as domains from (select count(*) as tbls_regular from pg_class c, pg_tables t, pg_namespace n where t.schemaname = :'aschema' and t.tablename = c.relname and c.relkind = 'r' and n.oid = c.relnamespace and n.nspname = t.schemaname and c.relpersistence = 'p' and c.relispartition is false) rt, (select count(distinct (t.schemaname, t.tablename)) as unlogged_tables from pg_tables t, pg_class c where t.schemaname = :'aschema' and t.tablename = c.relname and c.relkind = 'r' and c.relpersistence = 'u' ) ut, (SELECT count(*) as sequences FROM pg_class c, pg_namespace n where n.oid = c.relnamespace and c.relkind = 'S' and n.nspname = :'aschema') se, (select count(*) as indexes from pg_class c, pg_namespace n, pg_indexes i where n.nspname = :'aschema' and n.oid = c.relnamespace and c.relkind <> 'p' and n.nspname = i.schemaname and c.relname = i.tablename) ix, (select count(*) as views from pg_views where schemaname = :'aschema') vi, (select count(*) as pviews from pg_views where schemaname = 'public') pv, (select count(c.relname) as parents from pg_class c join pg_namespace n on (c.relnamespace = n.oid)  where n.nspname = :'aschema' and c.relkind = 'p') pn, (SELECT count(*) as partitions FROM pg_inherits JOIN pg_class AS c ON (inhrelid=c.oid) JOIN pg_class as p ON (inhparent=p.oid) JOIN pg_namespace pn ON pn.oid = p.relnamespace JOIN pg_namespace cn ON cn.oid = c.relnamespace WHERE pn.nspname = :'aschema' and c.relkind = 'r') pt, (SELECT count(*) as functions FROM pg_proc p INNER JOIN pg_namespace ns ON (p.pronamespace = ns.oid) WHERE ns.nspname = :'aschema') fn, (SELECT count(*) as types FROM pg_type t LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class c WHERE c.oid = t.typrelid)) AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_type el WHERE el.oid = t.typelem AND el.typarray = t.oid) AND n.nspname = :'aschema') ty, (SELECT count(*) as trigfuncs FROM pg_catalog.pg_proc p LEFT JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace LEFT JOIN pg_catalog.pg_language l ON l.oid = p.prolang WHERE pg_catalog.pg_get_function_result(p.oid) = 'trigger' and n.nspname = :'aschema') tf, (SELECT count(distinct (trigger_schema, trigger_name, event_object_table, action_statement, action_orientation, action_timing)) as triggers  FROM information_schema.triggers WHERE trigger_schema = :'aschema') tr, (select count(distinct(n.nspname, c.relname)) as mats from pg_class c, pg_namespace n where c.relnamespace = n.oid and c.relkind = 'm') mv, (SELECT count(*) as collations FROM pg_collation c JOIN pg_namespace n ON (c.collnamespace = n.oid) JOIN pg_authid a ON (c.collowner = a.oid) WHERE n.nspname = :'aschema') co, (SELECT count(*) as domains FROM pg_catalog.pg_type t LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace WHERE t.typtype = 'd' AND n.nspname OPERATOR(pg_catalog.~) '^(:aschema)$' COLLATE pg_catalog.default) dom;
+-- 2022-04-02  MJV FIX: Fixed Issue#67 Reworked get_table_ddl() so we are not dependent on outside function, pg_get_tabledef().
 
 -- SELECT * FROM public.get_table_ddl('sample', 'address', True);
 
@@ -51,7 +48,40 @@ $$
     v_src_path_old text := '';
     v_src_path_new text := '';
     v_dummy text;
+    v_partbound text;
+    v_pgversion int;    
+    v_parent     text := '';
+    v_relopts text := '';
+    v_tablespace text;
+    v_partition_key text := '';
+    v_temp       text;
+    bPartitioned bool := False;
+    bInheritance bool := False;
+    bRelispartition bool;
+   
   BEGIN
+    SELECT c.oid, (select setting from pg_settings where name = 'server_version_num') INTO v_table_oid, v_pgversion FROM pg_catalog.pg_class c LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.relkind in ('r','p') AND c.relname = in_table AND n.nspname = in_schema;
+    IF (v_table_oid IS NULL) THEN
+      RAISE EXCEPTION 'table does not exist';
+    END IF;
+
+    -- get user-defined tablespaces if applicable
+    SELECT tablespace INTO v_temp FROM pg_tables WHERE schemaname = in_schema and tablename = in_table and tablespace IS NOT NULL;
+    IF v_tablespace IS NULL THEN
+      v_tablespace := 'TABLESPACE pg_default';
+    ELSE
+      v_tablespace := 'TABLESPACE ' || v_temp;
+    END IF;
+    
+    -- also see if there are any SET commands for this table, ie, autovacuum_enabled=off, fillfactor=70  
+    WITH relopts AS (SELECT unnest(c.reloptions) relopts FROM pg_class c, pg_namespace n WHERE n.nspname = in_schema and n.oid = c.relnamespace and c.relname = in_table) 
+    SELECT string_agg(r.relopts, ', ') as relopts INTO v_temp from relopts r;
+    IF v_temp IS NULL THEN
+      v_relopts := '';
+    ELSE
+      v_relopts := ' WITH (' || v_temp || ')';
+    END IF;
   
     -- Issue#61 FIX: set search_path = public before we do anything to force explicit schema qualification but dont forget to set it back before exiting...
     SELECT setting INTO v_src_path_old FROM pg_settings WHERE name = 'search_path';
@@ -61,18 +91,39 @@ $$
     -- RAISE NOTICE 'get_ddl: Old Search Path=%  New search_path=%', v_src_path_old, v_src_path_new;
 
     -- grab the oid of the table; https://www.postgresql.org/docs/8.3/catalog-pg-class.html
-    SELECT c.oid INTO v_table_oid
-    FROM pg_catalog.pg_class c
-    LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-    WHERE 1=1
-      AND c.relkind = 'r' -- r = ordinary table; https://www.postgresql.org/docs/9.3/catalog-pg-class.html
-      AND c.relname = in_table -- the table name
-      AND n.nspname = in_schema; -- the schema
-
-    -- throw an error if table was not found
+    SELECT c.oid INTO v_table_oid FROM pg_catalog.pg_class c LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE 1=1 AND c.relkind = 'r' AND c.relname = in_table AND n.nspname = in_schema;
     IF (v_table_oid IS NULL) THEN
-      RAISE EXCEPTION 'table does not exist';
+      -- Dont give up yet.  It might be a partitioned table
+      SELECT c.oid INTO v_table_oid FROM pg_catalog.pg_class c
+      LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      WHERE 1=1 AND c.relkind = 'p' AND c.relname = in_table AND n.nspname = in_schema;      
+      IF (v_table_oid IS NULL) THEN
+        RAISE EXCEPTION 'table does not exist';
+      END IF;
+      bPartitioned := True;        
     END IF;
+    
+    IF v_pgversion < 100000 THEN
+      SELECT c2.relname parent INTO v_parent from pg_class c1, pg_namespace n, pg_inherits i, pg_class c2
+      WHERE n.nspname = in_schema and n.oid = c1.relnamespace and c1.relname = in_table and c1.oid = i.inhrelid and i.inhparent = c2.oid and c1.relkind = 'r';      
+      IF (v_parent IS NOT NULL) THEN
+        bPartitioned := True;
+        bInheritance  := True;
+      END IF;
+    ELSE
+      SELECT c2.relname parent, c1.relispartition, pg_get_expr(c1.relpartbound, c1.oid, true) INTO v_parent, bRelispartition, v_partbound from pg_class c1, pg_namespace n, pg_inherits i, pg_class c2
+      WHERE n.nspname = in_schema and n.oid = c1.relnamespace and c1.relname = in_table and c1.oid = i.inhrelid and i.inhparent = c2.oid and c1.relkind = 'r';
+      IF (v_parent IS NOT NULL) THEN
+        bPartitioned   := True;
+        IF bRelispartition THEN
+          bInheritance := False;
+        ELSE
+          bInheritance := True;
+        END IF;
+      END IF;
+    END IF;    
+
+    -- RAISE INFO 'version=%  schema=%  parent=%  relopts=%  tablespace=%  partitioned=%  inherited=%  relispartition=%',v_pgversion, in_schema, v_parent, v_relopts, v_tablespace, bPartitioned, bInheritance, bRelispartition;
 
     -- start the create definition
     v_table_ddl := 'CREATE TABLE ' || in_schema || '.' || in_table || ' (' || E'\n';
@@ -140,8 +191,34 @@ $$
     -- drop the last comma before ending the create statement
     v_table_ddl = substr(v_table_ddl, 0, length(v_table_ddl) - 1) || E'\n';
 
-    -- end the create definition
-    v_table_ddl := v_table_ddl || ');' || E'\n';
+    -- end the create table def but add inherits clause if valid
+    IF bPartitioned and bInheritance THEN
+      v_table_ddl := v_table_ddl || ') INHERITS (' || in_schema || '.' || v_parent || ') ' || v_relopts || ' ' || v_tablespace || ';' || E'\n';
+    ELSEIF v_pgversion >= 100000 AND bPartitioned and NOT bInheritance THEN  
+      -- See if this is a partitioned table (pg_class.relkind = 'p') and add the partitioned key 
+      SELECT pg_get_partkeydef(c1.oid) as partition_key INTO v_partition_key FROM pg_class c1 JOIN pg_namespace n ON (n.oid = c1.relnamespace) LEFT JOIN pg_partitioned_table p ON (c1.oid = p.partrelid) 
+      WHERE n.nspname = in_schema and n.oid = c1.relnamespace and c1.relname = in_table and c1.relkind = 'p';
+    END IF;
+
+    -- RAISE INFO 'partitionkey=%',v_partition_key;
+    IF v_partition_key IS NOT NULL AND v_partition_key <> '' THEN
+      -- add partition clause
+      -- NOTE:  cannot specify default tablespace for partitioned relations
+      v_table_ddl := v_table_ddl || ') PARTITION BY ' || v_partition_key || ';' || E'\n';  
+    ELSEIF bPartitioned AND not bInheritance THEN
+      IF v_relopts <> '' THEN
+        v_table_ddl := 'CREATE TABLE ' || in_schema || '.' || in_table || ' PARTITION OF ' || in_schema || '.' || v_parent || ' ' || v_partbound || v_relopts || ' ' || v_tablespace || '; ' || E'\n';
+      ELSE
+        v_table_ddl := 'CREATE TABLE ' || in_schema || '.' || in_table || ' PARTITION OF ' || in_schema || '.' || v_parent || ' ' || v_partbound || ' ' || v_tablespace || '; ' || E'\n';
+      END IF;
+    ELSEIF bPartitioned and bInheritance THEN
+      -- we already did this above
+      v_table_ddl := v_table_ddl;
+    ELSEIF v_relopts <> '' THEN
+      v_table_ddl := v_table_ddl || ') ' || v_relopts || ' ' || v_tablespace || ';' || E'\n';        
+    ELSE
+      v_table_ddl := v_table_ddl || ') ' || v_tablespace || ';' || E'\n';    
+    END IF;  
 
     -- suffix create statement with all of the indexes on the table
     FOR v_indexrec IN
@@ -171,8 +248,8 @@ $$
   END;
 $$;
 
--- Function: clone_schema(text, text, boolean, boolean) 
 
+-- Function: clone_schema(text, text, boolean, boolean) 
 -- DROP FUNCTION clone_schema(text, text, boolean, boolean);
 
 CREATE OR REPLACE FUNCTION public.clone_schema(
@@ -537,8 +614,9 @@ BEGIN
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
             RAISE INFO '%', buffer3;
           ELSE
-            -- FIXED #65
-            SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
+            -- FIXED #65, #67
+            -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
+            SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
             RAISE INFO '%', buffer3;
           END IF;
@@ -546,7 +624,9 @@ BEGIN
           IF l_id = -1 THEN
             RAISE INFO '%', 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
           ELSE
-            SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
+            -- FIXED #65, #67
+	    -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
+            SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
             RAISE INFO '%', buffer3;
           END IF;
@@ -559,7 +639,9 @@ BEGIN
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
             EXECUTE buffer3;
           ELSE
-            SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
+            -- FIXED #65, #67
+            -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
+            SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
             EXECUTE buffer3;          
           END IF;
@@ -567,7 +649,9 @@ BEGIN
           IF l_id = -1 THEN
             EXECUTE 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
           ELSE
-            SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
+            -- FIXED #65, #67
+            -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
+            SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
             EXECUTE buffer3;                    
           END IF;
