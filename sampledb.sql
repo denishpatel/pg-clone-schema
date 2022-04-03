@@ -467,6 +467,9 @@ CREATE TABLE sample.address (
 );
 COMMENT ON TABLE sample.address IS 'This table is where I keep address info.';
 
+INSERT INTO sample.address OVERRIDING SYSTEM VALUE SELECT 1, '(1)', '(1)', 'text1';
+INSERT INTO sample.address OVERRIDING SYSTEM VALUE SELECT 2, '(2)', '(2)', 'text2';
+
 ALTER TABLE sample.address OWNER TO postgres;
 
 --
@@ -485,6 +488,9 @@ ALTER TABLE sample.address ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
 CREATE TYPE sample.status AS ENUM ('Notconfirmed','Coming', 'Notcoming', 'Maycome');
 CREATE TABLE sample.statuses (id serial, s status default 'Notconfirmed');
 COMMENT ON TABLE sample.statuses IS 'This table is where I keep status info.';
+INSERT INTO sample.statuses Select 1, 'Coming';
+INSERT INTO sample.statuses Select 1, 'Notcoming';
+INSERT INTO sample.statuses Select 1, 'Maycome';
 
 --
 -- Name: emp; Type: TABLE; Schema: sample; Owner: postgres
@@ -498,8 +504,9 @@ CREATE TABLE sample.emp (
 );
 COMMENT ON TABLE sample.emp IS 'Employee info';
 COMMENT ON COLUMN sample.emp.salary IS 'Employee Salary info';
-
 ALTER TABLE sample.emp OWNER TO postgres;
+
+INSERT INTO sample.emp select 'michael', 100, current_timestamp, 'john';
 
 --
 -- Name: foo; Type: TABLE; Schema: sample; Owner: postgres
@@ -540,8 +547,12 @@ CREATE TABLE sample.measurement_y2006m02 (
 CREATE TABLE sample.measurement_y2006m03 (
     CHECK ( logdate >= DATE '2006-03-01' AND logdate < DATE '2006-04-01' )
 ) INHERITS (sample.measurement);
-CREATE INDEX measurement_y2006m02_logdate ON sample.measurement_y2006m02 (logdate);
-CREATE INDEX measurement_y2006m03_logdate ON sample.measurement_y2006m03 (logdate);
+CREATE TABLE sample.measurement_y2022mAll (
+    CHECK ( logdate >= DATE '2022-01-01' AND logdate < DATE '2022-12-31' )
+) INHERITS (sample.measurement);
+CREATE INDEX measurement_y2006m02_logdate ON sample.measurement_y2006m02  (logdate);
+CREATE INDEX measurement_y2006m03_logdate ON sample.measurement_y2006m03  (logdate);
+CREATE INDEX measurement_y2022mAll        ON sample.measurement_y2022mAll (logdate);
 CREATE OR REPLACE FUNCTION sample.measurement_insert_trigger()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -551,6 +562,9 @@ BEGIN
     ELSIF ( NEW.logdate >= DATE '2006-03-01' AND
             NEW.logdate < DATE '2006-04-01' ) THEN
         INSERT INTO sample.measurement_y2006m03 VALUES (NEW.*);
+    ELSIF ( NEW.logdate >= DATE '2022-01-01' AND
+            NEW.logdate < DATE '2022-12-31' ) THEN
+        INSERT INTO sample.measurement_y2022mAll VALUES (NEW.*);        
     ELSE
         RAISE EXCEPTION 'Date out of range.  Fix the measurement_insert_trigger() function!';
     END IF;
@@ -563,6 +577,8 @@ CREATE TRIGGER insert_measurement_trigger
     BEFORE INSERT ON sample.measurement
     FOR EACH ROW EXECUTE PROCEDURE sample.measurement_insert_trigger();
 
+INSERT INTO sample.measurement SELECT 1, now(), 70, 100;
+INSERT INTO sample.measurement SELECT 1, now(), 80, 120;
 
 --
 -- Name: foo_bar_baz; Type: TABLE; Schema: sample; Owner: postgres
@@ -659,9 +675,11 @@ CREATE TABLE sample.foo_bar_baz_5 (
     baz integer NOT NULL
 );
 ALTER TABLE ONLY sample.foo_bar_baz ATTACH PARTITION sample.foo_bar_baz_5 FOR VALUES FROM (5) TO (6);
-
-
 ALTER TABLE sample.foo_bar_baz_5 OWNER TO postgres;
+
+INSERT INTO sample.foo_bar_baz SELECT 1, 1, 1;
+INSERT INTO sample.foo_bar_baz SELECT 2, 2, 2;
+INSERT INTO sample.foo_bar_baz SELECT 3, 3, 3;
 
 --
 -- Name: haha; Type: FOREIGN TABLE; Schema: sample; Owner: sysdba
@@ -711,13 +729,7 @@ CREATE TABLE sample.person (
     firstname text NOT NULL,
     lastname text NOT NULL
 );
-
-
 ALTER TABLE sample.person OWNER TO postgres;
-
---
--- Name: person_id_seq; Type: SEQUENCE; Schema: sample; Owner: postgres
---
 
 ALTER TABLE sample.person ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     SEQUENCE NAME sample.person_id_seq
@@ -728,7 +740,8 @@ ALTER TABLE sample.person ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     CACHE 1
 );
 
-
+INSERT into sample.person OVERRIDING SYSTEM VALUE select 1, 'joe','shmoe';
+INSERT into sample.person OVERRIDING SYSTEM VALUE select 2, 'james','bond';
 --
 -- Name: sampletable; Type: TABLE; Schema: sample; Owner: postgres
 --
@@ -737,6 +750,8 @@ CREATE TABLE sample.sampletable (x numeric);
 ALTER TABLE sample.sampletable OWNER TO postgres;
 CREATE VIEW sample.v_sampletable AS Select * from sample.sampletable;
 COMMENT ON VIEW sample.v_sampletable IS 'just a view on the sample table';
+INSERT INTO sample.sampletable SELECT 1.00;
+INSERT INTO sample.sampletable SELECT 2.00;
 
 --
 -- Name: seq111; Type: SEQUENCE; Schema: sample; Owner: postgres
@@ -761,9 +776,10 @@ CREATE TABLE sample.test (
     major integer DEFAULT 2 NOT NULL,
     minor integer
 );
-
-
 ALTER TABLE sample.test OWNER TO postgres;
+
+INSERT INTO sample.test SELECT 1,1;
+INSERT INTO sample.test SELECT 2,2;
 
 --
 -- Name: address address_pkey; Type: CONSTRAINT; Schema: sample; Owner: postgres
@@ -1126,6 +1142,8 @@ CREATE TABLE users (user_name text PRIMARY KEY, group_id int NOT NULL REFERENCES
 INSERT INTO users VALUES ('alice', 5), ('bob', 2), ('mallory', 2);
 CREATE TABLE accounts (manager text, company text, contact_email text);
 ALTER TABLE accounts ENABLE ROW LEVEL SECURITY;
+INSERT INTO accounts SELECT 'admin','Sears','joe@sears.com';
+
 CREATE TABLE information (info text, group_id int NOT NULL REFERENCES groups);
 INSERT INTO information VALUES ('barely secret', 1), ('slightly secret', 2), ('very secret', 5);
 
