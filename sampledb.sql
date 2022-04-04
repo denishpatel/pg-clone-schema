@@ -461,8 +461,8 @@ CREATE UNLOGGED TABLE sample.myunloggedtbl (id integer PRIMARY KEY, val text NOT
 
 CREATE TABLE sample.address (
     id bigint NOT NULL,
-    id2 sample.udt_myint,
-    id3 sample.udt_myint,
+    id2 udt_myint,
+    id3 udt_myint,
     addr text
 );
 COMMENT ON TABLE sample.address IS 'This table is where I keep address info.';
@@ -550,9 +550,9 @@ CREATE TABLE sample.measurement_y2006m03 (
 CREATE TABLE sample.measurement_y2022mAll (
     CHECK ( logdate >= DATE '2022-01-01' AND logdate < DATE '2022-12-31' )
 ) INHERITS (sample.measurement);
-CREATE INDEX measurement_y2006m02_logdate ON sample.measurement_y2006m02  (logdate);
-CREATE INDEX measurement_y2006m03_logdate ON sample.measurement_y2006m03  (logdate);
-CREATE INDEX measurement_y2022mAll        ON sample.measurement_y2022mAll (logdate);
+CREATE INDEX measurement_y2006m02_logdate_ix ON sample.measurement_y2006m02  (logdate);
+CREATE INDEX measurement_y2006m03_logdate_ix ON sample.measurement_y2006m03  (logdate);
+CREATE INDEX measurement_y2022mAll_ix        ON sample.measurement_y2022mAll (logdate);
 CREATE OR REPLACE FUNCTION sample.measurement_insert_trigger()
 RETURNS TRIGGER AS $$
 BEGIN
