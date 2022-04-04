@@ -3,8 +3,7 @@
 Handles following objects:
 
 * Tables - structure (indexes, constraints, keys) and optionally, data
-* Views
-* Materialized Views - Structure and data
+* Views, Materialized Views - Structure and data
 * Sequences, Serial, Identity
 * Functions/Procedures
 * Types (composite and enum)
