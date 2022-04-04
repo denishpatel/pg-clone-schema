@@ -313,7 +313,6 @@ DECLARE
   cnt2             integer;
   pos              integer;
   tblscopied       integer := 0;
-  l_id             integer;
   l_child          integer;
   action           text := 'N/A';
   tblname          text;
@@ -579,17 +578,17 @@ BEGIN
   -- Issue#61 FIX: use set_config for empty string
   -- SET search_path = '';
   SELECT set_config('search_path', '', false) into v_dummy;
-  FOR tblname, relpersist, bRelispart, relknd, data_type, ocomment, l_id, l_child  IN
+  FOR tblname, relpersist, bRelispart, relknd, data_type, ocomment, l_child  IN
     -- 2021-03-08 MJV #39 fix: change sql to get indicator of user-defined columns to issue warnings
     -- select c.relname, c.relpersistence, c.relispartition, c.relkind
     -- FROM pg_class c, pg_namespace n where n.oid = c.relnamespace and n.nspname = quote_ident(source_schema) and c.relkind in ('r','p') and 
     -- order by c.relkind desc, c.relname
     --Fix#65 add another left join to distinguish child tables by inheritance
     
-    SELECT DISTINCT c.relname, c.relpersistence, c.relispartition, c.relkind, co.data_type, obj_description(c.oid), COALESCE(i.inhrelid, -1), i2.inhrelid 
+    SELECT DISTINCT c.relname, c.relpersistence, c.relispartition, c.relkind, co.data_type, obj_description(c.oid), i.inhrelid
     FROM pg_class c JOIN pg_namespace n ON (n.oid = c.relnamespace AND n.nspname = quote_ident(source_schema) AND c.relkind IN ('r','p')) 
     LEFT JOIN information_schema.columns co ON (co.table_schema = n.nspname AND co.table_name = c.relname AND co.data_type = 'USER-DEFINED')
-    LEFT JOIN pg_inherits i ON (c.oid = i.inhrelid and not c.relispartition) LEFT JOIN pg_inherits i2 ON (c.oid = i2.inhrelid) ORDER BY c.relkind DESC, c.relname
+    LEFT JOIN pg_inherits i ON (c.oid = i.inhrelid) ORDER BY c.relkind DESC, c.relname
   LOOP
     cnt := cnt + 1;
     IF l_child IS NULL THEN
@@ -597,6 +596,7 @@ BEGIN
     ELSE
       bChild := True;
     END IF;
+    RAISE NOTICE 'table=%  bRelispart=%  relkind=%  bChild=%',tblname, bRelispart, relknd, bChild;
     
     IF data_type = 'USER-DEFINED' THEN
       -- RAISE NOTICE ' Table (%) has column(s) with user-defined types so using get_table_ddl() instead of CREATE TABLE LIKE construct.',tblname;
@@ -610,50 +610,42 @@ BEGIN
     IF relknd = 'r' THEN
       IF ddl_only THEN
         IF data_type = 'USER-DEFINED' THEN      
-          IF l_id = -1 THEN
-            SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
-            buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
-            RAISE INFO '%', buffer3;
-          ELSE
-            -- FIXED #65, #67
-            -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
-            SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
-            buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
-            RAISE INFO '%', buffer3;
-          END IF;
+          -- FIXED #65, #67
+          -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
+          SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
+          buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
+          RAISE INFO '2 % %', tblname, buffer3;
         ELSE
-          IF l_id = -1 THEN
+          IF NOT bChild THEN
             RAISE INFO '%', 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL);';
           ELSE
             -- FIXED #65, #67
 	    -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
             SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
-            RAISE INFO '%', buffer3;
+            RAISE INFO '3 % %', tblname, buffer3;
           END IF;
         END IF;
 
       ELSE
         IF data_type = 'USER-DEFINED' THEN            
-          IF l_id = -1 THEN
-            SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
-            buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
+          -- FIXED #65, #67
+          -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
+          SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
+          buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
+          RAISE INFO '5 % %', tblname, buffer3;
+          EXECUTE buffer3;          
+        ELSE
+          IF NOT bChild OR bRelispart THEN
+            buffer3 := 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
+            RAISE INFO '6 % %', tblname, buffer3;
             EXECUTE buffer3;
           ELSE
             -- FIXED #65, #67
             -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
             SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
-            EXECUTE buffer3;          
-          END IF;
-        ELSE
-          IF l_id = -1 THEN
-            EXECUTE 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
-          ELSE
-            -- FIXED #65, #67
-            -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
-            SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
-            buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
+            RAISE INFO '7 % %', tblname, buffer3;
             EXECUTE buffer3;                    
           END IF;
         END IF;
@@ -726,6 +718,7 @@ BEGIN
       IF ddl_only THEN
         RAISE INFO '%', qry;
       ELSE
+        RAISE INFO '8 % %',tblname, qry;
         EXECUTE qry;
         -- Add table comment.
         -- do this separately below
@@ -752,6 +745,7 @@ BEGIN
         IF ddl_only THEN
           RAISE INFO '%', qry;
         ELSE
+          RAISE INFO '9 % %',tblname, qry;
           EXECUTE qry;
         END IF;
         
@@ -817,7 +811,7 @@ BEGIN
         RAISE WARNING 'Bypassing copying rows for table (%) with user-defined data types.  You must copy them manually.', tblname;
       ELSE
         -- bypass child tables since we populate them when we populate the parents
-        -- RAISE INFO 'tblname=%  bRelispart=%  relknd=%  l_id=%  bChild=%', tblname, bRelispart, relknd, l_id, bChild;
+        -- RAISE INFO 'tblname=%  bRelispart=%  relknd=%  l_child=%  bChild=%', tblname, bRelispart, relknd, l_child, bChild;
         IF NOT bRelispart AND NOT bChild THEN
           RAISE NOTICE ' Populating cloned table, %', tblname;
           buffer2 := 'INSERT INTO ' || buffer || buffer3 || ' SELECT * FROM ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ';';
