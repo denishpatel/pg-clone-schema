@@ -17,8 +17,8 @@ Handles following objects:
 Arguments:
 * source schema
 * target schema
-* clone with data
-* only generate DDL
+* clone with data (boolean)
+* only generate DDL (boolean)
 
 You can call function like this to copy schema with data:
 <br/>
