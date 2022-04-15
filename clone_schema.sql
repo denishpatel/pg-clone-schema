@@ -614,7 +614,6 @@ BEGIN
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
           SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
-          RAISE INFO '2 % %', tblname, buffer3;
         ELSE
           IF NOT bChild THEN
             RAISE INFO '%', 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL);';
@@ -623,7 +622,6 @@ BEGIN
 	    -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
             SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
-            RAISE INFO '3 % %', tblname, buffer3;
           END IF;
         END IF;
 
@@ -633,19 +631,16 @@ BEGIN
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
           SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
-          RAISE INFO '5 % %', tblname, buffer3;
           EXECUTE buffer3;          
         ELSE
           IF NOT bChild OR bRelispart THEN
             buffer3 := 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
-            RAISE INFO '6 % %', tblname, buffer3;
             EXECUTE buffer3;
           ELSE
             -- FIXED #65, #67
             -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
             SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
-            RAISE INFO '7 % %', tblname, buffer3;
             EXECUTE buffer3;                    
           END IF;
         END IF;
@@ -718,7 +713,6 @@ BEGIN
       IF ddl_only THEN
         RAISE INFO '%', qry;
       ELSE
-        RAISE INFO '8 % %',tblname, qry;
         EXECUTE qry;
         -- Add table comment.
         -- do this separately below
@@ -745,7 +739,6 @@ BEGIN
         IF ddl_only THEN
           RAISE INFO '%', qry;
         ELSE
-          RAISE INFO '9 % %',tblname, qry;
           EXECUTE qry;
         END IF;
         
