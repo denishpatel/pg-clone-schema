@@ -596,7 +596,7 @@ BEGIN
     ELSE
       bChild := True;
     END IF;
-    RAISE NOTICE 'table=%  bRelispart=%  relkind=%  bChild=%',tblname, bRelispart, relknd, bChild;
+    -- RAISE NOTICE 'table=%  bRelispart=%  relkind=%  bChild=%',tblname, bRelispart, relknd, bChild;
     
     IF data_type = 'USER-DEFINED' THEN
       -- RAISE NOTICE ' Table (%) has column(s) with user-defined types so using get_table_ddl() instead of CREATE TABLE LIKE construct.',tblname;
@@ -641,7 +641,12 @@ BEGIN
             -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
             SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
+            -- set client_min_messages higher to avoid messages like this:
+            -- NOTICE:  merging column "city_id" with inherited definition
+            set client_min_messages = 'WARNING';
             EXECUTE buffer3;                    
+            -- reset it back, only get these for inheritance-based tables
+            set client_min_messages = 'notice';
           END IF;
         END IF;
         -- Add table comment.
