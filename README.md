@@ -10,7 +10,7 @@ Handles following objects:
 * Collations, Domains, Rules, Policies
 * Triggers, Trigger Functions
 * Comments
-* Permissions/GRANTs
+* ACLs (Permissions/Grants)
 
 <br/>
 
