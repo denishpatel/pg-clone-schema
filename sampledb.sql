@@ -455,6 +455,26 @@ SET default_with_oids = false;
 
 CREATE UNLOGGED TABLE sample.myunloggedtbl (id integer PRIMARY KEY, val text NOT NULL) WITH (autovacuum_enabled = off);
 
+CREATE TABLE sample.numerics (
+    id integer,
+    anumeric numeric,
+    anumeric2 numeric(1,0),
+    anumeric3 numeric(1,1),
+    anumeric4 numeric(25,0),
+    anumeric5 numeric(25,0)
+);
+ALTER TABLE sample.numerics OWNER TO postgres;
+
+CREATE TABLE sample.arrays (
+    name            text,
+    aarray1  integer[],
+    aarray2  text[][],
+    aarray3  text[3][3],
+    aarray4  integer ARRAY[4],
+    aarray5  integer ARRAY
+);
+ALTER TABLE sample.numerics OWNER TO postgres;
+
 --
 -- Name: address; Type: TABLE; Schema: sample; Owner: postgres
 --
