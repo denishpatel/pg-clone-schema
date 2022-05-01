@@ -381,7 +381,7 @@ DECLARE
   v_diag5          text;
   v_diag6          text;
   v_dummy          text;
-  v_version        text := '1.1 May 1, 2022'
+  v_version        text := '1.1  May 1, 2022';
 BEGIN
   RAISE NOTICE 'clone_schema version %', v_version;
 
