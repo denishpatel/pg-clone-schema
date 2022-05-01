@@ -381,7 +381,9 @@ DECLARE
   v_diag5          text;
   v_diag6          text;
   v_dummy          text;
+  v_version        text := '1.1 May 1, 2022'
 BEGIN
+  RAISE NOTICE 'clone_schema version %', v_version;
 
   -- Get server version info to handle certain things differently based on the version.
   SELECT setting INTO sq_server_version
