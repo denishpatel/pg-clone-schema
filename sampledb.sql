@@ -736,9 +736,12 @@ COMMENT ON MATERIALIZED VIEW sample.hoho IS 'just a comment on the sample.hoho m
 CREATE VIEW sample.hoho2 AS
  SELECT count(*) AS count
    FROM pg_stat_activity;
-
-
 ALTER TABLE sample.hoho2 OWNER TO postgres;
+
+CREATE VIEW sample.hoho3 AS
+ SELECT count(*) as count
+   FROM sample.hoho2
+ALTER TABLE sample.hoho3 OWNER TO postgres;   
 
 --
 -- Name: person; Type: TABLE; Schema: sample; Owner: postgres
