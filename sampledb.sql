@@ -740,7 +740,7 @@ ALTER TABLE sample.hoho2 OWNER TO postgres;
 
 CREATE VIEW sample.hoho3 AS
  SELECT count(*) as count
-   FROM sample.hoho2
+   FROM sample.hoho2;
 ALTER TABLE sample.hoho3 OWNER TO postgres;   
 
 --
