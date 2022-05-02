@@ -729,6 +729,11 @@ CREATE MATERIALIZED VIEW sample.hoho AS
 ALTER TABLE sample.hoho OWNER TO postgres;
 COMMENT ON MATERIALIZED VIEW sample.hoho IS 'just a comment on the sample.hoho materialized view';
 
+CREATE MATERIALIZED VIEW sample.mv_person AS 
+ SELECT count(*) as count
+   FROM sample.person;
+ALTER TABLE sample.mv_person OWNER TO postgres;
+
 --
 -- Name: hoho2; Type: VIEW; Schema: sample; Owner: postgres
 --
