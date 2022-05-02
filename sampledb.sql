@@ -743,10 +743,11 @@ CREATE VIEW sample.hoho2 AS
    FROM pg_stat_activity;
 ALTER TABLE sample.hoho2 OWNER TO postgres;
 
-CREATE VIEW sample.hoho3 AS
- SELECT count(*) as count
-   FROM sample.hoho2;
-ALTER TABLE sample.hoho3 OWNER TO postgres;   
+-- THIS WONT WORK UNTIL WE FIX dependency ORDERINGS
+-- CREATE VIEW sample.hoho3 AS
+--  SELECT count(*) as count
+--    FROM sample.hoho2;
+-- ALTER TABLE sample.hoho3 OWNER TO postgres;   
 
 --
 -- Name: person; Type: TABLE; Schema: sample; Owner: postgres
