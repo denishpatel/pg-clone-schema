@@ -22,6 +22,7 @@
 -- 2022-04-02  MJV FIX: Fixed Issue#67 Reworked get_table_ddl() so we are not dependent on outside function, pg_get_tabledef().
 -- 2022-04-02  MJV FIX: Fixed Issue#42 Fixed copying rows logic with exception of tables with user-defined datatypes in them that have to be done manually, documented in README.
 -- 2022-05-01  MJV FIX: Fixed Issue#53 Applied coding style fixes, using pgFormatter as basis for SQL.
+-- 2022-05-02  MJV FIX: Fixed Issue#72 Remove original schema references from materialized view definition
 
 -- SELECT * FROM public.get_table_ddl('sample', 'address', True);
 
@@ -1174,13 +1175,20 @@ BEGIN
   LOOP
       cnt := cnt + 1;
       buffer := dest_schema || '.' || quote_ident(object);
+      
+      -- MJV FIX: #72 remove source schema in MV def
+      SELECT REPLACE(v_def, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO buffer2; 
+      
       IF include_recs THEN
-        EXECUTE 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || v_def || ' WITH DATA;' ;
+        -- EXECUTE 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || v_def || ' WITH DATA;' ;
+        EXECUTE 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || buffer2 || ' WITH DATA;' ;
       ELSE
         IF ddl_only THEN
-          RAISE INFO '%', 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || v_def || ' WITH NO DATA;' ;
+          -- RAISE INFO '%', 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || v_def || ' WITH NO DATA;' ;
+          RAISE INFO '%', 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || buffer2 || ' WITH NO DATA;' ;
         ELSE
-          EXECUTE 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || v_def || ' WITH NO DATA;' ;
+          -- EXECUTE 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || v_def || ' WITH NO DATA;' ;
+          EXECUTE 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || buffer2 || ' WITH NO DATA;' ;
         END IF;
       END IF;
       SELECT coalesce(obj_description(oid), '') into adef from pg_class where relkind = 'm' and relname = object;
