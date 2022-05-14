@@ -23,6 +23,7 @@
 -- 2022-04-02  MJV FIX: Fixed Issue#42 Fixed copying rows logic with exception of tables with user-defined datatypes in them that have to be done manually, documented in README.
 -- 2022-05-01  MJV FIX: Fixed Issue#53 Applied coding style fixes, using pgFormatter as basis for SQL.
 -- 2022-05-02  MJV FIX: Fixed Issue#72 Remove original schema references from materialized view definition
+-- 2022-05-14  MJV FIX: Fixed Issue#73 Fix dependency order for views depending on other views. Also removed duplicate comment logic for views.
 
 -- SELECT * FROM public.get_table_ddl('sample', 'address', True);
 
@@ -329,12 +330,12 @@ DECLARE
   buffer2          text;
   buffer3          text;  
   srctbl           text;
+  aname            text;
   default_         text;
   column_          text;
   qry              text;
   ix_old_name      text;
   ix_new_name      text;
-  aname            text;
   relpersist       text;
   bRelispart       bool;
   bChild           bool;
@@ -382,7 +383,7 @@ DECLARE
   v_diag5          text;
   v_diag6          text;
   v_dummy          text;
-  v_version        text := '1.1  May 1, 2022';
+  v_version        text := '1.2  May 14, 2022';
 BEGIN
   RAISE NOTICE 'clone_schema version %', v_version;
 
@@ -1128,39 +1129,93 @@ BEGIN
   INTO v_dummy;
   
   cnt := 0;
-  FOR object IN
-    SELECT table_name::text, view_definition
-    FROM information_schema.views
-    WHERE table_schema = quote_ident(source_schema)
+  --FOR object IN
+    -- SELECT table_name::text, view_definition
+    -- FROM information_schema.views
+    -- WHERE table_schema = quote_ident(source_schema)
+
+  -- Issue#73 replace loop query to handle dependencies  
+  FOR srctbl, aname, object IN
+    WITH RECURSIVE views AS (
+       SELECT n.nspname as schemaname, v.relname as tablename, v.oid::regclass AS viewname,
+              v.relkind = 'm' AS is_materialized,
+              1 AS level
+       FROM pg_depend AS d
+          JOIN pg_rewrite AS r
+             ON r.oid = d.objid
+          JOIN pg_class AS v
+             ON v.oid = r.ev_class
+          JOIN pg_namespace n
+             ON n.oid = v.relnamespace
+       -- WHERE v.relkind IN ('v', 'm')
+       WHERE v.relkind IN ('v')
+         AND d.classid = 'pg_rewrite'::regclass
+         AND d.refclassid = 'pg_class'::regclass
+         AND d.deptype = 'n'
+    UNION
+       -- add the views that depend on these
+       SELECT n.nspname as schemaname, v.relname as tablename, v.oid::regclass AS viewname,
+              v.relkind = 'm',
+              views.level + 1
+       FROM views
+          JOIN pg_depend AS d
+             ON d.refobjid = views.viewname
+          JOIN pg_rewrite AS r  
+             ON r.oid = d.objid
+          JOIN pg_class AS v
+             ON v.oid = r.ev_class
+          JOIN pg_namespace n 
+             ON n.oid = v.relnamespace
+       -- WHERE v.relkind IN ('v', 'm')
+       WHERE v.relkind IN ('v')
+         AND d.classid = 'pg_rewrite'::regclass
+             AND d.refclassid = 'pg_class'::regclass
+         AND d.deptype = 'n'
+         AND v.oid <> views.viewname
+    )
+    SELECT tablename, viewname, format('CREATE OR REPLACE%s VIEW %s AS%s',
+                  CASE WHEN is_materialized
+                       THEN ' MATERIALIZED'
+                       ELSE ''
+                  END,
+                  viewname,
+                  pg_get_viewdef(viewname))
+    FROM views
+    WHERE schemaname = quote_ident(source_schema)
+    GROUP BY schemaname, tablename, viewname, is_materialized
+    ORDER BY max(level), schemaname, tablename
   LOOP
     cnt := cnt + 1;
-    buffer := quote_ident(dest_schema) || '.' || quote_ident(object);
+    -- Issue#73 replace logic based on new loop sql
+    buffer := quote_ident(dest_schema) || '.' || quote_ident(aname);
     -- MJV FIX: #43
     -- SELECT view_definition INTO v_def
-    SELECT REPLACE(view_definition, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO v_def 
-    FROM information_schema.views
-    WHERE table_schema = quote_ident(source_schema)
-      AND table_name = quote_ident(object);
-
+    -- SELECT REPLACE(view_definition, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO v_def 
+    -- FROM information_schema.views
+    -- WHERE table_schema = quote_ident(source_schema)
+    --   AND table_name = quote_ident(object);
+    SELECT REPLACE(object, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO v_def;
     -- NOTE: definition already includes the closing statement semicolon
     IF ddl_only THEN
-      -- RAISE INFO '%', 'CREATE OR REPLACE VIEW ' || buffer || ' AS ' || v_def || ';' ;
-      RAISE INFO '%', 'CREATE OR REPLACE VIEW ' || buffer || ' AS ' || v_def;
+      -- RAISE INFO '%', 'CREATE OR REPLACE VIEW ' || buffer || ' AS ' || v_def;
+      RAISE INFO '%', v_def;
     ELSE
-      -- EXECUTE 'CREATE OR REPLACE VIEW ' || buffer || ' AS ' || v_def || ';' ;
-      EXECUTE 'CREATE OR REPLACE VIEW ' || buffer || ' AS ' || v_def;
+      -- EXECUTE 'CREATE OR REPLACE VIEW ' || buffer || ' AS ' || v_def;
+      EXECUTE v_def;
+      -- Issue#73: commented out comment logic for views since we do it elsewhere now.
       -- Add comment.
-      SELECT obj_description(c.oid)
-      INTO ocomment
-      FROM pg_class c,
-        pg_namespace n
-      WHERE n.nspname = quote_ident(source_schema)
-        AND c.relnamespace = n.oid
-        AND c.relkind = 'v'
-        AND c.relname = object;
-      IF ocomment IS NOT NULL THEN
-        EXECUTE 'COMMENT ON VIEW ' || buffer || ' IS ' || quote_literal(ocomment);
-      END IF;
+      -- SELECT obj_description(c.oid)
+      -- INTO ocomment
+      -- FROM pg_class c,
+      --   pg_namespace n
+      -- WHERE n.nspname = quote_ident(source_schema)
+      --   AND c.relnamespace = n.oid
+      --   AND c.relkind = 'v'
+      --   -- AND c.relname = object;
+      --   AND c.relname = aname;
+      -- IF ocomment IS NOT NULL THEN
+      --   EXECUTE 'COMMENT ON VIEW ' || buffer || ' IS ' || quote_literal(ocomment);
+      -- END IF;
 
     END IF;
   END LOOP;
