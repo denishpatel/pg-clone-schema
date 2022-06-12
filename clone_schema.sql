@@ -24,6 +24,7 @@
 -- 2022-05-01  MJV FIX: Fixed Issue#53 Applied coding style fixes, using pgFormatter as basis for SQL.
 -- 2022-05-02  MJV FIX: Fixed Issue#72 Remove original schema references from materialized view definition
 -- 2022-05-14  MJV FIX: Fixed Issue#73 Fix dependency order for views depending on other views. Also removed duplicate comment logic for views.
+-- 2022-06-12  MJV FIX: Fixed Issue#74 Change comments ddl from source_schema to dest_schema. Policies fix using quote_literal(d.description) instead of hard-coded ticks and escape ticks.
 
 -- SELECT * FROM public.get_table_ddl('sample', 'address', True);
 
@@ -383,7 +384,7 @@ DECLARE
   v_diag5          text;
   v_diag6          text;
   v_dummy          text;
-  v_version        text := '1.2  May 14, 2022';
+  v_version        text := '1.3  June 12, 2022';
 BEGIN
   RAISE NOTICE 'clone_schema version %', v_version;
 
@@ -978,7 +979,7 @@ BEGIN
         IF NOT bRelispart AND NOT bChild THEN
           RAISE NOTICE ' Populating cloned table, %', tblname;
           buffer2 := 'INSERT INTO ' || buffer || buffer3 || ' SELECT * FROM ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ';';
-          -- RAISE NOTICE ' %', buffer2;
+          -- RAISE NOTICE 'DEBUG %', buffer2;
           EXECUTE buffer2;        
           tblscopied := tblscopied + 1;
         END IF;
@@ -1490,22 +1491,27 @@ BEGIN
   action := 'Policies1';
   cnt := 0;
   FOR qry IN
+    -- Issue#74 Fix: Change schema from source to target. Also, do not include comments on foreign tables since we do not clone foreign tables at this time.  
     SELECT 'COMMENT ON ' || CASE WHEN c.relkind in ('r','p') AND a.attname IS NULL THEN 'TABLE ' WHEN c.relkind in ('r','p') AND 
     a.attname IS NOT NULL THEN 'COLUMN ' WHEN c.relkind = 'f' THEN 'FOREIGN TABLE ' WHEN c.relkind = 'm' THEN 'MATERIALIZED VIEW ' WHEN c.relkind = 'v' THEN 'VIEW '
-    WHEN c.relkind = 'i' THEN 'INDEX ' WHEN c.relkind = 'S' THEN 'SEQUENCE ' ELSE 'XX' END || quote_ident(source_schema) || '.' || CASE WHEN c.relkind in ('r','p') AND 
-    a.attname IS NOT NULL THEN c.relname || '.' || a.attname ELSE c.relname END || ' IS ''' || d.description || ''';' as ddl 
+    WHEN c.relkind = 'i' THEN 'INDEX ' WHEN c.relkind = 'S' THEN 'SEQUENCE ' ELSE 'XX' END || quote_ident(dest_schema) || '.' || CASE WHEN c.relkind in ('r','p') AND 
+    a.attname IS NOT NULL THEN c.relname || '.' || a.attname ELSE c.relname END || 
+    -- Issue#74 Fix
+    -- ' IS ''' || d.description || ''';' as ddl
+    ' IS '   || quote_literal(d.description) || ';' as ddl    
     FROM pg_class c 
     JOIN pg_namespace n ON (n.oid = c.relnamespace) 
     LEFT JOIN pg_description d ON (c.oid = d.objoid) 
     LEFT JOIN pg_attribute a ON (c.oid = a.attrelid 
       AND a.attnum > 0 and a.attnum = d.objsubid) 
-    WHERE d.description IS NOT NULL AND n.nspname = quote_ident(source_schema) 
+    WHERE c.relkind <> 'f' AND d.description IS NOT NULL AND n.nspname = quote_ident(source_schema) 
     ORDER BY ddl
   LOOP
     cnt := cnt + 1;
     IF ddl_only THEN
       RAISE INFO '%', qry;
     ELSE
+      -- RAISE INFO 'COMMENTS DEBUG1: %', qry;
       EXECUTE qry;
     END IF;
   END LOOP;
@@ -1516,9 +1522,16 @@ BEGIN
   cnt2 := 0;
   IF is_prokind THEN
   FOR qry IN
-    SELECT 'COMMENT ON SCHEMA ' || n.nspname || ' IS ''' || d.description || ''';' as ddl from pg_namespace n, pg_description d where d.objoid = n.oid and n.nspname = quote_ident(source_schema) 
+    -- Issue#74 Fix: Change schema from source to target.
+    SELECT 'COMMENT ON SCHEMA ' || dest_schema || 
+    -- Issue#74 Fix
+    -- ' IS ''' || d.description || ''';' as ddl
+    ' IS '   || quote_literal(d.description) || ';' as ddl        
+    from pg_namespace n, pg_description d where d.objoid = n.oid and n.nspname = quote_ident(source_schema) 
     UNION
-    SELECT 'COMMENT ON TYPE ' || pg_catalog.format_type(t.oid, NULL) || ' IS ''' || pg_catalog.obj_description(t.oid, 'pg_type') || ''';' as ddl
+    -- Issue#74 Fix: need to replace source schema inline
+    -- SELECT 'COMMENT ON TYPE ' || pg_catalog.format_type(t.oid, NULL) || ' IS ''' || pg_catalog.obj_description(t.oid, 'pg_type') || ''';' as ddl
+    SELECT 'COMMENT ON TYPE ' || REPLACE(pg_catalog.format_type(t.oid, NULL), quote_ident(source_schema), quote_ident(dest_schema)) || ' IS ''' || pg_catalog.obj_description(t.oid, 'pg_type') || ''';' as ddl
     FROM pg_catalog.pg_type t 
     JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
     WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class c WHERE c.oid = t.typrelid))
@@ -1526,25 +1539,33 @@ BEGIN
       AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default
       AND pg_catalog.obj_description(t.oid, 'pg_type') IS NOT NULL and t.typtype = 'c'
     UNION
-    SELECT 'COMMENT ON COLLATION ' || n.nspname || '.' || c.collname || ' IS ''' || pg_catalog.obj_description(c.oid, 'pg_collation') || ''';' as ddl
+    SELECT 'COMMENT ON COLLATION ' || dest_schema || '.' || c.collname || ' IS ''' || pg_catalog.obj_description(c.oid, 'pg_collation') || ''';' as ddl
     FROM pg_catalog.pg_collation c, pg_catalog.pg_namespace n 
     WHERE n.oid = c.collnamespace AND c.collencoding IN (-1, pg_catalog.pg_char_to_encoding(pg_catalog.getdatabaseencoding()))
       AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default AND pg_catalog.obj_description(c.oid, 'pg_collation') IS NOT NULL
     UNION
     SELECT 'COMMENT ON ' || CASE WHEN p.prokind = 'f' THEN 'FUNCTION ' WHEN p.prokind = 'p' THEN 'PROCEDURE ' WHEN p.prokind = 'a' THEN 'AGGREGATE ' END || 
-    n.nspname || '.' || p.proname || ' (' || oidvectortypes(p.proargtypes) || ')'
-    ' IS ''' || d.description || ''';' as ddl
+    dest_schema || '.' || p.proname || ' (' || oidvectortypes(p.proargtypes) || ')'
+    -- Issue#74 Fix
+    -- ' IS ''' || d.description || ''';' as ddl
+    ' IS '   || quote_literal(d.description) || ';' as ddl
     FROM pg_catalog.pg_namespace n 
     JOIN pg_catalog.pg_proc p ON p.pronamespace = n.oid 
     JOIN pg_description d ON (d.objoid = p.oid) 
     WHERE n.nspname = quote_ident(source_schema)
     UNION
-    SELECT 'COMMENT ON POLICY ' || p1.policyname || ' ON ' || p1.schemaname || '.' || p1.tablename || ' IS ''' || d.description || ''';' as ddl
+    SELECT 'COMMENT ON POLICY ' || p1.policyname || ' ON ' || dest_schema || '.' || p1.tablename || 
+    -- Issue#74 Fix
+    -- ' IS ''' || d.description || ''';' as ddl
+    ' IS '   || quote_literal(d.description) || ';' as ddl    
     FROM pg_policies p1, pg_policy p2, pg_class c, pg_namespace n, pg_description d 
     WHERE p1.schemaname = n.nspname AND p1.tablename = c.relname AND n.oid = c.relnamespace 
       AND c.relkind in ('r','p') AND p1.policyname = p2.polname AND d.objoid = p2.oid AND p1.schemaname = quote_ident(source_schema)
     UNION
-    SELECT 'COMMENT ON DOMAIN ' || n.nspname || '.' || t.typname || ' IS ''' || d.description || ''';' as ddl
+    SELECT 'COMMENT ON DOMAIN ' || dest_schema || '.' || t.typname || 
+    -- Issue#74 Fix
+    -- ' IS ''' || d.description || ''';' as ddl
+    ' IS '   || quote_literal(d.description) || ';' as ddl        
     FROM pg_catalog.pg_type t 
     LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace 
     JOIN pg_catalog.pg_description d ON d.classoid = t.tableoid AND d.objoid = t.oid AND d.objsubid = 0
@@ -1555,14 +1576,22 @@ BEGIN
     IF ddl_only THEN
       RAISE INFO '%', qry;
     ELSE
+      -- RAISE INFO 'COMMENTS DEBUG2: %', qry;
       EXECUTE qry;
     END IF;
   END LOOP;
   ELSE -- must be v 10 or less
   FOR qry IN
-    SELECT 'COMMENT ON SCHEMA ' || n.nspname || ' IS ''' || d.description || ''';' as ddl from pg_namespace n, pg_description d where d.objoid = n.oid and n.nspname = quote_ident(source_schema) 
+    -- Issue#74 Fix: Change schema from source to target.
+    SELECT 'COMMENT ON SCHEMA ' || dest_schema || 
+    -- Issue#74 Fix
+    -- ' IS ''' || d.description || ''';' as ddl
+    ' IS '   || quote_literal(d.description) || ';' as ddl        
+    from pg_namespace n, pg_description d where d.objoid = n.oid and n.nspname = quote_ident(source_schema) 
     UNION
-    SELECT 'COMMENT ON TYPE ' || pg_catalog.format_type(t.oid, NULL) || ' IS ''' || pg_catalog.obj_description(t.oid, 'pg_type') || ''';' as ddl
+    -- Issue#74 Fix: need to replace source schema inline
+    -- SELECT 'COMMENT ON TYPE ' || pg_catalog.format_type(t.oid, NULL) || ' IS ''' || pg_catalog.obj_description(t.oid, 'pg_type') || ''';' as ddl
+    SELECT 'COMMENT ON TYPE ' || REPLACE(pg_catalog.format_type(t.oid, NULL), quote_ident(source_schema), quote_ident(dest_schema)) || ' IS ''' || pg_catalog.obj_description(t.oid, 'pg_type') || ''';' as ddl    
     FROM pg_catalog.pg_type t 
     JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
     WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' 
@@ -1573,25 +1602,33 @@ BEGIN
       AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default
       AND pg_catalog.obj_description(t.oid, 'pg_type') IS NOT NULL and t.typtype = 'c'
     UNION
-    SELECT 'COMMENT ON COLLATION ' || n.nspname || '.' || c.collname || ' IS ''' || pg_catalog.obj_description(c.oid, 'pg_collation') || ''';' as ddl
+    SELECT 'COMMENT ON COLLATION ' || dest_schema || '.' || c.collname || ' IS ''' || pg_catalog.obj_description(c.oid, 'pg_collation') || ''';' as ddl
     FROM pg_catalog.pg_collation c, pg_catalog.pg_namespace n 
     WHERE n.oid = c.collnamespace AND c.collencoding IN (-1, pg_catalog.pg_char_to_encoding(pg_catalog.getdatabaseencoding()))
       AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default AND pg_catalog.obj_description(c.oid, 'pg_collation') IS NOT NULL
     UNION
     SELECT 'COMMENT ON ' || CASE WHEN proisagg THEN 'AGGREGATE ' ELSE 'FUNCTION ' END || 
-    n.nspname || '.' || p.proname || ' (' || oidvectortypes(p.proargtypes) || ')'
-    ' IS ''' || d.description || ''';' as ddl
+    dest_schema || '.' || p.proname || ' (' || oidvectortypes(p.proargtypes) || ')'
+    -- Issue#74 Fix
+    -- ' IS ''' || d.description || ''';' as ddl
+    ' IS '   || quote_literal(d.description) || ';' as ddl            
     FROM pg_catalog.pg_namespace n 
     JOIN pg_catalog.pg_proc p ON p.pronamespace = n.oid 
     JOIN pg_description d ON (d.objoid = p.oid) 
     WHERE n.nspname = quote_ident(source_schema)
     UNION
-    SELECT 'COMMENT ON POLICY ' || p1.policyname || ' ON ' || p1.schemaname || '.' || p1.tablename || ' IS ''' || d.description || ''';' as ddl
+    SELECT 'COMMENT ON POLICY ' || p1.policyname || ' ON ' || dest_schema || '.' || p1.tablename || 
+    -- Issue#74 Fix
+    -- ' IS ''' || d.description || ''';' as ddl
+    ' IS '   || quote_literal(d.description) || ';' as ddl            
     FROM pg_policies p1, pg_policy p2, pg_class c, pg_namespace n, pg_description d 
     WHERE p1.schemaname = n.nspname AND p1.tablename = c.relname AND n.oid = c.relnamespace 
       AND c.relkind in ('r','p') AND p1.policyname = p2.polname AND d.objoid = p2.oid AND p1.schemaname = quote_ident(source_schema)
     UNION
-    SELECT 'COMMENT ON DOMAIN ' || n.nspname || '.' || t.typname || ' IS ''' || d.description || ''';' as ddl
+    SELECT 'COMMENT ON DOMAIN ' || dest_schema || '.' || t.typname || 
+    -- Issue#74 Fix
+    -- ' IS ''' || d.description || ''';' as ddl
+    ' IS '   || quote_literal(d.description) || ';' as ddl            
     FROM pg_catalog.pg_type t 
     LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace 
     JOIN pg_catalog.pg_description d ON d.classoid = t.tableoid AND d.objoid = t.oid AND d.objsubid = 0
@@ -1602,6 +1639,7 @@ BEGIN
     IF ddl_only THEN
       RAISE INFO '%', qry;
     ELSE
+      -- RAISE INFO 'COMMENTS DEBUG3: %', qry;
       EXECUTE qry;
     END IF;
   END LOOP;
