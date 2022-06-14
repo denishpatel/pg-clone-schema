@@ -11,8 +11,8 @@
 -- 2021-04-02  MJV FIX: Fixed Issue#43 Fixed views case where view was created successfully in target schema, but referenced table was not.
 -- 2021-06-30  MJV FIX: Fixed Issue#46 Invalid record reference, tbl_ddl.  Changed to tbl_dcl in PRIVS section.
 -- 2021-06-30  MJV FIX: Fixed Issue#46 Invalid record reference, tbl_ddl.  Changed to tbl_dcl in PRIVS section. Thanks to dpmillerau for this fix.
--- 2021-07-21  MJV FIX: Fixed Issue#47 Fixed resetting search path to what it was before.  Thanks to dpmillerau for this fix. 
--- 2022-03-01  MJV FIX: Fixed Issue#61 Fixed more search_path problems. Modified get_table_ddl() to hard code search_path to public. Using set_config() for empty string instead of trying to set empty string directly and incorrectly. 
+-- 2021-07-21  MJV FIX: Fixed Issue#47 Fixed resetting search path to what it was before.  Thanks to dpmillerau for this fix.
+-- 2022-03-01  MJV FIX: Fixed Issue#61 Fixed more search_path problems. Modified get_table_ddl() to hard code search_path to public. Using set_config() for empty string instead of trying to set empty string directly and incorrectly.
 -- 2022-03-01  MJV FIX: Fixed Issue#62 Added comments for indexes only (Thanks to @guignonv).  Still need to add comments for other objects.
 -- 2022-03-24  MJV FIX: Fixed Issue#63 Use last used value for sequence not the start value
 -- 2022-03-24  MJV FIX: Fixed Issue#59 Implement Rules
@@ -25,6 +25,7 @@
 -- 2022-05-02  MJV FIX: Fixed Issue#72 Remove original schema references from materialized view definition
 -- 2022-05-14  MJV FIX: Fixed Issue#73 Fix dependency order for views depending on other views. Also removed duplicate comment logic for views.
 -- 2022-06-12  MJV FIX: Fixed Issue#74 Change comments ddl from source_schema to dest_schema. Policies fix using quote_literal(d.description) instead of hard-coded ticks and escape ticks.
+-- 2022-06-13  MJV FIX: Fixed Issue#75 Rows were not being copied correctly for parents.  Needed to move copy rows logic to end, after all DDL is done.
 
 -- SELECT * FROM public.get_table_ddl('sample', 'address', True);
 
@@ -54,7 +55,7 @@ $$
     v_src_path_new text := '';
     v_dummy text;
     v_partbound text;
-    v_pgversion int;    
+    v_pgversion int;
     v_parent     text := '';
     v_relopts text := '';
     v_tablespace text;
@@ -63,7 +64,7 @@ $$
     bPartitioned bool := False;
     bInheritance bool := False;
     bRelispartition bool;
-   
+
   BEGIN
     SELECT c.oid, (
         SELECT setting
@@ -73,8 +74,8 @@ $$
         LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
     WHERE c.relkind IN ('r', 'p')
         AND c.relname = in_table
-        AND n.nspname = in_schema;    
-        
+        AND n.nspname = in_schema;
+
     IF (v_table_oid IS NULL) THEN
       RAISE EXCEPTION 'table does not exist';
     END IF;
@@ -85,14 +86,14 @@ $$
     WHERE schemaname = in_schema
         AND tablename = in_table
         AND TABLESPACE IS NOT NULL;
-        
+
     IF v_tablespace IS NULL THEN
       v_tablespace := 'TABLESPACE pg_default';
     ELSE
       v_tablespace := 'TABLESPACE ' || v_temp;
     END IF;
-    
-    -- also see if there are any SET commands for this table, ie, autovacuum_enabled=off, fillfactor=70  
+
+    -- also see if there are any SET commands for this table, ie, autovacuum_enabled=off, fillfactor=70
     WITH relopts AS (
         SELECT unnest(c.reloptions) relopts
         FROM pg_class c, pg_namespace n
@@ -102,18 +103,18 @@ $$
     )
     SELECT string_agg(r.relopts, ', ') AS relopts INTO v_temp
     FROM relopts r;
-    
+
     IF v_temp IS NULL THEN
       v_relopts := '';
     ELSE
       v_relopts := ' WITH (' || v_temp || ')';
     END IF;
-  
+
     -- Issue#61 FIX: set search_path = public before we do anything to force explicit schema qualification but dont forget to set it back before exiting...
     SELECT setting INTO v_src_path_old
     FROM pg_settings
     WHERE name = 'search_path';
-    
+
     SELECT REPLACE(REPLACE(setting, '"$user"', '$user'), '$user', '"$user"') INTO v_src_path_old
     FROM pg_settings
     WHERE name = 'search_path';
@@ -145,9 +146,9 @@ $$
       IF (v_table_oid IS NULL) THEN
         RAISE EXCEPTION 'table does not exist';
       END IF;
-      bPartitioned := True;        
+      bPartitioned := True;
     END IF;
-    
+
     IF v_pgversion < 100000 THEN
       SELECT c2.relname parent INTO v_parent
       FROM pg_class c1, pg_namespace n, pg_inherits i, pg_class c2
@@ -157,7 +158,7 @@ $$
           AND c1.oid = i.inhrelid
           AND i.inhparent = c2.oid
           AND c1.relkind = 'r';
-      
+
       IF (v_parent IS NOT NULL) THEN
         bPartitioned := True;
         bInheritance  := True;
@@ -171,7 +172,7 @@ $$
           AND c1.oid = i.inhrelid
           AND i.inhparent = c2.oid
           AND c1.relkind = 'r';
-      
+
       IF (v_parent IS NOT NULL) THEN
         bPartitioned   := True;
         IF bRelispartition THEN
@@ -180,7 +181,7 @@ $$
           bInheritance := True;
         END IF;
       END IF;
-    END IF;    
+    END IF;
 
     -- RAISE INFO 'version=%  schema=%  parent=%  relopts=%  tablespace=%  partitioned=%  inherited=%  relispartition=%',v_pgversion, in_schema, v_parent, v_relopts, v_tablespace, bPartitioned, bInheritance, bRelispartition;
 
@@ -197,10 +198,10 @@ $$
     LOOP
       v_table_ddl := v_table_ddl || '  ' -- note: two char spacer to start, to indent the column
         || v_colrec.column_name || ' '
-        || CASE WHEN v_colrec.data_type = 'USER-DEFINED' THEN in_schema || '.' || v_colrec.udt_name ELSE v_colrec.data_type END 
+        || CASE WHEN v_colrec.data_type = 'USER-DEFINED' THEN in_schema || '.' || v_colrec.udt_name ELSE v_colrec.data_type END
         || CASE WHEN v_colrec.is_identity = 'YES' THEN CASE WHEN v_colrec.identity_generation = 'ALWAYS' THEN ' GENERATED ALWAYS AS IDENTITY' ELSE ' GENERATED BY DEFAULT AS IDENTITY' END ELSE '' END
-        || CASE WHEN v_colrec.character_maximum_length IS NOT NULL THEN ('(' || v_colrec.character_maximum_length || ')') 
-                WHEN v_colrec.numeric_precision > 0 AND v_colrec.numeric_scale > 0 THEN '(' || v_colrec.numeric_precision || ',' || v_colrec.numeric_scale || ')' 
+        || CASE WHEN v_colrec.character_maximum_length IS NOT NULL THEN ('(' || v_colrec.character_maximum_length || ')')
+                WHEN v_colrec.numeric_precision > 0 AND v_colrec.numeric_scale > 0 THEN '(' || v_colrec.numeric_precision || ',' || v_colrec.numeric_scale || ')'
            ELSE '' END || ' '
         || CASE WHEN v_colrec.is_nullable = 'NO' THEN 'NOT NULL' ELSE 'NULL' END
         || CASE WHEN v_colrec.column_default IS NOT null THEN (' DEFAULT ' || v_colrec.column_default) ELSE '' END
@@ -226,7 +227,7 @@ $$
       WHERE nsp.nspname = in_schema
           AND rel.relname = in_table
       ORDER BY type_rank
-      
+
     LOOP
       IF v_constraintrec.type_rank = 1 THEN
           v_primary := True;
@@ -248,8 +249,8 @@ $$
     -- end the create table def but add inherits clause if valid
     IF bPartitioned and bInheritance THEN
       v_table_ddl := v_table_ddl || ') INHERITS (' || in_schema || '.' || v_parent || ') ' || v_relopts || ' ' || v_tablespace || ';' || E'\n';
-    ELSEIF v_pgversion >= 100000 AND bPartitioned and NOT bInheritance THEN  
-      -- See if this is a partitioned table (pg_class.relkind = 'p') and add the partitioned key 
+    ELSEIF v_pgversion >= 100000 AND bPartitioned and NOT bInheritance THEN
+      -- See if this is a partitioned table (pg_class.relkind = 'p') and add the partitioned key
       SELECT pg_get_partkeydef (c1.oid) AS partition_key INTO v_partition_key
       FROM pg_class c1
           JOIN pg_namespace n ON (n.oid = c1.relnamespace)
@@ -264,7 +265,7 @@ $$
     IF v_partition_key IS NOT NULL AND v_partition_key <> '' THEN
       -- add partition clause
       -- NOTE:  cannot specify default tablespace for partitioned relations
-      v_table_ddl := v_table_ddl || ') PARTITION BY ' || v_partition_key || ';' || E'\n';  
+      v_table_ddl := v_table_ddl || ') PARTITION BY ' || v_partition_key || ';' || E'\n';
     ELSEIF bPartitioned AND not bInheritance THEN
       IF v_relopts <> '' THEN
         v_table_ddl := 'CREATE TABLE ' || in_schema || '.' || in_table || ' PARTITION OF ' || in_schema || '.' || v_parent || ' ' || v_partbound || v_relopts || ' ' || v_tablespace || '; ' || E'\n';
@@ -275,10 +276,10 @@ $$
       -- we already did this above
       v_table_ddl := v_table_ddl;
     ELSEIF v_relopts <> '' THEN
-      v_table_ddl := v_table_ddl || ') ' || v_relopts || ' ' || v_tablespace || ';' || E'\n';        
+      v_table_ddl := v_table_ddl || ') ' || v_relopts || ' ' || v_tablespace || ';' || E'\n';
     ELSE
-      v_table_ddl := v_table_ddl || ') ' || v_tablespace || ';' || E'\n';    
-    END IF;  
+      v_table_ddl := v_table_ddl || ') ' || v_tablespace || ';' || E'\n';
+    END IF;
 
     -- suffix create statement with all of the indexes on the table
     FOR v_indexrec IN
@@ -298,16 +299,16 @@ $$
     IF v_src_path_old = '' THEN
       SELECT set_config('search_path', '', false) into v_dummy;
     ELSE
-      EXECUTE 'SET search_path = ' || v_src_path_old;  
+      EXECUTE 'SET search_path = ' || v_src_path_old;
     END IF;
-    
+
     -- return the ddl
     RETURN v_table_ddl;
   END;
 $$;
 
 
--- Function: clone_schema(text, text, boolean, boolean) 
+-- Function: clone_schema(text, text, boolean, boolean)
 -- DROP FUNCTION clone_schema(text, text, boolean, boolean);
 
 CREATE OR REPLACE FUNCTION public.clone_schema(
@@ -329,7 +330,7 @@ DECLARE
   object           text;
   buffer           text;
   buffer2          text;
-  buffer3          text;  
+  buffer3          text;
   srctbl           text;
   aname            text;
   default_         text;
@@ -350,6 +351,8 @@ DECLARE
   src_path_old     text;
   src_path_new     text;
   aclstr           text;
+  tblarray         text[];
+  tblelement       text;
   grantor          text;
   grantee          text;
   privs            text;
@@ -384,7 +387,8 @@ DECLARE
   v_diag5          text;
   v_diag6          text;
   v_dummy          text;
-  v_version        text := '1.3  June 12, 2022';
+  v_version        text := '1.4  June 13, 2022';
+
 BEGIN
   RAISE NOTICE 'clone_schema version %', v_version;
 
@@ -392,11 +396,11 @@ BEGIN
   SELECT setting INTO sq_server_version
   FROM pg_settings
   WHERE name = 'server_version';
-  
-  SELECT setting INTO sq_server_version_num 
-  FROM pg_settings 
+
+  SELECT setting INTO sq_server_version_num
+  FROM pg_settings
   WHERE name = 'server_version_num';
-  
+
   IF sq_server_version_num < 100000 THEN
     RAISE WARNING 'Server Version:%  Number:%  PG Versions older than v10 are not supported.', sq_server_version, sq_server_version_num;
     RETURN;
@@ -404,12 +408,12 @@ BEGIN
 
   -- Make sure NOTICE are shown
   set client_min_messages = 'notice';
-  
+
   -- Check that source_schema exists
   SELECT oid INTO src_oid
   FROM pg_namespace
   WHERE nspname = quote_ident(source_schema);
-  
+
   IF NOT FOUND
     THEN
     RAISE NOTICE ' source schema % does not exist!', source_schema;
@@ -420,7 +424,7 @@ BEGIN
   PERFORM nspname
   FROM pg_namespace
   WHERE nspname = quote_ident(dest_schema);
-  
+
   IF FOUND
     THEN
     RAISE NOTICE ' dest schema % already exists!', dest_schema;
@@ -438,10 +442,10 @@ BEGIN
   SELECT REPLACE(REPLACE(setting, '"$user"', '$user'), '$user', '"$user"') INTO src_path_old
   FROM pg_settings
   WHERE name = 'search_path';
-  
+
   EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
-  SELECT setting INTO src_path_new 
-  FROM pg_settings 
+  SELECT setting INTO src_path_new
+  FROM pg_settings
   WHERE name='search_path';
 
   -- Validate required types exist.  If not, create them.
@@ -481,7 +485,7 @@ BEGIN
               AND n.nspname <> 'information_schema'
               AND pg_catalog.pg_type_is_visible(t.oid)
               AND pg_catalog.format_type(t.oid, NULL) = 'perm_type') b;
-  
+
   IF cnt = 0 THEN
     CREATE TYPE obj_type AS ENUM ('TABLE','VIEW','COLUMN','SEQUENCE','FUNCTION','SCHEMA','DATABASE');
   END IF;
@@ -499,10 +503,10 @@ BEGIN
 
   -- Do system table validations for subsequent system table queries
   -- Issue#65 Fix
-  SELECT count(*) into cnt 
-  FROM pg_attribute 
+  SELECT count(*) into cnt
+  FROM pg_attribute
   WHERE  attrelid = 'pg_proc'::regclass AND attname = 'prokind';
-  
+
   IF cnt = 0 THEN
       is_prokind = False;
   ELSE
@@ -555,7 +559,7 @@ BEGIN
         END AS "Nullable", t.typdefault AS "Default", pg_catalog.array_to_string(ARRAY (
                 SELECT pg_catalog.pg_get_constraintdef(r.oid, TRUE)
                 FROM pg_catalog.pg_constraint r
-                WHERE t.oid = r.contypid), ' ') AS "Check", 'CREATE DOMAIN ' || quote_ident(dest_schema) || '.' || t.typname || ' AS ' || pg_catalog.format_type(t.typbasetype, t.typtypmod) || 
+                WHERE t.oid = r.contypid), ' ') AS "Check", 'CREATE DOMAIN ' || quote_ident(dest_schema) || '.' || t.typname || ' AS ' || pg_catalog.format_type(t.typbasetype, t.typtypmod) ||
                 CASE WHEN t.typnotnull IS NOT NULL THEN
             ' NOT NULL '
         ELSE
@@ -636,11 +640,11 @@ BEGIN
   -- Create sequences
   action := 'Sequences';
   cnt := 0;
-  -- fix#63  get from pg_sequences not information_schema           
-  -- fix#63  take 2: get it from information_schema.sequences since we need to treat IDENTITY columns differently. 
+  -- fix#63  get from pg_sequences not information_schema
+  -- fix#63  take 2: get it from information_schema.sequences since we need to treat IDENTITY columns differently.
   FOR object IN
-    SELECT sequence_name::text 
-    FROM information_schema.sequences 
+    SELECT sequence_name::text
+    FROM information_schema.sequences
     WHERE sequence_schema = quote_ident(source_schema)
   LOOP
     cnt := cnt + 1;
@@ -654,8 +658,8 @@ BEGIN
     IF sq_server_version_num < 100000 THEN
       EXECUTE 'SELECT last_value, is_called FROM ' || quote_ident(source_schema) || '.' || quote_ident(object) || ';' INTO sq_last_value, sq_is_called;
       EXECUTE 'SELECT maximum_value, start_value, increment, minimum_value, 1 cache_size, cycle_option, data_type
-               FROM information_schema.sequences WHERE sequence_schema='|| quote_literal(source_schema) || ' AND sequence_name=' || quote_literal(object) || ';' 
-               INTO sq_max_value, sq_start_value, sq_increment_by, sq_min_value, sq_cache_value, sq_is_cycled, sq_data_type;    
+               FROM information_schema.sequences WHERE sequence_schema='|| quote_literal(source_schema) || ' AND sequence_name=' || quote_literal(object) || ';'
+               INTO sq_max_value, sq_start_value, sq_increment_by, sq_min_value, sq_cache_value, sq_is_cycled, sq_data_type;
       IF sq_is_cycled
         THEN
           sq_cycled := 'CYCLE';
@@ -674,8 +678,8 @@ BEGIN
              || ' '              || sq_cycled || ' ;' ;
     ELSE
       EXECUTE 'SELECT max_value, start_value, increment_by, min_value, cache_size, cycle, data_type, COALESCE(last_value, 1)
-            FROM pg_catalog.pg_sequences WHERE schemaname='|| quote_literal(source_schema) || ' AND sequencename=' || quote_literal(object) || ';' 
-            INTO sq_max_value, sq_start_value, sq_increment_by, sq_min_value, sq_cache_value, sq_is_cycled, sq_data_type, sq_last_value;    
+            FROM pg_catalog.pg_sequences WHERE schemaname='|| quote_literal(source_schema) || ' AND sequencename=' || quote_literal(object) || ';'
+            INTO sq_max_value, sq_start_value, sq_increment_by, sq_min_value, sq_cache_value, sq_is_cycled, sq_data_type, sq_last_value;
       IF sq_is_cycled
         THEN
           sq_cycled := 'CYCLE';
@@ -694,7 +698,7 @@ BEGIN
              || ' CACHE '        || sq_cache_value
              || ' '              || sq_cycled || ' ;' ;
     END IF;
-           
+
     IF ddl_only THEN
       RAISE INFO '%', qry;
     ELSE
@@ -706,11 +710,11 @@ BEGIN
       EXECUTE 'SELECT setval( ''' || buffer || ''', ' || sq_last_value || ', ' || sq_is_called || ');' ;
     ELSE
       if ddl_only THEN
-        -- fix#63           
+        -- fix#63
         --  RAISE INFO '%', 'SELECT setval( ''' || buffer || ''', ' || sq_start_value || ', ' || sq_is_called || ');' ;
         RAISE INFO '%', 'SELECT setval( ''' || buffer || ''', ' || sq_last_value || ', ' || sq_is_called || ');' ;
       ELSE
-        -- fix#63           
+        -- fix#63
         -- EXECUTE 'SELECT setval( ''' || buffer || ''', ' || sq_start_value || ', ' || sq_is_called || ');' ;
         EXECUTE 'SELECT setval( ''' || buffer || ''', ' || sq_last_value || ', ' || sq_is_called || ');' ;
       END IF;
@@ -718,23 +722,23 @@ BEGIN
     END IF;
   END LOOP;
   RAISE NOTICE '   SEQUENCES cloned: %', LPAD(cnt::text, 5, ' ');
-  
+
 
   -- Create tables including partitioned ones (parent/children) and unlogged ones.  Order by is critical since child partition range logic is dependent on it.
   action := 'Tables';
   cnt := 0;
   -- Issue#61 FIX: use set_config for empty string
   -- SET search_path = '';
-  SELECT set_config('search_path', '', false) 
+  SELECT set_config('search_path', '', false)
   into v_dummy;
-  
+
   FOR tblname, relpersist, bRelispart, relknd, data_type, ocomment, l_child  IN
     -- 2021-03-08 MJV #39 fix: change sql to get indicator of user-defined columns to issue warnings
     -- select c.relname, c.relpersistence, c.relispartition, c.relkind
-    -- FROM pg_class c, pg_namespace n where n.oid = c.relnamespace and n.nspname = quote_ident(source_schema) and c.relkind in ('r','p') and 
+    -- FROM pg_class c, pg_namespace n where n.oid = c.relnamespace and n.nspname = quote_ident(source_schema) and c.relkind in ('r','p') and
     -- order by c.relkind desc, c.relname
     --Fix#65 add another left join to distinguish child tables by inheritance
-    
+
     SELECT DISTINCT c.relname, c.relpersistence, c.relispartition, c.relkind, co.data_type, obj_description(c.oid), i.inhrelid
     FROM pg_class c
         JOIN pg_namespace n ON (n.oid = c.relnamespace
@@ -753,7 +757,7 @@ BEGIN
       bChild := True;
     END IF;
     -- RAISE NOTICE 'table=%  bRelispart=%  relkind=%  bChild=%',tblname, bRelispart, relknd, bChild;
-    
+
     IF data_type = 'USER-DEFINED' THEN
       -- RAISE NOTICE ' Table (%) has column(s) with user-defined types so using get_table_ddl() instead of CREATE TABLE LIKE construct.',tblname;
       cnt :=cnt;
@@ -765,50 +769,53 @@ BEGIN
     END IF;
     IF relknd = 'r' THEN
       IF ddl_only THEN
-        IF data_type = 'USER-DEFINED' THEN      
+        IF data_type = 'USER-DEFINED' THEN
           -- FIXED #65, #67
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
-          SELECT * INTO buffer3 
+          SELECT * INTO buffer3
           FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
-          
+
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
         ELSE
           IF NOT bChild THEN
             RAISE INFO '%', 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL);';
           ELSE
             -- FIXED #65, #67
-	    -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
-            SELECT * INTO buffer3 
+            -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
+            SELECT * INTO buffer3
             FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
-            
+
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
           END IF;
         END IF;
 
       ELSE
-        IF data_type = 'USER-DEFINED' THEN            
+        IF data_type = 'USER-DEFINED' THEN
           -- FIXED #65, #67
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
-          SELECT * INTO buffer3 
+          SELECT * INTO buffer3
           FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
-          
+
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
-          EXECUTE buffer3;          
+          -- RAISE INFO 'DEBUG: user-defined %',buffer3;
+          EXECUTE buffer3;
         ELSE
           IF NOT bChild OR bRelispart THEN
             buffer3 := 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
+            -- RAISE INFO 'DEBUG: not user-defined1 %', buffer3;
             EXECUTE buffer3;
           ELSE
             -- FIXED #65, #67
             -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
-            SELECT * INTO buffer3 
+            SELECT * INTO buffer3
             FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
-            
+
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
             -- set client_min_messages higher to avoid messages like this:
             -- NOTICE:  merging column "city_id" with inherited definition
             set client_min_messages = 'WARNING';
-            EXECUTE buffer3;                    
+            -- RAISE INFO 'DEBUG: not user-defined2 %',buffer3;
+            EXECUTE buffer3;
             -- reset it back, only get these for inheritance-based tables
             set client_min_messages = 'notice';
           END IF;
@@ -833,7 +840,7 @@ BEGIN
               ' DEFAULT '
                 || (
                   SELECT pg_catalog.pg_get_expr(d.adbin, d.adrelid)
-                  FROM pg_catalog.pg_attrdef d  
+                  FROM pg_catalog.pg_attrdef d
                   WHERE d.adrelid = pa.attrelid
                     AND d.adnum = pa.attnum
                     AND pa.atthasdef
@@ -869,20 +876,21 @@ BEGIN
         JOIN pg_catalog.pg_class pc ON pc.oid = pa.attrelid
           AND pc.relname = quote_ident(tblname)
         JOIN pg_catalog.pg_namespace pn ON pn.oid = pc.relnamespace
-          AND pn.nspname = quote_ident(source_schema) 
+          AND pn.nspname = quote_ident(source_schema)
       WHERE pa.attnum > 0
         AND NOT pa.attisdropped
       GROUP BY pn.nspname, pc.relname, pa.attrelid;
-      
+
       -- append partition keyword to it
-      SELECT pg_catalog.pg_get_partkeydef(c.oid::pg_catalog.oid) into buffer2 
-      FROM pg_catalog.pg_class c  LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace 
+      SELECT pg_catalog.pg_get_partkeydef(c.oid::pg_catalog.oid) into buffer2
+      FROM pg_catalog.pg_class c  LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
       WHERE c.relname = quote_ident(tblname) COLLATE pg_catalog.default AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default;
-  
+
       qry := buffer || ') PARTITION BY ' || buffer2 || ';';
       IF ddl_only THEN
         RAISE INFO '%', qry;
       ELSE
+        -- RAISE INFO 'DEBUG: parent %', qry;
         EXECUTE qry;
         -- Add table comment.
         -- do this separately below
@@ -902,9 +910,9 @@ BEGIN
       -- loop for child tables and alter them to attach to parent for specific partition method.
       FOR aname, part_range, object IN
         SELECT quote_ident(dest_schema) || '.' || c1.relname as tablename, pg_catalog.pg_get_expr(c1.relpartbound, c1.oid) as partrange, quote_ident(dest_schema) || '.' || c2.relname as object
-        FROM pg_catalog.pg_class c1, pg_namespace n, pg_catalog.pg_inherits i, pg_class c2 
-        WHERE n.nspname = quote_ident(source_schema) AND c1.relnamespace = n.oid AND c1.relkind = 'r' AND 
-        c1.relispartition AND c1.oid=i.inhrelid AND i.inhparent = c2.oid AND c2.relnamespace = n.oid ORDER BY pg_catalog.pg_get_expr(c1.relpartbound, c1.oid) = 'DEFAULT', c1.oid::pg_catalog.regclass::pg_catalog.text  
+        FROM pg_catalog.pg_class c1, pg_namespace n, pg_catalog.pg_inherits i, pg_class c2
+        WHERE n.nspname = quote_ident(source_schema) AND c1.relnamespace = n.oid AND c1.relkind = 'r' AND
+        c1.relispartition AND c1.oid=i.inhrelid AND i.inhparent = c2.oid AND c2.relnamespace = n.oid ORDER BY pg_catalog.pg_get_expr(c1.relpartbound, c1.oid) = 'DEFAULT', c1.oid::pg_catalog.regclass::pg_catalog.text
       LOOP
         qry := 'ALTER TABLE ONLY ' || object || ' ATTACH PARTITION ' || aname || ' ' || part_range || ';';
         IF ddl_only THEN
@@ -912,8 +920,8 @@ BEGIN
         ELSE
           EXECUTE qry;
         END IF;
-        
-      END LOOP;    
+
+      END LOOP;
     END IF;
     -- INCLUDING ALL creates new index names, we restore them to the old name.
     -- There should be no conflicts since they live in different schemas
@@ -957,13 +965,13 @@ BEGIN
     IF include_recs
       THEN
       -- Insert records from source table
-      
+
       -- 2021-03-03  MJV FIX
       buffer := dest_schema || '.' || quote_ident(tblname);
-	  
+
       -- 2020/06/18 - Issue #31 fix: add "OVERRIDING SYSTEM VALUE" for IDENTITY columns marked as GENERATED ALWAYS.
-      select count(*) into cnt2 from pg_class c, pg_attribute a, pg_namespace n  
-	  where a.attrelid = c.oid and c.relname = quote_ident(tblname) and n.oid = c.relnamespace and n.nspname = quote_ident(source_schema) and a.attidentity = 'a';
+      select count(*) into cnt2 from pg_class c, pg_attribute a, pg_namespace n
+          where a.attrelid = c.oid and c.relname = quote_ident(tblname) and n.oid = c.relnamespace and n.nspname = quote_ident(source_schema) and a.attidentity = 'a';
       buffer3 := '';
       IF cnt2 > 0 THEN
           buffer3 := ' OVERRIDING SYSTEM VALUE';
@@ -977,11 +985,10 @@ BEGIN
         -- bypass child tables since we populate them when we populate the parents
         -- RAISE INFO 'tblname=%  bRelispart=%  relknd=%  l_child=%  bChild=%', tblname, bRelispart, relknd, l_child, bChild;
         IF NOT bRelispart AND NOT bChild THEN
-          RAISE NOTICE ' Populating cloned table, %', tblname;
+          -- Issue#75: Must defer population of tables until child tables have been added to parents
+          -- RAISE NOTICE ' Deferring populating of cloned table, %', tblname;
           buffer2 := 'INSERT INTO ' || buffer || buffer3 || ' SELECT * FROM ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ';';
-          -- RAISE NOTICE 'DEBUG %', buffer2;
-          EXECUTE buffer2;        
-          tblscopied := tblscopied + 1;
+          tblarray := tblarray || buffer2;
         END IF;
 
       END IF;
@@ -992,7 +999,7 @@ BEGIN
     SELECT set_config('search_path', '', false) into v_dummy;
 
     FOR column_, default_ IN
-      SELECT column_name::text, 
+      SELECT column_name::text,
              REPLACE(column_default::text, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.')
       FROM information_schema.COLUMNS
       WHERE table_schema = source_schema
@@ -1010,7 +1017,6 @@ BEGIN
 
   END LOOP;
   RAISE NOTICE '      TABLES cloned: %', LPAD(cnt::text, 5, ' ');
-  RAISE NOTICE '      TABLES copied: %', LPAD(tblscopied::text, 5, ' ');
 
   -- Assigning sequences to table columns.
   action := 'Sequences assigning';
@@ -1067,8 +1073,8 @@ BEGIN
   action := 'Identity updating';
   cnt := 0;
   FOR object, sq_last_value IN
-    SELECT sequencename::text, COALESCE(last_value, -999) from pg_sequences where schemaname = quote_ident(source_schema) 
-    AND NOT EXISTS 
+    SELECT sequencename::text, COALESCE(last_value, -999) from pg_sequences where schemaname = quote_ident(source_schema)
+    AND NOT EXISTS
     (select 1 from information_schema.sequences where sequence_schema = quote_ident(source_schema) and sequence_name = sequencename)
   LOOP
     IF sq_last_value = -999 THEN
@@ -1080,10 +1086,10 @@ BEGIN
       EXECUTE 'SELECT setval( ''' || buffer || ''', ' || sq_last_value || ', ' || sq_is_called || ');' ;
     ELSE
       if ddl_only THEN
-        -- fix#63           
+        -- fix#63
         RAISE INFO '%', 'SELECT setval( ''' || buffer || ''', ' || sq_last_value || ', ' || sq_is_called || ');' ;
       ELSE
-        -- fix#63           
+        -- fix#63
         EXECUTE 'SELECT setval( ''' || buffer || ''', ' || sq_last_value || ', ' || sq_is_called || ');' ;
       END IF;
     END IF;
@@ -1094,11 +1100,11 @@ BEGIN
   --  add FK constraint
   action := 'FK Constraints';
   cnt := 0;
-  
+
   -- Issue#61 FIX: use set_config for empty string
   -- SET search_path = '';
   SELECT set_config('search_path', '', false) into v_dummy;
-  
+
   FOR qry IN
     SELECT 'ALTER TABLE ' || quote_ident(dest_schema) || '.' || quote_ident(rn.relname)
                           || ' ADD CONSTRAINT ' || quote_ident(ct.conname) || ' ' || REPLACE(pg_get_constraintdef(ct.oid), 'REFERENCES ' || quote_ident(source_schema) || '.', 'REFERENCES ' || quote_ident(dest_schema) || '.') || ';'
@@ -1122,20 +1128,20 @@ BEGIN
 
   -- Create views
   action := 'Views';
-  
+
   -- Issue#61 FIX: use set_config for empty string
   -- MJV FIX #43: also had to reset search_path from source schema to empty.
   -- SET search_path = '';
-  SELECT set_config('search_path', '', false) 
+  SELECT set_config('search_path', '', false)
   INTO v_dummy;
-  
+
   cnt := 0;
   --FOR object IN
     -- SELECT table_name::text, view_definition
     -- FROM information_schema.views
     -- WHERE table_schema = quote_ident(source_schema)
 
-  -- Issue#73 replace loop query to handle dependencies  
+  -- Issue#73 replace loop query to handle dependencies
   FOR srctbl, aname, object IN
     WITH RECURSIVE views AS (
        SELECT n.nspname as schemaname, v.relname as tablename, v.oid::regclass AS viewname,
@@ -1161,11 +1167,11 @@ BEGIN
        FROM views
           JOIN pg_depend AS d
              ON d.refobjid = views.viewname
-          JOIN pg_rewrite AS r  
+          JOIN pg_rewrite AS r
              ON r.oid = d.objid
           JOIN pg_class AS v
              ON v.oid = r.ev_class
-          JOIN pg_namespace n 
+          JOIN pg_namespace n
              ON n.oid = v.relnamespace
        -- WHERE v.relkind IN ('v', 'm')
        WHERE v.relkind IN ('v')
@@ -1191,7 +1197,7 @@ BEGIN
     buffer := quote_ident(dest_schema) || '.' || quote_ident(aname);
     -- MJV FIX: #43
     -- SELECT view_definition INTO v_def
-    -- SELECT REPLACE(view_definition, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO v_def 
+    -- SELECT REPLACE(view_definition, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO v_def
     -- FROM information_schema.views
     -- WHERE table_schema = quote_ident(source_schema)
     --   AND table_name = quote_ident(object);
@@ -1231,10 +1237,10 @@ BEGIN
   LOOP
       cnt := cnt + 1;
       buffer := dest_schema || '.' || quote_ident(object);
-      
+
       -- MJV FIX: #72 remove source schema in MV def
-      SELECT REPLACE(v_def, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO buffer2; 
-      
+      SELECT REPLACE(v_def, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO buffer2;
+
       IF include_recs THEN
         -- EXECUTE 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || v_def || ' WITH DATA;' ;
         EXECUTE 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || buffer2 || ' WITH DATA;' ;
@@ -1253,7 +1259,7 @@ BEGIN
           RAISE INFO '%', 'COMMENT ON MATERIALIZED VIEW ' || quote_ident(dest_schema) || '.' || object || ' IS ''' || adef || ''';';
         ELSE
           EXECUTE 'COMMENT ON MATERIALIZED VIEW ' || quote_ident(dest_schema) || '.' || object || ' IS ''' || adef || ''';';
-        END IF;	 		 
+        END IF;
       END IF;
 
       FOR aname, adef IN
@@ -1283,19 +1289,19 @@ BEGIN
     FOR func_oid IN SELECT oid FROM pg_proc WHERE pronamespace = src_oid AND prokind != 'a'
     LOOP
       cnt := cnt + 1;
-      SELECT pg_get_functiondef(func_oid) 
+      SELECT pg_get_functiondef(func_oid)
       INTO qry;
-      
+
       SELECT replace(qry, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO dest_qry;
       IF ddl_only THEN
         RAISE INFO '%;', dest_qry;
       ELSE
         EXECUTE dest_qry;
       END IF;
-    END LOOP;    
+    END LOOP;
   ELSE
-    FOR func_oid IN SELECT oid 
-                    FROM pg_proc 
+    FOR func_oid IN SELECT oid
+                    FROM pg_proc
                     WHERE pronamespace = src_oid AND not proisagg
     LOOP
       cnt := cnt + 1;
@@ -1306,16 +1312,16 @@ BEGIN
       ELSE
         EXECUTE dest_qry;
       END IF;
-    END LOOP;    
+    END LOOP;
   END IF;
 
   -- Create aggregate functions.
   -- Fixed Issue#65
   -- FOR func_oid IN SELECT oid FROM pg_proc WHERE pronamespace = src_oid AND prokind = 'a'
   IF is_prokind THEN
-    FOR func_oid IN 
-        SELECT oid 
-        FROM pg_proc 
+    FOR func_oid IN
+        SELECT oid
+        FROM pg_proc
         WHERE pronamespace = src_oid AND prokind = 'a'
     LOOP
       cnt := cnt + 1;
@@ -1328,9 +1334,9 @@ BEGIN
         || '('
         -- || format_type(a.aggtranstype, NULL)
         -- Issue#65 Fixes for specific datatype mappings
-        || CASE WHEN format_type(a.aggtranstype, NULL) = 'double precision[]' THEN 'float8' 
-                WHEN format_type(a.aggtranstype, NULL) = 'anyarray'           THEN 'anyelement' 
-           ELSE format_type(a.aggtranstype, NULL) END        
+        || CASE WHEN format_type(a.aggtranstype, NULL) = 'double precision[]' THEN 'float8'
+                WHEN format_type(a.aggtranstype, NULL) = 'anyarray'           THEN 'anyelement'
+           ELSE format_type(a.aggtranstype, NULL) END
         || ') (sfunc = '
         || regexp_replace(a.aggtransfn::text, '(^|\W)' || quote_ident(source_schema) || '\.', '\1' || quote_ident(dest_schema) || '.')
         || ', stype = '
@@ -1351,18 +1357,18 @@ BEGIN
       JOIN pg_aggregate a ON a.aggfnoid = p.oid
       LEFT JOIN pg_operator op ON op.oid = a.aggsortop
       WHERE p.oid = func_oid;
-      
-      IF ddl_only THEN     
+
+      IF ddl_only THEN
         RAISE INFO '%;', dest_qry;
       ELSE
         EXECUTE dest_qry;
       END IF;
-   
+
     END LOOP;
     RAISE NOTICE '   FUNCTIONS cloned: %', LPAD(cnt::text, 5, ' ');
-    
+
   ELSE
-    FOR func_oid IN SELECT oid FROM pg_proc WHERE pronamespace = src_oid AND proisagg 
+    FOR func_oid IN SELECT oid FROM pg_proc WHERE pronamespace = src_oid AND proisagg
     LOOP
       cnt := cnt + 1;
       SELECT
@@ -1373,9 +1379,9 @@ BEGIN
         || '('
         -- || format_type(a.aggtranstype, NULL)
         -- Issue#65 Fixes for specific datatype mappings
-        || CASE WHEN format_type(a.aggtranstype, NULL) = 'double precision[]' THEN 'float8' 
-                WHEN format_type(a.aggtranstype, NULL) = 'anyarray'           THEN 'anyelement' 
-           ELSE format_type(a.aggtranstype, NULL) END        
+        || CASE WHEN format_type(a.aggtranstype, NULL) = 'double precision[]' THEN 'float8'
+                WHEN format_type(a.aggtranstype, NULL) = 'anyarray'           THEN 'anyelement'
+           ELSE format_type(a.aggtranstype, NULL) END
         || ') (sfunc = '
         || regexp_replace(a.aggtransfn::text, '(^|\W)' || quote_ident(source_schema) || '\.', '\1' || quote_ident(dest_schema) || '.')
         || ', stype = '
@@ -1396,13 +1402,13 @@ BEGIN
       JOIN pg_aggregate a ON a.aggfnoid = p.oid
       LEFT JOIN pg_operator op ON op.oid = a.aggsortop
       WHERE p.oid = func_oid;
-      
-      IF ddl_only THEN     
+
+      IF ddl_only THEN
         RAISE INFO '%;', dest_qry;
       ELSE
         EXECUTE dest_qry;
       END IF;
-      
+
     END LOOP;
     RAISE NOTICE '   FUNCTIONS cloned: %', LPAD(cnt::text, 5, ' ');
   END IF;
@@ -1416,19 +1422,19 @@ BEGIN
   -- Issue#61 FIX: use set_config for empty string
   -- SET search_path = '';
   SELECT set_config('search_path', '', false) into v_dummy;
-  
+
   action := 'Triggers';
   cnt := 0;
   FOR arec IN
     -- 2021-03-09 MJV FIX: #40 fixed sql to get the def using pg_get_triggerdef() sql
-    SELECT n.nspname, c.relname, t.tgname, p.proname, REPLACE(pg_get_triggerdef(t.oid), quote_ident(source_schema), quote_ident(dest_schema)) || ';' AS trig_ddl 
+    SELECT n.nspname, c.relname, t.tgname, p.proname, REPLACE(pg_get_triggerdef(t.oid), quote_ident(source_schema), quote_ident(dest_schema)) || ';' AS trig_ddl
     FROM pg_trigger t, pg_class c, pg_namespace n, pg_proc p
-    WHERE n.nspname = quote_ident(source_schema) 
-      AND n.oid = c.relnamespace 
-      AND c.relkind in ('r','p') 
-      AND n.oid = p.pronamespace 
-      AND c.oid = t.tgrelid 
-      AND p.oid = t.tgfoid 
+    WHERE n.nspname = quote_ident(source_schema)
+      AND n.oid = c.relnamespace
+      AND c.relkind in ('r','p')
+      AND n.oid = p.pronamespace
+      AND c.oid = t.tgrelid
+      AND p.oid = t.tgfoid
       ORDER BY c.relname, t.tgname
   LOOP
     BEGIN
@@ -1449,12 +1455,12 @@ BEGIN
   action := 'Rules';
   cnt := 0;
   FOR arec IN
-    SELECT regexp_replace(definition, E'[\\n\\r]+', ' ', 'g' ) as definition 
-    FROM pg_rules 
+    SELECT regexp_replace(definition, E'[\\n\\r]+', ' ', 'g' ) as definition
+    FROM pg_rules
     WHERE schemaname = quote_ident(source_schema)
   LOOP
     cnt := cnt + 1;
-    buffer := REPLACE(arec.definition, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');  
+    buffer := REPLACE(arec.definition, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
     -- RAISE INFO 'rules def: %', buffer;
     IF ddl_only THEN
       RAISE INFO '%', buffer;
@@ -1462,7 +1468,7 @@ BEGIN
       EXECUTE buffer;
     END IF;
   END LOOP;
-  RAISE NOTICE '    RULES    cloned: %', LPAD(cnt::text, 5, ' ');  
+  RAISE NOTICE '    RULES    cloned: %', LPAD(cnt::text, 5, ' ');
 
 
   -- MV: Create Policies
@@ -1470,11 +1476,11 @@ BEGIN
   action := 'Policies';
   cnt := 0;
   FOR arec IN
-    SELECT 'CREATE POLICY ' || policyname || ' ON ' || quote_ident(dest_schema) || '.' || tablename || ' AS ' || permissive || ' FOR ' || cmd || ' TO ' 
-    ||  array_to_string(roles, ',', '*') || ' USING (' || regexp_replace(qual, E'[\\n\\r]+', ' ', 'g' ) || ')' 
-    || CASE WHEN with_check IS NOT NULL THEN ' WITH CHECK (' ELSE '' END || coalesce(with_check, '') || CASE WHEN with_check IS NOT NULL THEN ');' ELSE ';' END as definition 
-    FROM pg_policies 
-    WHERE schemaname = quote_ident(source_schema) 
+    SELECT 'CREATE POLICY ' || policyname || ' ON ' || quote_ident(dest_schema) || '.' || tablename || ' AS ' || permissive || ' FOR ' || cmd || ' TO '
+    ||  array_to_string(roles, ',', '*') || ' USING (' || regexp_replace(qual, E'[\\n\\r]+', ' ', 'g' ) || ')'
+    || CASE WHEN with_check IS NOT NULL THEN ' WITH CHECK (' ELSE '' END || coalesce(with_check, '') || CASE WHEN with_check IS NOT NULL THEN ');' ELSE ';' END as definition
+    FROM pg_policies
+    WHERE schemaname = quote_ident(source_schema)
     ORDER BY policyname
   LOOP
     cnt := cnt + 1;
@@ -1484,27 +1490,27 @@ BEGIN
       EXECUTE arec.definition;
     END IF;
   END LOOP;
-  RAISE NOTICE '    POLICIES cloned: %', LPAD(cnt::text, 5, ' ');  
+  RAISE NOTICE '    POLICIES cloned: %', LPAD(cnt::text, 5, ' ');
 
 
   -- MJV Fixed #62 for comments (PASS 1)
   action := 'Policies1';
   cnt := 0;
   FOR qry IN
-    -- Issue#74 Fix: Change schema from source to target. Also, do not include comments on foreign tables since we do not clone foreign tables at this time.  
-    SELECT 'COMMENT ON ' || CASE WHEN c.relkind in ('r','p') AND a.attname IS NULL THEN 'TABLE ' WHEN c.relkind in ('r','p') AND 
+    -- Issue#74 Fix: Change schema from source to target. Also, do not include comments on foreign tables since we do not clone foreign tables at this time.
+    SELECT 'COMMENT ON ' || CASE WHEN c.relkind in ('r','p') AND a.attname IS NULL THEN 'TABLE ' WHEN c.relkind in ('r','p') AND
     a.attname IS NOT NULL THEN 'COLUMN ' WHEN c.relkind = 'f' THEN 'FOREIGN TABLE ' WHEN c.relkind = 'm' THEN 'MATERIALIZED VIEW ' WHEN c.relkind = 'v' THEN 'VIEW '
-    WHEN c.relkind = 'i' THEN 'INDEX ' WHEN c.relkind = 'S' THEN 'SEQUENCE ' ELSE 'XX' END || quote_ident(dest_schema) || '.' || CASE WHEN c.relkind in ('r','p') AND 
-    a.attname IS NOT NULL THEN c.relname || '.' || a.attname ELSE c.relname END || 
+    WHEN c.relkind = 'i' THEN 'INDEX ' WHEN c.relkind = 'S' THEN 'SEQUENCE ' ELSE 'XX' END || quote_ident(dest_schema) || '.' || CASE WHEN c.relkind in ('r','p') AND
+    a.attname IS NOT NULL THEN c.relname || '.' || a.attname ELSE c.relname END ||
     -- Issue#74 Fix
     -- ' IS ''' || d.description || ''';' as ddl
-    ' IS '   || quote_literal(d.description) || ';' as ddl    
-    FROM pg_class c 
-    JOIN pg_namespace n ON (n.oid = c.relnamespace) 
-    LEFT JOIN pg_description d ON (c.oid = d.objoid) 
-    LEFT JOIN pg_attribute a ON (c.oid = a.attrelid 
-      AND a.attnum > 0 and a.attnum = d.objsubid) 
-    WHERE c.relkind <> 'f' AND d.description IS NOT NULL AND n.nspname = quote_ident(source_schema) 
+    ' IS '   || quote_literal(d.description) || ';' as ddl
+    FROM pg_class c
+    JOIN pg_namespace n ON (n.oid = c.relnamespace)
+    LEFT JOIN pg_description d ON (c.oid = d.objoid)
+    LEFT JOIN pg_attribute a ON (c.oid = a.attrelid
+      AND a.attnum > 0 and a.attnum = d.objsubid)
+    WHERE c.relkind <> 'f' AND d.description IS NOT NULL AND n.nspname = quote_ident(source_schema)
     ORDER BY ddl
   LOOP
     cnt := cnt + 1;
@@ -1515,7 +1521,7 @@ BEGIN
       EXECUTE qry;
     END IF;
   END LOOP;
-  RAISE NOTICE ' COMMENTS(1) cloned: %', LPAD(cnt::text, 5, ' ');          
+  RAISE NOTICE ' COMMENTS(1) cloned: %', LPAD(cnt::text, 5, ' ');
 
   -- MJV Fixed #62 for comments (PASS 2)
   action := 'Policies2';
@@ -1523,16 +1529,16 @@ BEGIN
   IF is_prokind THEN
   FOR qry IN
     -- Issue#74 Fix: Change schema from source to target.
-    SELECT 'COMMENT ON SCHEMA ' || dest_schema || 
+    SELECT 'COMMENT ON SCHEMA ' || dest_schema ||
     -- Issue#74 Fix
     -- ' IS ''' || d.description || ''';' as ddl
-    ' IS '   || quote_literal(d.description) || ';' as ddl        
-    from pg_namespace n, pg_description d where d.objoid = n.oid and n.nspname = quote_ident(source_schema) 
+    ' IS '   || quote_literal(d.description) || ';' as ddl
+    from pg_namespace n, pg_description d where d.objoid = n.oid and n.nspname = quote_ident(source_schema)
     UNION
     -- Issue#74 Fix: need to replace source schema inline
     -- SELECT 'COMMENT ON TYPE ' || pg_catalog.format_type(t.oid, NULL) || ' IS ''' || pg_catalog.obj_description(t.oid, 'pg_type') || ''';' as ddl
     SELECT 'COMMENT ON TYPE ' || REPLACE(pg_catalog.format_type(t.oid, NULL), quote_ident(source_schema), quote_ident(dest_schema)) || ' IS ''' || pg_catalog.obj_description(t.oid, 'pg_type') || ''';' as ddl
-    FROM pg_catalog.pg_type t 
+    FROM pg_catalog.pg_type t
     JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
     WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class c WHERE c.oid = t.typrelid))
       AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_type el WHERE el.oid = t.typelem AND el.typarray = t.oid)
@@ -1540,36 +1546,36 @@ BEGIN
       AND pg_catalog.obj_description(t.oid, 'pg_type') IS NOT NULL and t.typtype = 'c'
     UNION
     SELECT 'COMMENT ON COLLATION ' || dest_schema || '.' || c.collname || ' IS ''' || pg_catalog.obj_description(c.oid, 'pg_collation') || ''';' as ddl
-    FROM pg_catalog.pg_collation c, pg_catalog.pg_namespace n 
+    FROM pg_catalog.pg_collation c, pg_catalog.pg_namespace n
     WHERE n.oid = c.collnamespace AND c.collencoding IN (-1, pg_catalog.pg_char_to_encoding(pg_catalog.getdatabaseencoding()))
       AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default AND pg_catalog.obj_description(c.oid, 'pg_collation') IS NOT NULL
     UNION
-    SELECT 'COMMENT ON ' || CASE WHEN p.prokind = 'f' THEN 'FUNCTION ' WHEN p.prokind = 'p' THEN 'PROCEDURE ' WHEN p.prokind = 'a' THEN 'AGGREGATE ' END || 
+    SELECT 'COMMENT ON ' || CASE WHEN p.prokind = 'f' THEN 'FUNCTION ' WHEN p.prokind = 'p' THEN 'PROCEDURE ' WHEN p.prokind = 'a' THEN 'AGGREGATE ' END ||
     dest_schema || '.' || p.proname || ' (' || oidvectortypes(p.proargtypes) || ')'
     -- Issue#74 Fix
     -- ' IS ''' || d.description || ''';' as ddl
     ' IS '   || quote_literal(d.description) || ';' as ddl
-    FROM pg_catalog.pg_namespace n 
-    JOIN pg_catalog.pg_proc p ON p.pronamespace = n.oid 
-    JOIN pg_description d ON (d.objoid = p.oid) 
+    FROM pg_catalog.pg_namespace n
+    JOIN pg_catalog.pg_proc p ON p.pronamespace = n.oid
+    JOIN pg_description d ON (d.objoid = p.oid)
     WHERE n.nspname = quote_ident(source_schema)
     UNION
-    SELECT 'COMMENT ON POLICY ' || p1.policyname || ' ON ' || dest_schema || '.' || p1.tablename || 
+    SELECT 'COMMENT ON POLICY ' || p1.policyname || ' ON ' || dest_schema || '.' || p1.tablename ||
     -- Issue#74 Fix
     -- ' IS ''' || d.description || ''';' as ddl
-    ' IS '   || quote_literal(d.description) || ';' as ddl    
-    FROM pg_policies p1, pg_policy p2, pg_class c, pg_namespace n, pg_description d 
-    WHERE p1.schemaname = n.nspname AND p1.tablename = c.relname AND n.oid = c.relnamespace 
+    ' IS '   || quote_literal(d.description) || ';' as ddl
+    FROM pg_policies p1, pg_policy p2, pg_class c, pg_namespace n, pg_description d
+    WHERE p1.schemaname = n.nspname AND p1.tablename = c.relname AND n.oid = c.relnamespace
       AND c.relkind in ('r','p') AND p1.policyname = p2.polname AND d.objoid = p2.oid AND p1.schemaname = quote_ident(source_schema)
     UNION
-    SELECT 'COMMENT ON DOMAIN ' || dest_schema || '.' || t.typname || 
+    SELECT 'COMMENT ON DOMAIN ' || dest_schema || '.' || t.typname ||
     -- Issue#74 Fix
     -- ' IS ''' || d.description || ''';' as ddl
-    ' IS '   || quote_literal(d.description) || ';' as ddl        
-    FROM pg_catalog.pg_type t 
-    LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace 
+    ' IS '   || quote_literal(d.description) || ';' as ddl
+    FROM pg_catalog.pg_type t
+    LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
     JOIN pg_catalog.pg_description d ON d.classoid = t.tableoid AND d.objoid = t.oid AND d.objsubid = 0
-    WHERE t.typtype = 'd' AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default 
+    WHERE t.typtype = 'd' AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default
     ORDER BY 1
   LOOP
     cnt2 := cnt2 + 1;
@@ -1583,56 +1589,56 @@ BEGIN
   ELSE -- must be v 10 or less
   FOR qry IN
     -- Issue#74 Fix: Change schema from source to target.
-    SELECT 'COMMENT ON SCHEMA ' || dest_schema || 
+    SELECT 'COMMENT ON SCHEMA ' || dest_schema ||
     -- Issue#74 Fix
     -- ' IS ''' || d.description || ''';' as ddl
-    ' IS '   || quote_literal(d.description) || ';' as ddl        
-    from pg_namespace n, pg_description d where d.objoid = n.oid and n.nspname = quote_ident(source_schema) 
+    ' IS '   || quote_literal(d.description) || ';' as ddl
+    from pg_namespace n, pg_description d where d.objoid = n.oid and n.nspname = quote_ident(source_schema)
     UNION
     -- Issue#74 Fix: need to replace source schema inline
     -- SELECT 'COMMENT ON TYPE ' || pg_catalog.format_type(t.oid, NULL) || ' IS ''' || pg_catalog.obj_description(t.oid, 'pg_type') || ''';' as ddl
-    SELECT 'COMMENT ON TYPE ' || REPLACE(pg_catalog.format_type(t.oid, NULL), quote_ident(source_schema), quote_ident(dest_schema)) || ' IS ''' || pg_catalog.obj_description(t.oid, 'pg_type') || ''';' as ddl    
-    FROM pg_catalog.pg_type t 
+    SELECT 'COMMENT ON TYPE ' || REPLACE(pg_catalog.format_type(t.oid, NULL), quote_ident(source_schema), quote_ident(dest_schema)) || ' IS ''' || pg_catalog.obj_description(t.oid, 'pg_type') || ''';' as ddl
+    FROM pg_catalog.pg_type t
     JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
-    WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' 
-                              FROM pg_catalog.pg_class c 
+    WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c'
+                              FROM pg_catalog.pg_class c
                               WHERE c.oid = t.typrelid))
-      AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_type el 
+      AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_type el
                      WHERE el.oid = t.typelem AND el.typarray = t.oid)
       AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default
       AND pg_catalog.obj_description(t.oid, 'pg_type') IS NOT NULL and t.typtype = 'c'
     UNION
     SELECT 'COMMENT ON COLLATION ' || dest_schema || '.' || c.collname || ' IS ''' || pg_catalog.obj_description(c.oid, 'pg_collation') || ''';' as ddl
-    FROM pg_catalog.pg_collation c, pg_catalog.pg_namespace n 
+    FROM pg_catalog.pg_collation c, pg_catalog.pg_namespace n
     WHERE n.oid = c.collnamespace AND c.collencoding IN (-1, pg_catalog.pg_char_to_encoding(pg_catalog.getdatabaseencoding()))
       AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default AND pg_catalog.obj_description(c.oid, 'pg_collation') IS NOT NULL
     UNION
-    SELECT 'COMMENT ON ' || CASE WHEN proisagg THEN 'AGGREGATE ' ELSE 'FUNCTION ' END || 
+    SELECT 'COMMENT ON ' || CASE WHEN proisagg THEN 'AGGREGATE ' ELSE 'FUNCTION ' END ||
     dest_schema || '.' || p.proname || ' (' || oidvectortypes(p.proargtypes) || ')'
     -- Issue#74 Fix
     -- ' IS ''' || d.description || ''';' as ddl
-    ' IS '   || quote_literal(d.description) || ';' as ddl            
-    FROM pg_catalog.pg_namespace n 
-    JOIN pg_catalog.pg_proc p ON p.pronamespace = n.oid 
-    JOIN pg_description d ON (d.objoid = p.oid) 
+    ' IS '   || quote_literal(d.description) || ';' as ddl
+    FROM pg_catalog.pg_namespace n
+    JOIN pg_catalog.pg_proc p ON p.pronamespace = n.oid
+    JOIN pg_description d ON (d.objoid = p.oid)
     WHERE n.nspname = quote_ident(source_schema)
     UNION
-    SELECT 'COMMENT ON POLICY ' || p1.policyname || ' ON ' || dest_schema || '.' || p1.tablename || 
+    SELECT 'COMMENT ON POLICY ' || p1.policyname || ' ON ' || dest_schema || '.' || p1.tablename ||
     -- Issue#74 Fix
     -- ' IS ''' || d.description || ''';' as ddl
-    ' IS '   || quote_literal(d.description) || ';' as ddl            
-    FROM pg_policies p1, pg_policy p2, pg_class c, pg_namespace n, pg_description d 
-    WHERE p1.schemaname = n.nspname AND p1.tablename = c.relname AND n.oid = c.relnamespace 
+    ' IS '   || quote_literal(d.description) || ';' as ddl
+    FROM pg_policies p1, pg_policy p2, pg_class c, pg_namespace n, pg_description d
+    WHERE p1.schemaname = n.nspname AND p1.tablename = c.relname AND n.oid = c.relnamespace
       AND c.relkind in ('r','p') AND p1.policyname = p2.polname AND d.objoid = p2.oid AND p1.schemaname = quote_ident(source_schema)
     UNION
-    SELECT 'COMMENT ON DOMAIN ' || dest_schema || '.' || t.typname || 
+    SELECT 'COMMENT ON DOMAIN ' || dest_schema || '.' || t.typname ||
     -- Issue#74 Fix
     -- ' IS ''' || d.description || ''';' as ddl
-    ' IS '   || quote_literal(d.description) || ';' as ddl            
-    FROM pg_catalog.pg_type t 
-    LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace 
+    ' IS '   || quote_literal(d.description) || ';' as ddl
+    FROM pg_catalog.pg_type t
+    LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
     JOIN pg_catalog.pg_description d ON d.classoid = t.tableoid AND d.objoid = t.oid AND d.objsubid = 0
-    WHERE t.typtype = 'd' AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default 
+    WHERE t.typtype = 'd' AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default
     ORDER BY 1
   LOOP
     cnt2 := cnt2 + 1;
@@ -1644,7 +1650,7 @@ BEGIN
     END IF;
   END LOOP;
   END IF;
-  RAISE NOTICE ' COMMENTS(2) cloned: %', LPAD(cnt2::text, 5, ' ');            
+  RAISE NOTICE ' COMMENTS(2) cloned: %', LPAD(cnt2::text, 5, ' ');
 
 
   -- ---------------------
@@ -1657,8 +1663,8 @@ BEGIN
     SELECT pg_catalog.pg_get_userbyid(d.defaclrole) AS "owner", n.nspname AS schema,
     CASE d.defaclobjtype WHEN 'r' THEN 'table' WHEN 'S' THEN 'sequence' WHEN 'f' THEN 'function' WHEN 'T' THEN 'type' WHEN 'n' THEN 'schema' END AS atype,
     d.defaclacl as defaclacl, pg_catalog.array_to_string(d.defaclacl, ',') as defaclstr
-    FROM pg_catalog.pg_default_acl d LEFT JOIN pg_catalog.pg_namespace n ON (n.oid = d.defaclnamespace) 
-    WHERE n.nspname IS NOT NULL AND n.nspname = quote_ident(source_schema) 
+    FROM pg_catalog.pg_default_acl d LEFT JOIN pg_catalog.pg_namespace n ON (n.oid = d.defaclnamespace)
+    WHERE n.nspname IS NOT NULL AND n.nspname = quote_ident(source_schema)
     ORDER BY 3, 2, 1
   LOOP
     BEGIN
@@ -1721,7 +1727,7 @@ BEGIN
                 EXECUTE buffer;
               END IF;
             END IF;
-			
+
           ELSIF arec.atype = 'table' THEN
             -- do each priv individually, jeeeesh!
             buffer2 := '';
@@ -1779,14 +1785,14 @@ BEGIN
               ELSE
                 EXECUTE buffer;
               END IF;
-			ELSIF POSITION('U' IN privs) THEN
+                        ELSIF POSITION('U' IN privs) THEN
               buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT USAGE ON TYPES TO "' || grantee || '";';
               IF ddl_only THEN
                 RAISE INFO '%', buffer;
               ELSE
                 EXECUTE buffer;
-              END IF;			
-          ELSE  
+              END IF;
+          ELSE
               RAISE WARNING 'Unhandled TYPE Privs:: type=%  privs=%  owner=%   defaclacl=%  defaclstr=%  grantor=%  grantee=% ', arec.atype, privs, arec.owner, arec.defaclacl, arec.defaclstr, grantor, grantee;
           END IF;
         ELSE
@@ -1807,10 +1813,10 @@ BEGIN
   cnt := 0;
   FOR arec IN
     SELECT 'GRANT ' || p.perm::perm_type || ' ON SCHEMA ' || quote_ident(dest_schema) || ' TO "' || r.rolname || '";' as schema_ddl
-    FROM pg_catalog.pg_namespace AS n 
-    CROSS JOIN pg_catalog.pg_roles AS r 
+    FROM pg_catalog.pg_namespace AS n
+    CROSS JOIN pg_catalog.pg_roles AS r
     CROSS JOIN (VALUES ('USAGE'), ('CREATE')) AS p(perm)
-    WHERE n.nspname = quote_ident(source_schema) AND NOT r.rolsuper AND has_schema_privilege(r.oid, n.oid, p.perm) 
+    WHERE n.nspname = quote_ident(source_schema) AND NOT r.rolsuper AND has_schema_privilege(r.oid, n.oid, p.perm)
     ORDER BY r.rolname, p.perm::perm_type
   LOOP
     BEGIN
@@ -1830,8 +1836,8 @@ BEGIN
   cnt := 0;
   FOR arec IN
     SELECT 'GRANT ' || p.perm::perm_type || ' ON ' || quote_ident(dest_schema) || '.' || t.relname::text || ' TO "' || r.rolname || '";' as seq_ddl
-    FROM pg_catalog.pg_class AS t 
-    CROSS JOIN pg_catalog.pg_roles AS r 
+    FROM pg_catalog.pg_class AS t
+    CROSS JOIN pg_catalog.pg_roles AS r
     CROSS JOIN (VALUES ('SELECT'), ('USAGE'), ('UPDATE')) AS p(perm)
     WHERE t.relnamespace::regnamespace::name = quote_ident(source_schema) AND t.relkind = 'S'  AND NOT r.rolsuper AND has_sequence_privilege(r.oid, t.oid, p.perm)
   LOOP
@@ -1858,21 +1864,21 @@ BEGIN
   -- RAISE NOTICE ' source_schema=%  dest_schema=%',source_schema, dest_schema;
   FOR arec IN
     -- 2021-03-05 MJV FIX: issue#35: caused exception in some functions with parameters and gave privileges to other users that should not have gotten them.
-    -- SELECT 'GRANT EXECUTE ON FUNCTION ' || quote_ident(dest_schema) || '.' || replace(regexp_replace(f.oid::regprocedure::text, '^((("[^"]*")|([^"][^.]*))\.)?', ''), source_schema, dest_schema) || ' TO "' || r.rolname || '";' as func_ddl 
+    -- SELECT 'GRANT EXECUTE ON FUNCTION ' || quote_ident(dest_schema) || '.' || replace(regexp_replace(f.oid::regprocedure::text, '^((("[^"]*")|([^"][^.]*))\.)?', ''), source_schema, dest_schema) || ' TO "' || r.rolname || '";' as func_ddl
     -- FROM pg_catalog.pg_proc f CROSS JOIN pg_catalog.pg_roles AS r WHERE f.pronamespace::regnamespace::name = quote_ident(source_schema) AND NOT r.rolsuper AND has_function_privilege(r.oid, f.oid, 'EXECUTE')
     -- order by regexp_replace(f.oid::regprocedure::text, '^((("[^"]*")|([^"][^.]*))\.)?', '')
-    
+
     -- 2021-03-05 MJV FIX: issue#37: defaults cause problems, use system function that returns args WITHOUT DEFAULTS
     -- COALESCE(r.routine_type, 'FUNCTION'): for aggregate functions, information_schema.routines contains NULL as routine_type value.
     SELECT 'GRANT ' || rp.privilege_type || ' ON ' || COALESCE(r.routine_type, 'FUNCTION') || ' ' || quote_ident(dest_schema) || '.' || rp.routine_name || ' (' || pg_get_function_identity_arguments(p.oid) || ') TO ' || string_agg(distinct rp.grantee, ',') || ';' as func_dcl
-    FROM information_schema.routine_privileges rp, information_schema.routines r, pg_proc p, pg_namespace n 
+    FROM information_schema.routine_privileges rp, information_schema.routines r, pg_proc p, pg_namespace n
     WHERE rp.routine_schema = quote_ident(source_schema)
       AND rp.is_grantable = 'YES'
       AND rp.routine_schema = r.routine_schema
       AND rp.routine_name = r.routine_name
       AND rp.routine_schema = n.nspname
       AND n.oid = p.pronamespace
-      AND p.proname = r.routine_name 
+      AND p.proname = r.routine_name
     GROUP BY rp.privilege_type, r.routine_type, rp.routine_name, pg_get_function_identity_arguments(p.oid)
   LOOP
     BEGIN
@@ -1898,11 +1904,11 @@ BEGIN
     -- FROM pg_catalog.pg_class AS t CROSS JOIN pg_catalog.pg_roles AS r CROSS JOIN (VALUES (TEXT 'SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'), ('TRUNCATE'), ('REFERENCES'), ('TRIGGER')) AS p(perm)
     -- WHERE t.relnamespace::regnamespace::name = quote_ident(source_schema)  AND t.relkind in ('r', 'p', 'f', 'v', 'm')  AND NOT r.rolsuper AND has_table_privilege(r.oid, t.oid, p.perm) order by t.relname::text, t.relkind
     -- 2021-03-05  MJV FIX: Fixed Issue#36 for tables
-    SELECT c.relkind, 'GRANT ' || tb.privilege_type || CASE WHEN c.relkind in ('r', 'p') THEN ' ON TABLE ' WHEN c.relkind in ('v', 'm')  THEN ' ON ' END || 
-    quote_ident(dest_schema) || '.' || tb.table_name || ' TO ' || string_agg(tb.grantee, ',') || ';' as tbl_dcl 
-    FROM information_schema.table_privileges tb, pg_class c, pg_namespace n 
-    WHERE tb.table_schema = quote_ident(source_schema) AND tb.table_name = c.relname AND c.relkind in ('r', 'p', 'v', 'm') 
-      AND c.relnamespace = n.oid AND n.nspname = quote_ident(source_schema) 
+    SELECT c.relkind, 'GRANT ' || tb.privilege_type || CASE WHEN c.relkind in ('r', 'p') THEN ' ON TABLE ' WHEN c.relkind in ('v', 'm')  THEN ' ON ' END ||
+    quote_ident(dest_schema) || '.' || tb.table_name || ' TO ' || string_agg(tb.grantee, ',') || ';' as tbl_dcl
+    FROM information_schema.table_privileges tb, pg_class c, pg_namespace n
+    WHERE tb.table_schema = quote_ident(source_schema) AND tb.table_name = c.relname AND c.relkind in ('r', 'p', 'v', 'm')
+      AND c.relnamespace = n.oid AND n.nspname = quote_ident(source_schema)
       GROUP BY c.relkind, tb.privilege_type, tb.table_schema, tb.table_name
   LOOP
     BEGIN
@@ -1921,6 +1927,31 @@ BEGIN
     END;
   END LOOP;
   RAISE NOTICE ' TABLE PRIVS cloned: %', LPAD(cnt::text, 5, ' ');
+
+
+  -- LOOP for regular tables and populate them if specified
+  -- Issue#75 moved from big table loop above to here.
+  IF include_recs THEN
+    FOREACH tblelement IN ARRAY tblarray
+    LOOP 
+       -- RAISE NOTICE '%', tblelement;
+       EXECUTE tblelement;       
+       GET DIAGNOSTICS cnt = ROW_COUNT;  
+       buffer = substring(tblelement, 13);
+       SELECT POSITION(' OVERRIDING SYSTEM VALUE SELECT ' IN buffer) INTO cnt2; 
+       IF cnt2 = 0 THEN
+           SELECT POSITION(' SELECT ' IN buffer) INTO cnt2;
+           buffer = substring(buffer,1, cnt2);       
+       ELSE
+           buffer = substring(buffer,1, cnt2);       
+       END IF;
+       SELECT RPAD(buffer, 35, ' ') INTO buffer;
+       -- RAISE NOTICE ' Populated cloned table, %   Rows Copied: %', buffer, cnt;
+       -- RAISE NOTICE ' Populated cloned table, %   Rows Copied: % %', buffer, cnt, tblelement;
+       tblscopied := tblscopied + 1;
+    END LOOP;
+  END IF;
+  RAISE NOTICE '      TABLES copied: %', LPAD(tblscopied::text, 5, ' ');
 
   IF src_path_old = '' THEN
     -- RAISE NOTICE 'Restoring old search_path to empty string';
@@ -1955,3 +1986,5 @@ END;
 $BODY$
   LANGUAGE plpgsql VOLATILE  COST 100;
 -- ALTER FUNCTION public.clone_schema(text, text, boolean, boolean) OWNER TO postgres;
+
+
