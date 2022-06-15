@@ -1010,9 +1010,9 @@ BEGIN
     LOOP
       IF ddl_only THEN
         -- May need to come back and revisit this since previous sql will not return anything since no schema as created!
-        RAISE INFO '%', 'ALTER TABLE ' || buffer || ' ALTER COLUMN ' || column_ || ' SET DEFAULT ' || default_ || ';';
+        RAISE INFO '%', 'ALTER TABLE ' || buffer || ' ALTER COLUMN ' || quote_ident(column_) || ' SET DEFAULT ' || default_ || ';';
       ELSE
-        EXECUTE 'ALTER TABLE ' || buffer || ' ALTER COLUMN ' || column_ || ' SET DEFAULT ' || default_;
+        EXECUTE 'ALTER TABLE ' || buffer || ' ALTER COLUMN ' || quote_ident(column_) || ' SET DEFAULT ' || default_;
       END IF;
     END LOOP;
     EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
@@ -1849,7 +1849,7 @@ BEGIN
   action := 'PRIVS: Sequences';
   cnt := 0;
   FOR arec IN
-    SELECT 'GRANT ' || p.perm::perm_type || ' ON ' || quote_ident(dest_schema) || '.' || t.relname::text || ' TO "' || r.rolname || '";' as seq_ddl
+    SELECT 'GRANT ' || p.perm::perm_type || ' ON ' || quote_ident(dest_schema) || '.' || quote_ident(t.relname::text) || ' TO "' || r.rolname || '";' as seq_ddl
     FROM pg_catalog.pg_class AS t
     CROSS JOIN pg_catalog.pg_roles AS r
     CROSS JOIN (VALUES ('SELECT'), ('USAGE'), ('UPDATE')) AS p(perm)
@@ -1919,7 +1919,7 @@ BEGIN
     -- WHERE t.relnamespace::regnamespace::name = quote_ident(source_schema)  AND t.relkind in ('r', 'p', 'f', 'v', 'm')  AND NOT r.rolsuper AND has_table_privilege(r.oid, t.oid, p.perm) order by t.relname::text, t.relkind
     -- 2021-03-05  MJV FIX: Fixed Issue#36 for tables
     SELECT c.relkind, 'GRANT ' || tb.privilege_type || CASE WHEN c.relkind in ('r', 'p') THEN ' ON TABLE ' WHEN c.relkind in ('v', 'm')  THEN ' ON ' END ||
-    quote_ident(dest_schema) || '.' || tb.table_name || ' TO ' || string_agg(tb.grantee, ',') || ';' as tbl_dcl
+    quote_ident(dest_schema) || '.' || quote_ident(tb.table_name) || ' TO ' || string_agg(tb.grantee, ',') || ';' as tbl_dcl
     FROM information_schema.table_privileges tb, pg_class c, pg_namespace n
     WHERE tb.table_schema = quote_ident(source_schema) AND tb.table_name = c.relname AND c.relkind in ('r', 'p', 'v', 'm')
       AND c.relnamespace = n.oid AND n.nspname = quote_ident(source_schema)
