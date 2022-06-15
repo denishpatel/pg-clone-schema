@@ -26,6 +26,7 @@
 -- 2022-05-14  MJV FIX: Fixed Issue#73 Fix dependency order for views depending on other views. Also removed duplicate comment logic for views.
 -- 2022-06-12  MJV FIX: Fixed Issue#74 Change comments ddl from source_schema to dest_schema. Policies fix using quote_literal(d.description) instead of hard-coded ticks and escape ticks.
 -- 2022-06-13  MJV FIX: Fixed Issue#75 Rows were not being copied correctly for parents.  Needed to move copy rows logic to end, after all DDL is done.
+-- 2022-06-15  MJV FIX: Fixed Issue#76 RLS is not being enabled for cloned tables.  Enable it right after the policy for the table is created
 
 -- SELECT * FROM public.get_table_ddl('sample', 'address', True);
 
@@ -366,6 +367,7 @@ DECLARE
   sq_is_called     boolean := True;
   sq_is_cycled     boolean;
   is_prokind       boolean;
+  abool            boolean;
   sq_data_type     text;
   sq_cycled        char(10);
   sq_owned         text;
@@ -1476,7 +1478,7 @@ BEGIN
   action := 'Policies';
   cnt := 0;
   FOR arec IN
-    SELECT 'CREATE POLICY ' || policyname || ' ON ' || quote_ident(dest_schema) || '.' || tablename || ' AS ' || permissive || ' FOR ' || cmd || ' TO '
+    SELECT schemaname as schemaname, tablename as tablename, 'CREATE POLICY ' || policyname || ' ON ' || quote_ident(dest_schema) || '.' || tablename || ' AS ' || permissive || ' FOR ' || cmd || ' TO '
     ||  array_to_string(roles, ',', '*') || ' USING (' || regexp_replace(qual, E'[\\n\\r]+', ' ', 'g' ) || ')'
     || CASE WHEN with_check IS NOT NULL THEN ' WITH CHECK (' ELSE '' END || coalesce(with_check, '') || CASE WHEN with_check IS NOT NULL THEN ');' ELSE ';' END as definition
     FROM pg_policies
@@ -1488,6 +1490,18 @@ BEGIN
       RAISE INFO '%', arec.definition;
     ELSE
       EXECUTE arec.definition;
+    END IF;
+    
+    -- Issue#76: Enable row security if indicated
+    SELECT c.relrowsecurity INTO abool FROM pg_class c, pg_namespace n where n.nspname = quote_ident(arec.schemaname) AND n.oid = c.relnamespace AND c.relname = quote_ident(arec.tablename) and c.relkind = 'r';
+    IF abool THEN
+      buffer = 'ALTER TABLE ' || dest_schema || '.' || arec.tablename || ' ENABLE ROW LEVEL SECURITY;';
+      -- RAISE INFO 'Enabling row level security for table, %: %', dest_schema || '.' || arec.tablename, buffer;
+      IF ddl_only THEN
+        RAISE INFO '%', buffer;
+      ELSE
+        EXECUTE buffer;
+      END IF;
     END IF;
   END LOOP;
   RAISE NOTICE '    POLICIES cloned: %', LPAD(cnt::text, 5, ' ');
