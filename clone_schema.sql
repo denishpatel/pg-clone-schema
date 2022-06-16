@@ -27,6 +27,7 @@
 -- 2022-06-12  MJV FIX: Fixed Issue#74 Change comments ddl from source_schema to dest_schema. Policies fix using quote_literal(d.description) instead of hard-coded ticks and escape ticks.
 -- 2022-06-13  MJV FIX: Fixed Issue#75 Rows were not being copied correctly for parents.  Needed to move copy rows logic to end, after all DDL is done.
 -- 2022-06-15  MJV FIX: Fixed Issue#76 RLS is not being enabled for cloned tables.  Enable it right after the policy for the table is created
+-- 2022-06-16  MJV FIX: Fixed Issue#78 Fix case-sensitive object names by using quote_ident() all over the place. Also added restriction to not allow case-sensitive target schemas.
 
 -- SELECT * FROM public.get_table_ddl('sample', 'address', True);
 
@@ -389,7 +390,7 @@ DECLARE
   v_diag5          text;
   v_diag6          text;
   v_dummy          text;
-  v_version        text := '1.4  June 13, 2022';
+  v_version        text := '1.5  June 16, 2022';
 
 BEGIN
   RAISE NOTICE 'clone_schema version %', v_version;
@@ -420,6 +421,13 @@ BEGIN
     THEN
     RAISE NOTICE ' source schema % does not exist!', source_schema;
     RETURN ;
+  END IF;
+
+  -- Check for case-sensitive target schemas and reject them for now.
+  SELECT lower(dest_schema) = dest_schema INTO abool;
+  IF not abool THEN
+      RAISE INFO 'Case-sensitive target schemas are not supported at this time.';
+      RETURN;
   END IF;
 
   -- Check that dest_schema does not yet exist
@@ -561,7 +569,8 @@ BEGIN
         END AS "Nullable", t.typdefault AS "Default", pg_catalog.array_to_string(ARRAY (
                 SELECT pg_catalog.pg_get_constraintdef(r.oid, TRUE)
                 FROM pg_catalog.pg_constraint r
-                WHERE t.oid = r.contypid), ' ') AS "Check", 'CREATE DOMAIN ' || quote_ident(dest_schema) || '.' || t.typname || ' AS ' || pg_catalog.format_type(t.typbasetype, t.typtypmod) ||
+                -- Issue#78 FIX: handle case-sensitive names with quote_ident() on t.typename
+                WHERE t.oid = r.contypid), ' ') AS "Check", 'CREATE DOMAIN ' || quote_ident(dest_schema) || '.' || quote_ident(t.typname) || ' AS ' || pg_catalog.format_type(t.typbasetype, t.typtypmod) ||
                 CASE WHEN t.typnotnull IS NOT NULL THEN
             ' NOT NULL '
         ELSE
@@ -983,6 +992,7 @@ BEGIN
       -- ERROR:  column "id2" is of type sample_clone.udt_myint but expression is of type udt_myint
       IF data_type = 'USER-DEFINED' THEN
         RAISE WARNING 'Bypassing copying rows for table (%) with user-defined data types.  You must copy them manually.', tblname;
+        -- wont work --> INSERT INTO sample_clone1.address (id2, id3, addr) SELECT cast(id2 as sample_clone1.udt_myint), cast(id3 as sample_clone1.udt_myint), addr FROM sample.address;
       ELSE
         -- bypass child tables since we populate them when we populate the parents
         -- RAISE INFO 'tblname=%  bRelispart=%  relknd=%  l_child=%  bChild=%', tblname, bRelispart, relknd, l_child, bChild;
@@ -1008,11 +1018,13 @@ BEGIN
           AND TABLE_NAME = tblname
           AND column_default LIKE 'nextval(%' || quote_ident(source_schema) || '%::regclass)'
     LOOP
+      -- Issue#78 FIX: handle case-sensitive names with quote_ident() on column name
+      buffer2 = 'ALTER TABLE ' || buffer || ' ALTER COLUMN ' || quote_ident(column_) || ' SET DEFAULT ' || default_ || ';';
       IF ddl_only THEN
         -- May need to come back and revisit this since previous sql will not return anything since no schema as created!
-        RAISE INFO '%', 'ALTER TABLE ' || buffer || ' ALTER COLUMN ' || column_ || ' SET DEFAULT ' || default_ || ';';
+        RAISE INFO '%', buffer2;
       ELSE
-        EXECUTE 'ALTER TABLE ' || buffer || ' ALTER COLUMN ' || column_ || ' SET DEFAULT ' || default_;
+        EXECUTE buffer2;
       END IF;
     END LOOP;
     EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
@@ -1238,7 +1250,8 @@ BEGIN
       SELECT matviewname::text, replace(definition,';','') FROM pg_catalog.pg_matviews WHERE schemaname = quote_ident(source_schema)
   LOOP
       cnt := cnt + 1;
-      buffer := dest_schema || '.' || quote_ident(object);
+      -- Issue#78 FIX: handle case-sensitive names with quote_ident() on target schema and object
+      buffer := quote_ident(dest_schema) || '.' || quote_ident(object);
 
       -- MJV FIX: #72 remove source schema in MV def
       SELECT REPLACE(v_def, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO buffer2;
@@ -1478,7 +1491,8 @@ BEGIN
   action := 'Policies';
   cnt := 0;
   FOR arec IN
-    SELECT schemaname as schemaname, tablename as tablename, 'CREATE POLICY ' || policyname || ' ON ' || quote_ident(dest_schema) || '.' || tablename || ' AS ' || permissive || ' FOR ' || cmd || ' TO '
+    -- Issue#78 FIX: handle case-sensitive names with quote_ident() on policy, tablename
+    SELECT schemaname as schemaname, tablename as tablename, 'CREATE POLICY ' || policyname || ' ON ' || quote_ident(dest_schema) || '.' || quote_ident(tablename) || ' AS ' || permissive || ' FOR ' || cmd || ' TO '
     ||  array_to_string(roles, ',', '*') || ' USING (' || regexp_replace(qual, E'[\\n\\r]+', ' ', 'g' ) || ')'
     || CASE WHEN with_check IS NOT NULL THEN ' WITH CHECK (' ELSE '' END || coalesce(with_check, '') || CASE WHEN with_check IS NOT NULL THEN ');' ELSE ';' END as definition
     FROM pg_policies
@@ -1508,14 +1522,15 @@ BEGIN
 
 
   -- MJV Fixed #62 for comments (PASS 1)
-  action := 'Policies1';
+  action := 'Comments1';
   cnt := 0;
   FOR qry IN
     -- Issue#74 Fix: Change schema from source to target. Also, do not include comments on foreign tables since we do not clone foreign tables at this time.
     SELECT 'COMMENT ON ' || CASE WHEN c.relkind in ('r','p') AND a.attname IS NULL THEN 'TABLE ' WHEN c.relkind in ('r','p') AND
     a.attname IS NOT NULL THEN 'COLUMN ' WHEN c.relkind = 'f' THEN 'FOREIGN TABLE ' WHEN c.relkind = 'm' THEN 'MATERIALIZED VIEW ' WHEN c.relkind = 'v' THEN 'VIEW '
     WHEN c.relkind = 'i' THEN 'INDEX ' WHEN c.relkind = 'S' THEN 'SEQUENCE ' ELSE 'XX' END || quote_ident(dest_schema) || '.' || CASE WHEN c.relkind in ('r','p') AND
-    a.attname IS NOT NULL THEN c.relname || '.' || a.attname ELSE c.relname END ||
+    -- Issue#78: handle case-sensitive names with quote_ident()
+    a.attname IS NOT NULL THEN quote_ident(c.relname) || '.' || a.attname ELSE quote_ident(c.relname) END ||
     -- Issue#74 Fix
     -- ' IS ''' || d.description || ''';' as ddl
     ' IS '   || quote_literal(d.description) || ';' as ddl
@@ -1528,6 +1543,10 @@ BEGIN
     ORDER BY ddl
   LOOP
     cnt := cnt + 1;
+    
+    -- BAD : "COMMENT ON SEQUENCE sample_clone2.CaseSensitive_ID_seq IS 'just a comment on CaseSensitive sequence';"
+    -- GOOD: "COMMENT ON SEQUENCE "CaseSensitive_ID_seq" IS 'just a comment on CaseSensitive sequence';"
+    
     IF ddl_only THEN
       RAISE INFO '%', qry;
     ELSE
@@ -1538,7 +1557,7 @@ BEGIN
   RAISE NOTICE ' COMMENTS(1) cloned: %', LPAD(cnt::text, 5, ' ');
 
   -- MJV Fixed #62 for comments (PASS 2)
-  action := 'Policies2';
+  action := 'Comments2';
   cnt2 := 0;
   IF is_prokind THEN
   FOR qry IN
@@ -1559,7 +1578,8 @@ BEGIN
       AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default
       AND pg_catalog.obj_description(t.oid, 'pg_type') IS NOT NULL and t.typtype = 'c'
     UNION
-    SELECT 'COMMENT ON COLLATION ' || dest_schema || '.' || c.collname || ' IS ''' || pg_catalog.obj_description(c.oid, 'pg_collation') || ''';' as ddl
+    -- Issue#78: handle case-sensitive names with quote_ident()
+    SELECT 'COMMENT ON COLLATION ' || quote_ident(dest_schema) || '.' || quote_ident(c.collname) || ' IS ''' || pg_catalog.obj_description(c.oid, 'pg_collation') || ''';' as ddl
     FROM pg_catalog.pg_collation c, pg_catalog.pg_namespace n
     WHERE n.oid = c.collnamespace AND c.collencoding IN (-1, pg_catalog.pg_char_to_encoding(pg_catalog.getdatabaseencoding()))
       AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default AND pg_catalog.obj_description(c.oid, 'pg_collation') IS NOT NULL
@@ -1849,7 +1869,8 @@ BEGIN
   action := 'PRIVS: Sequences';
   cnt := 0;
   FOR arec IN
-    SELECT 'GRANT ' || p.perm::perm_type || ' ON ' || quote_ident(dest_schema) || '.' || t.relname::text || ' TO "' || r.rolname || '";' as seq_ddl
+    -- Issue#78 FIX: handle case-sensitive names with quote_ident() on t.relname
+    SELECT 'GRANT ' || p.perm::perm_type || ' ON ' || quote_ident(dest_schema) || '.' || quote_ident(t.relname::text) || ' TO "' || r.rolname || '";' as seq_ddl
     FROM pg_catalog.pg_class AS t
     CROSS JOIN pg_catalog.pg_roles AS r
     CROSS JOIN (VALUES ('SELECT'), ('USAGE'), ('UPDATE')) AS p(perm)
@@ -1857,6 +1878,7 @@ BEGIN
   LOOP
     BEGIN
       cnt := cnt + 1;
+      -- RAISE NOTICE 'DEBUG: ddl=%', arec.seq_ddl;
       IF ddl_only THEN
         RAISE INFO '%', arec.seq_ddl;
       ELSE
@@ -1884,7 +1906,8 @@ BEGIN
 
     -- 2021-03-05 MJV FIX: issue#37: defaults cause problems, use system function that returns args WITHOUT DEFAULTS
     -- COALESCE(r.routine_type, 'FUNCTION'): for aggregate functions, information_schema.routines contains NULL as routine_type value.
-    SELECT 'GRANT ' || rp.privilege_type || ' ON ' || COALESCE(r.routine_type, 'FUNCTION') || ' ' || quote_ident(dest_schema) || '.' || rp.routine_name || ' (' || pg_get_function_identity_arguments(p.oid) || ') TO ' || string_agg(distinct rp.grantee, ',') || ';' as func_dcl
+    -- Issue#78 FIX: handle case-sensitive names with quote_ident() on rp.routine_name
+    SELECT 'GRANT ' || rp.privilege_type || ' ON ' || COALESCE(r.routine_type, 'FUNCTION') || ' ' || quote_ident(dest_schema) || '.' || quote_ident(rp.routine_name) || ' (' || pg_get_function_identity_arguments(p.oid) || ') TO ' || string_agg(distinct rp.grantee, ',') || ';' as func_dcl
     FROM information_schema.routine_privileges rp, information_schema.routines r, pg_proc p, pg_namespace n
     WHERE rp.routine_schema = quote_ident(source_schema)
       AND rp.is_grantable = 'YES'
@@ -1919,7 +1942,8 @@ BEGIN
     -- WHERE t.relnamespace::regnamespace::name = quote_ident(source_schema)  AND t.relkind in ('r', 'p', 'f', 'v', 'm')  AND NOT r.rolsuper AND has_table_privilege(r.oid, t.oid, p.perm) order by t.relname::text, t.relkind
     -- 2021-03-05  MJV FIX: Fixed Issue#36 for tables
     SELECT c.relkind, 'GRANT ' || tb.privilege_type || CASE WHEN c.relkind in ('r', 'p') THEN ' ON TABLE ' WHEN c.relkind in ('v', 'm')  THEN ' ON ' END ||
-    quote_ident(dest_schema) || '.' || tb.table_name || ' TO ' || string_agg(tb.grantee, ',') || ';' as tbl_dcl
+    -- Issue#78 FIX: handle case-sensitive names with quote_ident() on t.relname      
+    quote_ident(dest_schema) || '.' || quote_ident(tb.table_name) || ' TO ' || string_agg(tb.grantee, ',') || ';' as tbl_dcl
     FROM information_schema.table_privileges tb, pg_class c, pg_namespace n
     WHERE tb.table_schema = quote_ident(source_schema) AND tb.table_name = c.relname AND c.relkind in ('r', 'p', 'v', 'm')
       AND c.relnamespace = n.oid AND n.nspname = quote_ident(source_schema)
@@ -1927,7 +1951,7 @@ BEGIN
   LOOP
     BEGIN
       cnt := cnt + 1;
-      -- RAISE NOTICE ' ddl=%', arec.tbl_dcl;
+      -- RAISE NOTICE 'DEBUG: ddl=%', arec.tbl_dcl;
       -- Issue#46. Fixed reference to invalid record name (tbl_ddl --> tbl_dcl).
       IF arec.relkind = 'f' THEN
         RAISE WARNING 'Foreign tables are not currently implemented, so skipping privs for them. ddl=%', arec.tbl_dcl;
