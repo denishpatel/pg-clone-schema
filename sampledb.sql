@@ -2,7 +2,7 @@
 -- Sample database used for clone_schema() testing
 -- psql -b postgres < ./sampledb.sql
 -- psql -v ON_ERROR_STOP=1 -e -b postgres < ./sampledb.sql
--- psql clone_testing < /var/lib/pgsql/temp/clone_schema.sql
+-- psql clone_testing < /var/lib/pgsql/clone_schema/clone_schema.sql
 -- psql clone_testing; select clone_schema('sample', 'sample_clone1', false, false);
 --
 
@@ -115,100 +115,100 @@ COMMENT ON SCHEMA sample IS 'standard sample schema';
 -- Name: de-u-co-phonebk-x-icu; Type: COLLATION; Schema: sample; Owner: postgres
 --
 
-CREATE COLLATION sample."de-u-co-phonebk-x-icu" (provider = icu, locale = 'de-u-co-phonebk');
+CREATE COLLATION "de-u-co-phonebk-x-icu" (provider = icu, locale = 'de-u-co-phonebk');
 
 
-ALTER COLLATION sample."de-u-co-phonebk-x-icu" OWNER TO postgres;
+ALTER COLLATION "de-u-co-phonebk-x-icu" OWNER TO postgres;
 
 --
 -- Name: french; Type: COLLATION; Schema: sample; Owner: postgres
 --
 
-CREATE COLLATION sample.french (provider = icu, locale = 'fr');
-COMMENT ON COLLATION sample.french IS 'my comments on french collation';
+CREATE COLLATION french (provider = icu, locale = 'fr');
+COMMENT ON COLLATION french IS 'my comments on french collation';
 
 
-ALTER COLLATION sample.french OWNER TO postgres;
+ALTER COLLATION french OWNER TO postgres;
 
 --
 -- Name: german_phonebook; Type: COLLATION; Schema: sample; Owner: postgres
 --
 
-CREATE COLLATION sample.german_phonebook (provider = icu, locale = 'de-u-co-phonebk');
+CREATE COLLATION german_phonebook (provider = icu, locale = 'de-u-co-phonebk');
 
 
-ALTER COLLATION sample.german_phonebook OWNER TO postgres;
+ALTER COLLATION german_phonebook OWNER TO postgres;
 
 --
 -- Name: und-u-co-emoji-x-icu; Type: COLLATION; Schema: sample; Owner: postgres
 --
 
-CREATE COLLATION sample."und-u-co-emoji-x-icu" (provider = icu, locale = 'und-u-co-emoji');
+CREATE COLLATION "und-u-co-emoji-x-icu" (provider = icu, locale = 'und-u-co-emoji');
 
 
-ALTER COLLATION sample."und-u-co-emoji-x-icu" OWNER TO postgres;
+ALTER COLLATION "und-u-co-emoji-x-icu" OWNER TO postgres;
 
 --
 -- Name: addr; Type: DOMAIN; Schema: sample; Owner: postgres
 --
 
-CREATE TYPE sample.udt_myint AS (myint INTEGER);
+CREATE TYPE udt_myint AS (myint INTEGER);
 
-CREATE DOMAIN sample.addr AS character varying(90) NOT NULL;
+CREATE DOMAIN addr AS character varying(90) NOT NULL;
 COMMENT ON DOMAIN addr IS 'my domain comments on addr';
 
 
-ALTER DOMAIN sample.addr OWNER TO postgres;
+ALTER DOMAIN addr OWNER TO postgres;
 
 --
 -- Name: addr2; Type: DOMAIN; Schema: sample; Owner: postgres
 --
 
-CREATE DOMAIN sample.addr2 AS character varying(90) NOT NULL DEFAULT 'N/A'::character varying;
+CREATE DOMAIN addr2 AS character varying(90) NOT NULL DEFAULT 'N/A'::character varying;
 
 
-ALTER DOMAIN sample.addr2 OWNER TO postgres;
+ALTER DOMAIN addr2 OWNER TO postgres;
 
 --
 -- Name: addr3; Type: DOMAIN; Schema: sample; Owner: postgres
 --
 
-CREATE DOMAIN sample.addr3 AS character varying(90) NOT NULL DEFAULT 'N/A'::character varying
+CREATE DOMAIN addr3 AS character varying(90) NOT NULL DEFAULT 'N/A'::character varying
         CONSTRAINT addr3_check CHECK (((VALUE)::text > ''::text));
 
 
-ALTER DOMAIN sample.addr3 OWNER TO postgres;
+ALTER DOMAIN addr3 OWNER TO postgres;
 
 --
 -- Name: compfoo; Type: TYPE; Schema: sample; Owner: postgres
 --
 
-CREATE TYPE sample.compfoo AS (
+CREATE TYPE compfoo AS (
         f1 integer,
         f2 text
 );
 
-COMMENT ON TYPE sample.compfoo IS 'just a comment on compfoo type';
+COMMENT ON TYPE compfoo IS 'just a comment on compfoo type';
 
-ALTER TYPE sample.compfoo OWNER TO postgres;
+ALTER TYPE compfoo OWNER TO postgres;
 
 --
 -- Name: compfoo2; Type: TYPE; Schema: sample; Owner: postgres
 --
 
-CREATE TYPE sample.compfoo2 AS (
+CREATE TYPE compfoo2 AS (
         x1 integer,
         x2 text
 );
 
 
-ALTER TYPE sample.compfoo2 OWNER TO postgres;
+ALTER TYPE compfoo2 OWNER TO postgres;
 
 --
 -- Name: cycle_frequency; Type: TYPE; Schema: sample; Owner: postgres
 --
 
-CREATE TYPE sample.cycle_frequency AS ENUM (
+CREATE TYPE cycle_frequency AS ENUM (
     'WEEKLY',
     'MONTHLY',
     'QUARTERLY',
@@ -216,23 +216,23 @@ CREATE TYPE sample.cycle_frequency AS ENUM (
 );
 
 
-ALTER TYPE sample.cycle_frequency OWNER TO postgres;
+ALTER TYPE cycle_frequency OWNER TO postgres;
 
 --
 -- Name: idx; Type: DOMAIN; Schema: sample; Owner: postgres
 --
 
-CREATE DOMAIN sample.idx AS integer NOT NULL
+CREATE DOMAIN idx AS integer NOT NULL
         CONSTRAINT idx_check CHECK (((VALUE > 100) AND (VALUE < 999)));
 
 
-ALTER DOMAIN sample.idx OWNER TO postgres;
+ALTER DOMAIN idx OWNER TO postgres;
 
 --
 -- Name: obj_type; Type: TYPE; Schema: sample; Owner: postgres
 --
 
-CREATE TYPE sample.obj_type AS ENUM (
+CREATE TYPE obj_type AS ENUM (
     'TABLE',
     'VIEW',
     'COLUMN',
@@ -243,13 +243,13 @@ CREATE TYPE sample.obj_type AS ENUM (
 );
 
 
-ALTER TYPE sample.obj_type OWNER TO postgres;
+ALTER TYPE obj_type OWNER TO postgres;
 
 --
 -- Name: perm_type; Type: TYPE; Schema: sample; Owner: postgres
 --
 
-CREATE TYPE sample.perm_type AS ENUM (
+CREATE TYPE perm_type AS ENUM (
     'SELECT',
     'INSERT',
     'UPDATE',
@@ -265,17 +265,17 @@ CREATE TYPE sample.perm_type AS ENUM (
 );
 
 
-ALTER TYPE sample.perm_type OWNER TO postgres;
+ALTER TYPE perm_type OWNER TO postgres;
 
 --
 -- Name: us_postal_code; Type: DOMAIN; Schema: sample; Owner: postgres
 --
 
-CREATE DOMAIN sample.us_postal_code AS text NOT NULL
+CREATE DOMAIN us_postal_code AS text NOT NULL
         CONSTRAINT us_postal_code_check CHECK (((VALUE ~ '^\d{5}$'::text) OR (VALUE ~ '^\d{5}-\d{4}$'::text)));
 
 
-ALTER DOMAIN sample.us_postal_code OWNER TO postgres;
+ALTER DOMAIN us_postal_code OWNER TO postgres;
 
 CREATE AGGREGATE avg (float8)
 (
@@ -327,7 +327,7 @@ $BODY$
 LANGUAGE  plpgsql;
                                                                              
                                                                               
-CREATE FUNCTION sample.aaa() RETURNS void
+CREATE FUNCTION aaa() RETURNS void
     LANGUAGE plpgsql
     AS $_$
 DECLARE
@@ -348,15 +348,15 @@ RETURN;
 END;
 $_$;
 
-ALTER FUNCTION sample.aaa() OWNER TO postgres;
-COMMENT ON FUNCTION sample.aaa() IS 'comment on my aaa() function';
+ALTER FUNCTION aaa() OWNER TO postgres;
+COMMENT ON FUNCTION aaa() IS 'comment on my aaa() function';
 
 
 --
 -- Name: emp_stamp(); Type: FUNCTION; Schema: sample; Owner: postgres
 --
 
-CREATE FUNCTION sample.emp_stamp() RETURNS trigger
+CREATE FUNCTION emp_stamp() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
     BEGIN
@@ -380,7 +380,7 @@ CREATE FUNCTION sample.emp_stamp() RETURNS trigger
     END;
 $$;
 
-ALTER FUNCTION sample.emp_stamp() OWNER TO postgres;
+ALTER FUNCTION emp_stamp() OWNER TO postgres;
 
 CREATE OR REPLACE FUNCTION fnsplitstring(IN par_string VARCHAR, IN par_delimiter CHAR)
 RETURNS TABLE (splitdata VARCHAR)
@@ -433,7 +433,7 @@ $BODY$
 LANGUAGE plpgsql;
 GRANT EXECUTE ON PROCEDURE get_userscans(text, text, integer, boolean) TO postgres;
 
-CREATE OR REPLACE FUNCTION sample.aaa(IN akey integer default 0)
+CREATE OR REPLACE FUNCTION aaa(IN akey integer default 0)
 RETURNS integer
 AS
 $BODY$
@@ -453,9 +453,9 @@ SET default_tablespace = '';
 SET default_with_oids = false;
 
 
-CREATE UNLOGGED TABLE sample.myunloggedtbl (id integer PRIMARY KEY, val text NOT NULL) WITH (autovacuum_enabled = off);
+CREATE UNLOGGED TABLE myunloggedtbl (id integer PRIMARY KEY, val text NOT NULL) WITH (autovacuum_enabled = off);
 
-CREATE TABLE sample.numerics (
+CREATE TABLE numerics (
     id integer,
     anumeric numeric,
     anumeric2 numeric(1,0),
@@ -463,9 +463,9 @@ CREATE TABLE sample.numerics (
     anumeric4 numeric(25,0),
     anumeric5 numeric(25,0)
 );
-ALTER TABLE sample.numerics OWNER TO postgres;
+ALTER TABLE numerics OWNER TO postgres;
 
-CREATE TABLE sample.arrays (
+CREATE TABLE arrays (
     name            text,
     aarray1  integer[],
     aarray2  text[][],
@@ -473,31 +473,31 @@ CREATE TABLE sample.arrays (
     aarray4  integer ARRAY[4],
     aarray5  integer ARRAY
 );
-ALTER TABLE sample.numerics OWNER TO postgres;
+ALTER TABLE numerics OWNER TO postgres;
 
 --
 -- Name: address; Type: TABLE; Schema: sample; Owner: postgres
 --
 
-CREATE TABLE sample.address (
+CREATE TABLE address (
     id bigint NOT NULL,
     id2 udt_myint,
     id3 udt_myint,
     addr text
 );
-COMMENT ON TABLE sample.address IS 'This table is where I keep address info.';
+COMMENT ON TABLE address IS 'This table is where I keep address info.';
 
-INSERT INTO sample.address OVERRIDING SYSTEM VALUE SELECT 1, '(1)', '(1)', 'text1';
-INSERT INTO sample.address OVERRIDING SYSTEM VALUE SELECT 2, '(2)', '(2)', 'text2';
+INSERT INTO address OVERRIDING SYSTEM VALUE SELECT 1, '(1)', '(1)', 'text1';
+INSERT INTO address OVERRIDING SYSTEM VALUE SELECT 2, '(2)', '(2)', 'text2';
 
-ALTER TABLE sample.address OWNER TO postgres;
+ALTER TABLE address OWNER TO postgres;
 
 --
 -- Name: address_id_seq; Type: SEQUENCE; Schema: sample; Owner: postgres
 --
 
-ALTER TABLE sample.address ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
-    SEQUENCE NAME sample.address_id_seq
+ALTER TABLE address ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME address_id_seq
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
@@ -505,86 +505,86 @@ ALTER TABLE sample.address ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     CACHE 1
 );
 
-CREATE TYPE sample.status AS ENUM ('Notconfirmed','Coming', 'Notcoming', 'Maycome');
-CREATE TABLE sample.statuses (id serial, s status default 'Notconfirmed');
-COMMENT ON TABLE sample.statuses IS 'This table is where I keep status info.';
-INSERT INTO sample.statuses Select 1, 'Coming';
-INSERT INTO sample.statuses Select 1, 'Notcoming';
-INSERT INTO sample.statuses Select 1, 'Maycome';
+CREATE TYPE status AS ENUM ('Notconfirmed','Coming', 'Notcoming', 'Maycome');
+CREATE TABLE statuses (id serial, s status default 'Notconfirmed');
+COMMENT ON TABLE statuses IS 'This table is where I keep status info.';
+INSERT INTO statuses Select 1, 'Coming';
+INSERT INTO statuses Select 1, 'Notcoming';
+INSERT INTO statuses Select 1, 'Maycome';
 
 --
 -- Name: emp; Type: TABLE; Schema: sample; Owner: postgres
 --
 
-CREATE TABLE sample.emp (
+CREATE TABLE emp (
     empname text,
     salary integer,
     last_date timestamp without time zone,
     last_user text
 );
-COMMENT ON TABLE sample.emp IS 'Employee info';
-COMMENT ON COLUMN sample.emp.salary IS 'Employee Salary info';
-ALTER TABLE sample.emp OWNER TO postgres;
+COMMENT ON TABLE emp IS 'Employee info';
+COMMENT ON COLUMN emp.salary IS 'Employee Salary info';
+ALTER TABLE emp OWNER TO postgres;
 
-INSERT INTO sample.emp select 'michael', 100, current_timestamp, 'john';
+INSERT INTO emp select 'michael', 100, current_timestamp, 'john';
 
 --
 -- Name: foo; Type: TABLE; Schema: sample; Owner: postgres
 --
 
-CREATE TABLE sample.foo (
+CREATE TABLE foo (
     foo_id integer NOT NULL,
     foo_name character varying(10)
 );
 
-CREATE TABLE sample.foo2 (
+CREATE TABLE foo2 (
     foo_id integer NOT NULL,
     foo_name character varying(10)
 );
 
 
-ALTER TABLE sample.foo OWNER TO postgres;
-ALTER TABLE sample.foo2 OWNER TO postgres;
+ALTER TABLE foo OWNER TO postgres;
+ALTER TABLE foo2 OWNER TO postgres;
 
-CREATE RULE "_RETURN" AS ON SELECT TO sample.foo DO INSTEAD SELECT * FROM sample.foo2;
-CREATE RULE notify_me AS ON UPDATE TO sample.foo DO ALSO NOTIFY foo;
+CREATE RULE "_RETURN" AS ON SELECT TO foo DO INSTEAD SELECT * FROM foo2;
+CREATE RULE notify_me AS ON UPDATE TO foo DO ALSO NOTIFY foo;
 
-INSERT INTO sample.foo  (foo_id, foo_name) VALUES(1,'haha');
-INSERT INTO sample.foo2 (foo_id, foo_name) VALUES(1,'hoho');
+INSERT INTO foo  (foo_id, foo_name) VALUES(1,'haha');
+INSERT INTO foo2 (foo_id, foo_name) VALUES(1,'hoho');
 
 -- -----------------------------------------------
 -- Create partitions the old way using inheritance
 -- -----------------------------------------------
-CREATE TABLE sample.measurement (
+CREATE TABLE measurement (
     city_id         int not null,
     logdate         date not null,
     peaktemp        int,
     unitsales       int
 );
-CREATE TABLE sample.measurement_y2006m02 (
+CREATE TABLE measurement_y2006m02 (
     CHECK ( logdate >= DATE '2006-02-01' AND logdate < DATE '2006-03-01' )
-) INHERITS (sample.measurement);
-CREATE TABLE sample.measurement_y2006m03 (
+) INHERITS (measurement);
+CREATE TABLE measurement_y2006m03 (
     CHECK ( logdate >= DATE '2006-03-01' AND logdate < DATE '2006-04-01' )
-) INHERITS (sample.measurement);
-CREATE TABLE sample.measurement_y2022mAll (
+) INHERITS (measurement);
+CREATE TABLE measurement_y2022mAll (
     CHECK ( logdate >= DATE '2022-01-01' AND logdate < DATE '2022-12-31' )
-) INHERITS (sample.measurement);
-CREATE INDEX measurement_y2006m02_logdate_ix ON sample.measurement_y2006m02  (logdate);
-CREATE INDEX measurement_y2006m03_logdate_ix ON sample.measurement_y2006m03  (logdate);
-CREATE INDEX measurement_y2022mAll_ix        ON sample.measurement_y2022mAll (logdate);
-CREATE OR REPLACE FUNCTION sample.measurement_insert_trigger()
+) INHERITS (measurement);
+CREATE INDEX measurement_y2006m02_logdate_ix ON measurement_y2006m02  (logdate);
+CREATE INDEX measurement_y2006m03_logdate_ix ON measurement_y2006m03  (logdate);
+CREATE INDEX measurement_y2022mAll_ix        ON measurement_y2022mAll (logdate);
+CREATE OR REPLACE FUNCTION measurement_insert_trigger()
 RETURNS TRIGGER AS $$
 BEGIN
     IF ( NEW.logdate >= DATE '2006-02-01' AND
          NEW.logdate < DATE '2006-03-01' ) THEN
-        INSERT INTO sample.measurement_y2006m02 VALUES (NEW.*);
+        INSERT INTO measurement_y2006m02 VALUES (NEW.*);
     ELSIF ( NEW.logdate >= DATE '2006-03-01' AND
             NEW.logdate < DATE '2006-04-01' ) THEN
-        INSERT INTO sample.measurement_y2006m03 VALUES (NEW.*);
+        INSERT INTO measurement_y2006m03 VALUES (NEW.*);
     ELSIF ( NEW.logdate >= DATE '2022-01-01' AND
             NEW.logdate < DATE '2022-12-31' ) THEN
-        INSERT INTO sample.measurement_y2022mAll VALUES (NEW.*);        
+        INSERT INTO measurement_y2022mAll VALUES (NEW.*);        
     ELSE
         RAISE EXCEPTION 'Date out of range.  Fix the measurement_insert_trigger() function!';
     END IF;
@@ -594,17 +594,17 @@ $$
 LANGUAGE plpgsql;
 
 CREATE TRIGGER insert_measurement_trigger
-    BEFORE INSERT ON sample.measurement
-    FOR EACH ROW EXECUTE PROCEDURE sample.measurement_insert_trigger();
+    BEFORE INSERT ON measurement
+    FOR EACH ROW EXECUTE PROCEDURE measurement_insert_trigger();
 
-INSERT INTO sample.measurement SELECT 1, now(), 70, 100;
-INSERT INTO sample.measurement SELECT 1, now(), 80, 120;
+INSERT INTO measurement SELECT 1, now(), 70, 100;
+INSERT INTO measurement SELECT 1, now(), 80, 120;
 
 --
 -- Name: foo_bar_baz; Type: TABLE; Schema: sample; Owner: postgres
 --
 
-CREATE TABLE sample.foo_bar_baz (
+CREATE TABLE foo_bar_baz (
     foo_id integer NOT NULL,
     bar_id integer NOT NULL,
     baz integer NOT NULL
@@ -612,100 +612,100 @@ CREATE TABLE sample.foo_bar_baz (
 PARTITION BY RANGE (foo_id);
 
 
-ALTER TABLE sample.foo_bar_baz OWNER TO postgres;
-COMMENT ON TABLE sample.foo_bar_baz IS 'just a comment on a partitioned table';
+ALTER TABLE foo_bar_baz OWNER TO postgres;
+COMMENT ON TABLE foo_bar_baz IS 'just a comment on a partitioned table';
 
 --
 -- Name: foo_bar_baz_0; Type: TABLE; Schema: sample; Owner: postgres
 --
 
-CREATE TABLE sample.foo_bar_baz_0 (
+CREATE TABLE foo_bar_baz_0 (
     foo_id integer NOT NULL,
     bar_id integer NOT NULL,
     baz integer NOT NULL
 );
-ALTER TABLE ONLY sample.foo_bar_baz ATTACH PARTITION sample.foo_bar_baz_0 FOR VALUES FROM (0) TO (1);
+ALTER TABLE ONLY foo_bar_baz ATTACH PARTITION foo_bar_baz_0 FOR VALUES FROM (0) TO (1);
 
 
-ALTER TABLE sample.foo_bar_baz_0 OWNER TO postgres;
+ALTER TABLE foo_bar_baz_0 OWNER TO postgres;
 
 --
 -- Name: foo_bar_baz_1; Type: TABLE; Schema: sample; Owner: postgres
 --
 
-CREATE TABLE sample.foo_bar_baz_1 (
+CREATE TABLE foo_bar_baz_1 (
     foo_id integer NOT NULL,
     bar_id integer NOT NULL,
     baz integer NOT NULL
 );
-ALTER TABLE ONLY sample.foo_bar_baz ATTACH PARTITION sample.foo_bar_baz_1 FOR VALUES FROM (1) TO (2);
+ALTER TABLE ONLY foo_bar_baz ATTACH PARTITION foo_bar_baz_1 FOR VALUES FROM (1) TO (2);
 
 
-ALTER TABLE sample.foo_bar_baz_1 OWNER TO postgres;
+ALTER TABLE foo_bar_baz_1 OWNER TO postgres;
 
 --
 -- Name: foo_bar_baz_2; Type: TABLE; Schema: sample; Owner: postgres
 --
 
-CREATE TABLE sample.foo_bar_baz_2 (
+CREATE TABLE foo_bar_baz_2 (
     foo_id integer NOT NULL,
     bar_id integer NOT NULL,
     baz integer NOT NULL
 );
-ALTER TABLE ONLY sample.foo_bar_baz ATTACH PARTITION sample.foo_bar_baz_2 FOR VALUES FROM (2) TO (3);
+ALTER TABLE ONLY foo_bar_baz ATTACH PARTITION foo_bar_baz_2 FOR VALUES FROM (2) TO (3);
 
 
-ALTER TABLE sample.foo_bar_baz_2 OWNER TO postgres;
+ALTER TABLE foo_bar_baz_2 OWNER TO postgres;
 
 --
 -- Name: foo_bar_baz_3; Type: TABLE; Schema: sample; Owner: postgres
 --
 
-CREATE TABLE sample.foo_bar_baz_3 (
+CREATE TABLE foo_bar_baz_3 (
     foo_id integer NOT NULL,
     bar_id integer NOT NULL,
     baz integer NOT NULL
 );
-ALTER TABLE ONLY sample.foo_bar_baz ATTACH PARTITION sample.foo_bar_baz_3 FOR VALUES FROM (3) TO (4);
+ALTER TABLE ONLY foo_bar_baz ATTACH PARTITION foo_bar_baz_3 FOR VALUES FROM (3) TO (4);
 
 
-ALTER TABLE sample.foo_bar_baz_3 OWNER TO postgres;
+ALTER TABLE foo_bar_baz_3 OWNER TO postgres;
 
 --
 -- Name: foo_bar_baz_4; Type: TABLE; Schema: sample; Owner: postgres
 --
 
-CREATE TABLE sample.foo_bar_baz_4 (
+CREATE TABLE foo_bar_baz_4 (
     foo_id integer NOT NULL,
     bar_id integer NOT NULL,
     baz integer NOT NULL
 );
-ALTER TABLE ONLY sample.foo_bar_baz ATTACH PARTITION sample.foo_bar_baz_4 FOR VALUES FROM (4) TO (5);
+ALTER TABLE ONLY foo_bar_baz ATTACH PARTITION foo_bar_baz_4 FOR VALUES FROM (4) TO (5);
 
 
-ALTER TABLE sample.foo_bar_baz_4 OWNER TO postgres;
+ALTER TABLE foo_bar_baz_4 OWNER TO postgres;
 
 --
 -- Name: foo_bar_baz_5; Type: TABLE; Schema: sample; Owner: postgres
 --
 
-CREATE TABLE sample.foo_bar_baz_5 (
+CREATE TABLE foo_bar_baz_5 (
     foo_id integer NOT NULL,
     bar_id integer NOT NULL,
     baz integer NOT NULL
 );
-ALTER TABLE ONLY sample.foo_bar_baz ATTACH PARTITION sample.foo_bar_baz_5 FOR VALUES FROM (5) TO (6);
-ALTER TABLE sample.foo_bar_baz_5 OWNER TO postgres;
+ALTER TABLE ONLY foo_bar_baz ATTACH PARTITION foo_bar_baz_5 FOR VALUES FROM (5) TO (6);
+ALTER TABLE foo_bar_baz_5 OWNER TO postgres;
 
-INSERT INTO sample.foo_bar_baz SELECT 1, 1, 1;
-INSERT INTO sample.foo_bar_baz SELECT 2, 2, 2;
-INSERT INTO sample.foo_bar_baz SELECT 3, 3, 3;
+INSERT INTO foo_bar_baz SELECT 1, 1, 1;
+INSERT INTO foo_bar_baz SELECT 2, 2, 2;
+INSERT INTO foo_bar_baz SELECT 3, 3, 3;
 
 --
 -- Name: haha; Type: FOREIGN TABLE; Schema: sample; Owner: sysdba
 --
 
-CREATE FOREIGN TABLE sample.haha (
+CREATE FOREIGN TABLE haha (
     id integer NOT NULL,
     adate timestamp with time zone NOT NULL
 )
@@ -714,54 +714,54 @@ OPTIONS (
     schema_name 'sample',
     table_name 'haha'
 );
-COMMENT ON FOREIGN TABLE sample.haha IS 'just a comment on a foreign table';
+COMMENT ON FOREIGN TABLE haha IS 'just a comment on a foreign table';
 
-ALTER FOREIGN TABLE sample.haha OWNER TO sysdba;
+ALTER FOREIGN TABLE haha OWNER TO sysdba;
 
 --
 -- Name: hoho; Type: MATERIALIZED VIEW; Schema: sample; Owner: postgres
 --
 
-CREATE MATERIALIZED VIEW sample.hoho AS
+CREATE MATERIALIZED VIEW hoho AS
  SELECT count(*) AS count
    FROM pg_stat_activity
   WITH NO DATA;
-ALTER TABLE sample.hoho OWNER TO postgres;
-COMMENT ON MATERIALIZED VIEW sample.hoho IS 'just a comment on the sample.hoho materialized view';
+ALTER TABLE hoho OWNER TO postgres;
+COMMENT ON MATERIALIZED VIEW hoho IS 'just a comment on the hoho materialized view';
 
-CREATE MATERIALIZED VIEW sample.mv_foo_bar_baz AS 
+CREATE MATERIALIZED VIEW mv_foo_bar_baz AS 
  SELECT count(*) as count
-   FROM sample.foo_bar_baz;
-ALTER TABLE sample.mv_foo_bar_baz OWNER TO postgres;
+   FROM foo_bar_baz;
+ALTER TABLE mv_foo_bar_baz OWNER TO postgres;
 
 --
 -- Name: hoho2; Type: VIEW; Schema: sample; Owner: postgres
 --
 
-CREATE VIEW sample.hoho2 AS
+CREATE VIEW hoho2 AS
  SELECT count(*) AS count
    FROM pg_stat_activity;
-ALTER TABLE sample.hoho2 OWNER TO postgres;
+ALTER TABLE hoho2 OWNER TO postgres;
 
 -- THIS WONT WORK UNTIL WE FIX dependency ORDERINGS
--- CREATE VIEW sample.hoho3 AS
+-- CREATE VIEW hoho3 AS
 --  SELECT count(*) as count
---    FROM sample.hoho2;
--- ALTER TABLE sample.hoho3 OWNER TO postgres;   
+--    FROM hoho2;
+-- ALTER TABLE hoho3 OWNER TO postgres;   
 
 --
 -- Name: person; Type: TABLE; Schema: sample; Owner: postgres
 --
 
-CREATE TABLE sample.person (
+CREATE TABLE person (
     id bigint NOT NULL,
     firstname text NOT NULL,
     lastname text NOT NULL
 );
-ALTER TABLE sample.person OWNER TO postgres;
+ALTER TABLE person OWNER TO postgres;
 
-ALTER TABLE sample.person ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
-    SEQUENCE NAME sample.person_id_seq
+ALTER TABLE person ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME person_id_seq
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
@@ -769,52 +769,52 @@ ALTER TABLE sample.person ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     CACHE 1
 );
 
-INSERT into sample.person OVERRIDING SYSTEM VALUE select 1, 'joe','shmoe';
-INSERT into sample.person OVERRIDING SYSTEM VALUE select 2, 'james','bond';
+INSERT into person OVERRIDING SYSTEM VALUE select 1, 'joe','shmoe';
+INSERT into person OVERRIDING SYSTEM VALUE select 2, 'james','bond';
 --
 -- Name: sampletable; Type: TABLE; Schema: sample; Owner: postgres
 --
 
-CREATE TABLE sample.sampletable (x numeric);
-ALTER TABLE sample.sampletable OWNER TO postgres;
-CREATE VIEW sample.v_sampletable AS Select * from sample.sampletable;
-COMMENT ON VIEW sample.v_sampletable IS 'just a view on the sample table';
-INSERT INTO sample.sampletable SELECT 1.00;
-INSERT INTO sample.sampletable SELECT 2.00;
+CREATE TABLE sampletable (x numeric);
+ALTER TABLE sampletable OWNER TO postgres;
+CREATE VIEW v_sampletable AS Select * from sampletable;
+COMMENT ON VIEW v_sampletable IS 'just a view on the sample table';
+INSERT INTO sampletable SELECT 1.00;
+INSERT INTO sampletable SELECT 2.00;
 
 --
 -- Name: seq111; Type: SEQUENCE; Schema: sample; Owner: postgres
 --
 
-CREATE SEQUENCE sample.seq111
+CREATE SEQUENCE seq111
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
     NO MAXVALUE
     CACHE 1;
-COMMENT ON SEQUENCE sample.seq111 IS 'just a comment on sample.seq111 sequence';    
+COMMENT ON SEQUENCE seq111 IS 'just a comment on seq111 sequence';    
 
 
-ALTER TABLE sample.seq111 OWNER TO postgres;
+ALTER TABLE seq111 OWNER TO postgres;
 
 --
 -- Name: test; Type: TABLE; Schema: sample; Owner: postgres
 --
 
-CREATE TABLE sample.test (
+CREATE TABLE test (
     major integer DEFAULT 2 NOT NULL,
     minor integer
 );
-ALTER TABLE sample.test OWNER TO postgres;
+ALTER TABLE test OWNER TO postgres;
 
-INSERT INTO sample.test SELECT 1,1;
-INSERT INTO sample.test SELECT 2,2;
+INSERT INTO test SELECT 1,1;
+INSERT INTO test SELECT 2,2;
 
 --
 -- Name: address address_pkey; Type: CONSTRAINT; Schema: sample; Owner: postgres
 --
 
-ALTER TABLE ONLY sample.address
+ALTER TABLE ONLY address
     ADD CONSTRAINT address_pkey PRIMARY KEY (id);
 
 
@@ -822,7 +822,7 @@ ALTER TABLE ONLY sample.address
 -- Name: foo_bar_baz foo_bar_baz_pkey; Type: CONSTRAINT; Schema: sample; Owner: postgres
 --
 
-ALTER TABLE ONLY sample.foo_bar_baz
+ALTER TABLE ONLY foo_bar_baz
     ADD CONSTRAINT foo_bar_baz_pkey PRIMARY KEY (foo_id, bar_id, baz);
 
 
@@ -830,7 +830,7 @@ ALTER TABLE ONLY sample.foo_bar_baz
 -- Name: foo_bar_baz_0 foo_bar_baz_0_pkey; Type: CONSTRAINT; Schema: sample; Owner: postgres
 --
 
-ALTER TABLE ONLY sample.foo_bar_baz_0
+ALTER TABLE ONLY foo_bar_baz_0
     ADD CONSTRAINT foo_bar_baz_0_pkey PRIMARY KEY (foo_id, bar_id, baz);
 
 
@@ -838,7 +838,7 @@ ALTER TABLE ONLY sample.foo_bar_baz_0
 -- Name: foo_bar_baz_1 foo_bar_baz_1_pkey; Type: CONSTRAINT; Schema: sample; Owner: postgres
 --
 
-ALTER TABLE ONLY sample.foo_bar_baz_1
+ALTER TABLE ONLY foo_bar_baz_1
     ADD CONSTRAINT foo_bar_baz_1_pkey PRIMARY KEY (foo_id, bar_id, baz);
 
 
@@ -846,7 +846,7 @@ ALTER TABLE ONLY sample.foo_bar_baz_1
 -- Name: foo_bar_baz_2 foo_bar_baz_2_pkey; Type: CONSTRAINT; Schema: sample; Owner: postgres
 --
 
-ALTER TABLE ONLY sample.foo_bar_baz_2
+ALTER TABLE ONLY foo_bar_baz_2
     ADD CONSTRAINT foo_bar_baz_2_pkey PRIMARY KEY (foo_id, bar_id, baz);
 
 
@@ -854,7 +854,7 @@ ALTER TABLE ONLY sample.foo_bar_baz_2
 -- Name: foo_bar_baz_3 foo_bar_baz_3_pkey; Type: CONSTRAINT; Schema: sample; Owner: postgres
 --
 
-ALTER TABLE ONLY sample.foo_bar_baz_3
+ALTER TABLE ONLY foo_bar_baz_3
     ADD CONSTRAINT foo_bar_baz_3_pkey PRIMARY KEY (foo_id, bar_id, baz);
 
 
@@ -862,7 +862,7 @@ ALTER TABLE ONLY sample.foo_bar_baz_3
 -- Name: foo_bar_baz_4 foo_bar_baz_4_pkey; Type: CONSTRAINT; Schema: sample; Owner: postgres
 --
 
-ALTER TABLE ONLY sample.foo_bar_baz_4
+ALTER TABLE ONLY foo_bar_baz_4
     ADD CONSTRAINT foo_bar_baz_4_pkey PRIMARY KEY (foo_id, bar_id, baz);
 
 
@@ -870,7 +870,7 @@ ALTER TABLE ONLY sample.foo_bar_baz_4
 -- Name: foo_bar_baz_5 foo_bar_baz_5_pkey; Type: CONSTRAINT; Schema: sample; Owner: postgres
 --
 
-ALTER TABLE ONLY sample.foo_bar_baz_5
+ALTER TABLE ONLY foo_bar_baz_5
     ADD CONSTRAINT foo_bar_baz_5_pkey PRIMARY KEY (foo_id, bar_id, baz);
 
 
@@ -878,7 +878,7 @@ ALTER TABLE ONLY sample.foo_bar_baz_5
 -- Name: person person_pkey; Type: CONSTRAINT; Schema: sample; Owner: postgres
 --
 
-ALTER TABLE ONLY sample.person
+ALTER TABLE ONLY person
     ADD CONSTRAINT person_pkey PRIMARY KEY (id);
 
 
@@ -886,7 +886,7 @@ ALTER TABLE ONLY sample.person
 -- Name: test test_pkey; Type: CONSTRAINT; Schema: sample; Owner: postgres
 --
 
-ALTER TABLE ONLY sample.test
+ALTER TABLE ONLY test
     ADD CONSTRAINT test_pkey PRIMARY KEY (major);
 
 
@@ -894,7 +894,7 @@ ALTER TABLE ONLY sample.test
 -- Name: idx_x; Type: INDEX; Schema: sample; Owner: postgres
 --
 
-CREATE INDEX idx_x ON sample.sampletable USING btree (x);
+CREATE INDEX idx_x ON sampletable USING btree (x);
 COMMENT ON INDEX idx_x IS 'just another btree index';
 
 
@@ -902,64 +902,64 @@ COMMENT ON INDEX idx_x IS 'just another btree index';
 -- Name: minor_idx; Type: INDEX; Schema: sample; Owner: postgres
 --
 
-CREATE INDEX minor_idx ON sample.test USING btree (major, minor);
+CREATE INDEX minor_idx ON test USING btree (major, minor);
 COMMENT ON INDEX minor_idx IS 'just another btree index';
 
 --
 -- Name: foo_bar_baz_0_pkey; Type: INDEX ATTACH; Schema: sample; Owner:
 --
 
-ALTER INDEX sample.foo_bar_baz_pkey ATTACH PARTITION sample.foo_bar_baz_0_pkey;
+ALTER INDEX foo_bar_baz_pkey ATTACH PARTITION foo_bar_baz_0_pkey;
 
 
 --
 -- Name: foo_bar_baz_1_pkey; Type: INDEX ATTACH; Schema: sample; Owner:
 --
 
-ALTER INDEX sample.foo_bar_baz_pkey ATTACH PARTITION sample.foo_bar_baz_1_pkey;
+ALTER INDEX foo_bar_baz_pkey ATTACH PARTITION foo_bar_baz_1_pkey;
 
 
 --
 -- Name: foo_bar_baz_2_pkey; Type: INDEX ATTACH; Schema: sample; Owner:
 --
 
-ALTER INDEX sample.foo_bar_baz_pkey ATTACH PARTITION sample.foo_bar_baz_2_pkey;
+ALTER INDEX foo_bar_baz_pkey ATTACH PARTITION foo_bar_baz_2_pkey;
 
 
 --
 -- Name: foo_bar_baz_3_pkey; Type: INDEX ATTACH; Schema: sample; Owner:
 --
 
-ALTER INDEX sample.foo_bar_baz_pkey ATTACH PARTITION sample.foo_bar_baz_3_pkey;
+ALTER INDEX foo_bar_baz_pkey ATTACH PARTITION foo_bar_baz_3_pkey;
 
 
 --
 -- Name: foo_bar_baz_4_pkey; Type: INDEX ATTACH; Schema: sample; Owner:
 --
 
-ALTER INDEX sample.foo_bar_baz_pkey ATTACH PARTITION sample.foo_bar_baz_4_pkey;
+ALTER INDEX foo_bar_baz_pkey ATTACH PARTITION foo_bar_baz_4_pkey;
 
 
 --
 -- Name: foo_bar_baz_5_pkey; Type: INDEX ATTACH; Schema: sample; Owner:
 --
 
-ALTER INDEX sample.foo_bar_baz_pkey ATTACH PARTITION sample.foo_bar_baz_5_pkey;
+ALTER INDEX foo_bar_baz_pkey ATTACH PARTITION foo_bar_baz_5_pkey;
 
 
 --
 -- Name: emp emp_stamp; Type: TRIGGER; Schema: sample; Owner: postgres
 --
 
-CREATE TRIGGER emp_stamp BEFORE INSERT OR UPDATE ON sample.emp FOR EACH ROW EXECUTE PROCEDURE sample.emp_stamp();
+CREATE TRIGGER emp_stamp BEFORE INSERT OR UPDATE ON emp FOR EACH ROW EXECUTE PROCEDURE emp_stamp();
 
 
 --
 -- Name: address address_id_fkey; Type: FK CONSTRAINT; Schema: sample; Owner: postgres
 --
 
-ALTER TABLE ONLY sample.address
-    ADD CONSTRAINT address_id_fkey FOREIGN KEY (id) REFERENCES sample.person(id);
+ALTER TABLE ONLY address
+    ADD CONSTRAINT address_id_fkey FOREIGN KEY (id) REFERENCES person(id);
 
 
 --
@@ -986,133 +986,133 @@ GRANT ALL ON SCHEMA sample TO pg_write_server_files;
 -- Name: FUNCTION aaa(); Type: ACL; Schema: sample; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION sample.aaa() TO mydb_update;
+GRANT ALL ON FUNCTION aaa() TO mydb_update;
 
 
 --
 -- Name: FUNCTION emp_stamp(); Type: ACL; Schema: sample; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION sample.emp_stamp() TO mydb_update;
+GRANT ALL ON FUNCTION emp_stamp() TO mydb_update;
 
 
 --
 -- Name: TABLE emp; Type: ACL; Schema: sample; Owner: postgres
 --
 
-GRANT SELECT ON TABLE sample.emp TO mydb_read;
-GRANT ALL ON TABLE sample.emp TO mydb_update;
+GRANT SELECT ON TABLE emp TO mydb_read;
+GRANT ALL ON TABLE emp TO mydb_update;
 
 
 --
 -- Name: TABLE foo; Type: ACL; Schema: sample; Owner: postgres
 --
 
-GRANT SELECT ON TABLE sample.foo TO mydb_read;
-GRANT SELECT ON TABLE sample.foo2 TO mydb_read;
-GRANT ALL ON TABLE sample.foo TO mydb_update;
-GRANT ALL ON TABLE sample.foo2 TO mydb_update;
+GRANT SELECT ON TABLE foo TO mydb_read;
+GRANT SELECT ON TABLE foo2 TO mydb_read;
+GRANT ALL ON TABLE foo TO mydb_update;
+GRANT ALL ON TABLE foo2 TO mydb_update;
 
 
 --
 -- Name: TABLE foo_bar_baz; Type: ACL; Schema: sample; Owner: postgres
 --
 
-GRANT SELECT ON TABLE sample.foo_bar_baz TO mydb_read;
-GRANT ALL ON TABLE sample.foo_bar_baz TO mydb_update;
+GRANT SELECT ON TABLE foo_bar_baz TO mydb_read;
+GRANT ALL ON TABLE foo_bar_baz TO mydb_update;
 
 
 --
 -- Name: TABLE foo_bar_baz_0; Type: ACL; Schema: sample; Owner: postgres
 --
 
-GRANT SELECT ON TABLE sample.foo_bar_baz_0 TO mydb_read;
-GRANT ALL ON TABLE sample.foo_bar_baz_0 TO mydb_update;
+GRANT SELECT ON TABLE foo_bar_baz_0 TO mydb_read;
+GRANT ALL ON TABLE foo_bar_baz_0 TO mydb_update;
 
 
 --
 -- Name: TABLE foo_bar_baz_1; Type: ACL; Schema: sample; Owner: postgres
 --
 
-GRANT SELECT ON TABLE sample.foo_bar_baz_1 TO mydb_read;
-GRANT ALL ON TABLE sample.foo_bar_baz_1 TO mydb_update;
+GRANT SELECT ON TABLE foo_bar_baz_1 TO mydb_read;
+GRANT ALL ON TABLE foo_bar_baz_1 TO mydb_update;
 
 
 --
 -- Name: TABLE foo_bar_baz_2; Type: ACL; Schema: sample; Owner: postgres
 --
 
-GRANT SELECT ON TABLE sample.foo_bar_baz_2 TO mydb_read;
-GRANT ALL ON TABLE sample.foo_bar_baz_2 TO mydb_update;
+GRANT SELECT ON TABLE foo_bar_baz_2 TO mydb_read;
+GRANT ALL ON TABLE foo_bar_baz_2 TO mydb_update;
 
 
 --
 -- Name: TABLE foo_bar_baz_3; Type: ACL; Schema: sample; Owner: postgres
 --
 
-GRANT SELECT ON TABLE sample.foo_bar_baz_3 TO mydb_read;
-GRANT ALL ON TABLE sample.foo_bar_baz_3 TO mydb_update;
+GRANT SELECT ON TABLE foo_bar_baz_3 TO mydb_read;
+GRANT ALL ON TABLE foo_bar_baz_3 TO mydb_update;
 
 
 --
 -- Name: TABLE foo_bar_baz_4; Type: ACL; Schema: sample; Owner: postgres
 --
 
-GRANT SELECT ON TABLE sample.foo_bar_baz_4 TO mydb_read;
-GRANT ALL ON TABLE sample.foo_bar_baz_4 TO mydb_update;
+GRANT SELECT ON TABLE foo_bar_baz_4 TO mydb_read;
+GRANT ALL ON TABLE foo_bar_baz_4 TO mydb_update;
 
 
 --
 -- Name: TABLE foo_bar_baz_5; Type: ACL; Schema: sample; Owner: postgres
 --
 
-GRANT SELECT ON TABLE sample.foo_bar_baz_5 TO mydb_read;
-GRANT ALL ON TABLE sample.foo_bar_baz_5 TO mydb_update;
+GRANT SELECT ON TABLE foo_bar_baz_5 TO mydb_read;
+GRANT ALL ON TABLE foo_bar_baz_5 TO mydb_update;
 
 
 --
 -- Name: TABLE haha; Type: ACL; Schema: sample; Owner: sysdba
 --
 
-GRANT SELECT ON TABLE sample.haha TO mydb_dev;
+GRANT SELECT ON TABLE haha TO mydb_dev;
 
 
 --
 -- Name: TABLE hoho; Type: ACL; Schema: sample; Owner: postgres
 --
 
-GRANT SELECT ON TABLE sample.hoho TO mydb_dev;
+GRANT SELECT ON TABLE hoho TO mydb_dev;
 
 
 --
 -- Name: TABLE hoho2; Type: ACL; Schema: sample; Owner: postgres
 --
 
-GRANT SELECT ON TABLE sample.hoho2 TO mydb_dev;
+GRANT SELECT ON TABLE hoho2 TO mydb_dev;
 
 
 --
 -- Name: TABLE sampletable; Type: ACL; Schema: sample; Owner: postgres
 --
 
-GRANT SELECT ON TABLE sample.sampletable TO mydb_read;
-GRANT ALL ON TABLE sample.sampletable TO mydb_update;
+GRANT SELECT ON TABLE sampletable TO mydb_read;
+GRANT ALL ON TABLE sampletable TO mydb_update;
 
 
 --
 -- Name: SEQUENCE seq111; Type: ACL; Schema: sample; Owner: postgres
 --
 
-GRANT SELECT,UPDATE ON SEQUENCE sample.seq111 TO mydb_dev;
-GRANT SELECT,UPDATE ON SEQUENCE sample.seq111 TO mydb_update;
+GRANT SELECT,UPDATE ON SEQUENCE seq111 TO mydb_dev;
+GRANT SELECT,UPDATE ON SEQUENCE seq111 TO mydb_update;
 
 
 --
 -- Name: TABLE test; Type: ACL; Schema: sample; Owner: postgres
 --
 
-GRANT SELECT ON TABLE sample.test TO mydb_read;
-GRANT ALL ON TABLE sample.test TO mydb_update;
+GRANT SELECT ON TABLE test TO mydb_read;
+GRANT ALL ON TABLE test TO mydb_update;
 
 
 --
@@ -1155,7 +1155,6 @@ ALTER DEFAULT PRIVILEGES FOR ROLE mydb_owner IN SCHEMA sample GRANT SELECT,INSER
 
 
 -- RLS and policies. See pg_policies;  https://www.postgresql.org/docs/current/ddl-rowsecurity.html
-set search_path = sample;
 DROP ROLE IF EXISTS managers;
 DROP ROLE IF EXISTS users;
 DROP ROLE IF EXISTS admin;
@@ -1225,6 +1224,35 @@ CREATE POLICY fp_s ON information FOR SELECT USING (group_id <= (SELECT group_id
 CREATE POLICY fp_u ON information FOR UPDATE USING (group_id <= (SELECT group_id FROM users WHERE user_name = current_user));
 
 GRANT ALL ON information TO public;
+
+-- -----------------------------
+-- Create case-sensitive objects
+-- -----------------------------
+CREATE TABLE "CaseSensitive" ("ID" integer, "aValue" text);
+ALTER TABLE "CaseSensitive" OWNER TO postgres;
+CREATE VIEW "CaseSensitiveView" AS SELECT * FROM "CaseSensitive";
+CREATE SEQUENCE "CaseSensitive_ID_seq" START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1;
+ALTER TABLE "CaseSensitive_ID_seq" OWNER TO postgres;
+COMMENT ON TABLE "CaseSensitive" IS 'just a comment on the CaseSensitive table';    
+ALTER SEQUENCE "CaseSensitive_ID_seq" OWNED BY "CaseSensitive"."ID";
+ALTER TABLE ONLY "CaseSensitive" ALTER COLUMN "ID" SET DEFAULT nextval('"CaseSensitive_ID_seq"'::regclass);
+ALTER TABLE ONLY "CaseSensitive" ADD CONSTRAINT "CaseSensitive_pkey" PRIMARY KEY ("ID");
+COMMENT ON SEQUENCE "CaseSensitive_ID_seq" IS 'just a comment on CaseSensitive sequence';    
+CREATE INDEX "CaseSensitive_aValue_ix" ON "CaseSensitive" ("aValue");
+GRANT SELECT, UPDATE, DELETE ON "CaseSensitive" TO public;
+GRANT SELECT,UPDATE ON SEQUENCE "CaseSensitive_ID_seq" TO public;
+CREATE FUNCTION "CaseSensitiveFunc" (int, int)
+returns int language sql
+as $$
+    select case when $1 < $2 then $2 else $1 end
+$$;
+GRANT EXECUTE ON FUNCTION "CaseSensitiveFunc" (int, int) TO postgres;                                                                                                                            
+CREATE POLICY "All_View" ON "CaseSensitive" FOR SELECT USING (true);
+CREATE COLLATION "Frenchie" (provider = icu, locale = 'fr');
+COMMENT ON COLLATION "Frenchie" IS 'my comments on "Frenchie" collation';
+CREATE DOMAIN "Addr2" AS character varying(90) NOT NULL;
+COMMENT ON DOMAIN "Addr2" IS 'my domain comments on "Addr2"';
+CREATE TYPE "CompFoo3" AS (x1 integer,x2 text);
 
 -- 
                                                                                                                             
