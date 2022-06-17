@@ -1,5 +1,7 @@
 # clone_schema
 
+Works on Linux distros and all Windows versions.
+
 Handles following objects:
 
 * Tables - structure (indexes, constraints, keys) and optionally, data
