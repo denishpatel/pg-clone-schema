@@ -28,6 +28,8 @@
 -- 2022-06-13  MJV FIX: Fixed Issue#75 Rows were not being copied correctly for parents.  Needed to move copy rows logic to end, after all DDL is done.
 -- 2022-06-15  MJV FIX: Fixed Issue#76 RLS is not being enabled for cloned tables.  Enable it right after the policy for the table is created
 -- 2022-06-16  MJV FIX: Fixed Issue#78 Fix case-sensitive object names by using quote_ident() all over the place. Also added restriction to not allow case-sensitive target schemas.
+-- 2022-06-16  MJV FIX: Fixed Issue#78 Also, since we deferred row copies until the end, we must also defer foreign key constraints to the end as well. 
+
 
 -- SELECT * FROM public.get_table_ddl('sample', 'address', True);
 
@@ -1111,32 +1113,10 @@ BEGIN
   RAISE NOTICE '   IDENTITIES set:      %', LPAD(cnt::text, 2, ' ');
 
 
+  -- Issue#78 forces us to defer FKeys until the end since we previously did row copies before FKeys
   --  add FK constraint
-  action := 'FK Constraints';
-  cnt := 0;
+  -- action := 'FK Constraints';
 
-  -- Issue#61 FIX: use set_config for empty string
-  -- SET search_path = '';
-  SELECT set_config('search_path', '', false) into v_dummy;
-
-  FOR qry IN
-    SELECT 'ALTER TABLE ' || quote_ident(dest_schema) || '.' || quote_ident(rn.relname)
-                          || ' ADD CONSTRAINT ' || quote_ident(ct.conname) || ' ' || REPLACE(pg_get_constraintdef(ct.oid), 'REFERENCES ' || quote_ident(source_schema) || '.', 'REFERENCES ' || quote_ident(dest_schema) || '.') || ';'
-    FROM pg_constraint ct
-    JOIN pg_class rn ON rn.oid = ct.conrelid
-    WHERE connamespace = src_oid
-        AND rn.relkind = 'r'
-        AND ct.contype = 'f'
-  LOOP
-    cnt := cnt + 1;
-    IF ddl_only THEN
-      RAISE INFO '%', qry;
-    ELSE
-      EXECUTE qry;
-    END IF;
-  END LOOP;
-  EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
-  RAISE NOTICE '       FKEYS cloned: %', LPAD(cnt::text, 5, ' ');
 
   -- Issue#62: Add comments on indexes, and then removed them from here and reworked later below.
 
@@ -1990,6 +1970,37 @@ BEGIN
     END LOOP;
   END IF;
   RAISE NOTICE '      TABLES copied: %', LPAD(tblscopied::text, 5, ' ');
+
+
+  -- Issue#78 forces us to defer FKeys until the end since we previously did row copies before FKeys
+  --  add FK constraint
+  action := 'FK Constraints';
+  cnt := 0;
+
+  -- Issue#61 FIX: use set_config for empty string
+  -- SET search_path = '';
+  SELECT set_config('search_path', '', false) into v_dummy;
+
+  FOR qry IN
+    SELECT 'ALTER TABLE ' || quote_ident(dest_schema) || '.' || quote_ident(rn.relname)
+                          || ' ADD CONSTRAINT ' || quote_ident(ct.conname) || ' ' || REPLACE(pg_get_constraintdef(ct.oid), 'REFERENCES ' || quote_ident(source_schema) || '.', 'REFERENCES ' 
+                          || quote_ident(dest_schema) || '.') || ';'
+    FROM pg_constraint ct
+    JOIN pg_class rn ON rn.oid = ct.conrelid
+    WHERE connamespace = src_oid
+        AND rn.relkind = 'r'
+        AND ct.contype = 'f'
+  LOOP
+    cnt := cnt + 1;
+    IF ddl_only THEN
+      RAISE INFO '%', qry;
+    ELSE
+      EXECUTE qry;
+    END IF;
+  END LOOP;
+  EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
+  RAISE NOTICE '       FKEYS cloned: %', LPAD(cnt::text, 5, ' ');
+
 
   IF src_path_old = '' THEN
     -- RAISE NOTICE 'Restoring old search_path to empty string';
