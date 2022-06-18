@@ -29,7 +29,7 @@
 -- 2022-06-15  MJV FIX: Fixed Issue#76 RLS is not being enabled for cloned tables.  Enable it right after the policy for the table is created
 -- 2022-06-16  MJV FIX: Fixed Issue#78 Fix case-sensitive object names by using quote_ident() all over the place. Also added restriction to not allow case-sensitive target schemas.
 -- 2022-06-16  MJV FIX: Fixed Issue#78 Also, since we deferred row copies until the end, we must also defer foreign key constraints to the end as well. 
-
+-- 2022-06-18  MJV FIX: Fixed Issue#79 Fix copying of rows in tables with user-defined column datatypes using COPY method.
 
 -- SELECT * FROM public.get_table_ddl('sample', 'address', True);
 
@@ -187,7 +187,7 @@ $$
       END IF;
     END IF;
 
-    -- RAISE INFO 'version=%  schema=%  parent=%  relopts=%  tablespace=%  partitioned=%  inherited=%  relispartition=%',v_pgversion, in_schema, v_parent, v_relopts, v_tablespace, bPartitioned, bInheritance, bRelispartition;
+    -- RAISE NOTICE 'version=%  schema=%  parent=%  relopts=%  tablespace=%  partitioned=%  inherited=%  relispartition=%',v_pgversion, in_schema, v_parent, v_relopts, v_tablespace, bPartitioned, bInheritance, bRelispartition;
 
     -- start the create definition
     v_table_ddl := 'CREATE TABLE ' || in_schema || '.' || in_table || ' (' || E'\n';
@@ -265,7 +265,6 @@ $$
           AND c1.relkind = 'p';
     END IF;
 
-    -- RAISE INFO 'partitionkey=%',v_partition_key;
     IF v_partition_key IS NOT NULL AND v_partition_key <> '' THEN
       -- add partition clause
       -- NOTE:  cannot specify default tablespace for partitioned relations
@@ -312,20 +311,22 @@ $$
 $$;
 
 
--- Function: clone_schema(text, text, boolean, boolean)
--- DROP FUNCTION clone_schema(text, text, boolean, boolean);
+-- Function: clone_schema(text, text, boolean, boolean, boolean)
+-- DROP FUNCTION clone_schema(text, text, boolean, boolean, boolean);
 
+DROP FUNCTION IF EXISTS public.clone_schema(text, text, boolean, boolean);
 CREATE OR REPLACE FUNCTION public.clone_schema(
     source_schema text,
     dest_schema text,
     include_recs boolean,
-    ddl_only     boolean)
+    ddl_only     boolean,
+    verbose_     boolean DEFAULT False)
   RETURNS void AS
 $BODY$
 
 --  This function will clone all sequences, tables, data, views & functions from any existing schema to a new one
 -- SAMPLE CALL:
--- SELECT clone_schema('sample', 'sample_clone2', True, False);
+-- SELECT clone_schema('sample', 'sample_clone2', True, False, False);
 
 DECLARE
   src_oid          oid;
@@ -356,6 +357,7 @@ DECLARE
   src_path_new     text;
   aclstr           text;
   tblarray         text[];
+  tblarray2        text[];
   tblelement       text;
   grantor          text;
   grantee          text;
@@ -374,11 +376,14 @@ DECLARE
   sq_data_type     text;
   sq_cycled        char(10);
   sq_owned         text;
+  sq_version        text;
   sq_server_version text;
   sq_server_version_num integer;
+  bWindows         boolean;
   arec             RECORD;
   cnt              integer;
   cnt2             integer;
+  cnt3             integer;
   pos              integer;
   tblscopied       integer := 0;
   l_child          integer;
@@ -392,7 +397,7 @@ DECLARE
   v_diag5          text;
   v_diag6          text;
   v_dummy          text;
-  v_version        text := '1.5  June 16, 2022';
+  v_version        text := '1.6  June 18, 2022';
 
 BEGIN
   RAISE NOTICE 'clone_schema version %', v_version;
@@ -401,6 +406,16 @@ BEGIN
   SELECT setting INTO sq_server_version
   FROM pg_settings
   WHERE name = 'server_version';
+  SELECT version() INTO sq_version;
+  
+  RAISE INFO 'version: %', sq_version;
+  IF POSITION('compiled by Visual C++' IN sq_version) > 0 THEN
+      bWindows = True;
+      RAISE INFO 'OpSys = Windows';
+  ELSE
+      bWindows = False;
+      RAISE INFO 'OpSys = Linux';
+  END IF;
 
   SELECT setting INTO sq_server_version_num
   FROM pg_settings
@@ -428,7 +443,7 @@ BEGIN
   -- Check for case-sensitive target schemas and reject them for now.
   SELECT lower(dest_schema) = dest_schema INTO abool;
   IF not abool THEN
-      RAISE INFO 'Case-sensitive target schemas are not supported at this time.';
+      RAISE NOTICE 'Case-sensitive target schemas are not supported at this time.';
       RETURN;
   END IF;
 
@@ -810,12 +825,10 @@ BEGIN
           FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
 
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
-          -- RAISE INFO 'DEBUG: user-defined %',buffer3;
           EXECUTE buffer3;
         ELSE
           IF NOT bChild OR bRelispart THEN
             buffer3 := 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
-            -- RAISE INFO 'DEBUG: not user-defined1 %', buffer3;
             EXECUTE buffer3;
           ELSE
             -- FIXED #65, #67
@@ -827,7 +840,6 @@ BEGIN
             -- set client_min_messages higher to avoid messages like this:
             -- NOTICE:  merging column "city_id" with inherited definition
             set client_min_messages = 'WARNING';
-            -- RAISE INFO 'DEBUG: not user-defined2 %',buffer3;
             EXECUTE buffer3;
             -- reset it back, only get these for inheritance-based tables
             set client_min_messages = 'notice';
@@ -903,22 +915,7 @@ BEGIN
       IF ddl_only THEN
         RAISE INFO '%', qry;
       ELSE
-        -- RAISE INFO 'DEBUG: parent %', qry;
         EXECUTE qry;
-        -- Add table comment.
-        -- do this separately below
-        -- IF ocomment IS NOT NULL THEN
-        --   buffer = 'COMMENT ON TABLE ' || quote_ident(dest_schema) || '.' || tblname || ' IS ' || quote_literal(ocomment);
-        --   RAISE INFO 'DEBUG 4: %', buffer;
-        --   EXECUTE 'COMMENT ON TABLE '
-        --     || quote_ident(dest_schema)
-        --     || '.'
-        --     -- FIXED BUG ??
-        --     -- || pc.relname
-        --     || tblname
-        --     || ' IS '
-        --     || quote_literal(ocomment);
-        -- END IF;
       END IF;
       -- loop for child tables and alter them to attach to parent for specific partition method.
       FOR aname, part_range, object IN
@@ -975,8 +972,7 @@ BEGIN
       END IF;
     END LOOP;
 
-    IF include_recs
-      THEN
+    IF include_recs THEN
       -- Insert records from source table
 
       -- 2021-03-03  MJV FIX
@@ -993,11 +989,27 @@ BEGIN
       -- INSERT INTO sample_clone.address OVERRIDING SYSTEM VALUE SELECT * FROM sample.address;
       -- ERROR:  column "id2" is of type sample_clone.udt_myint but expression is of type udt_myint
       IF data_type = 'USER-DEFINED' THEN
-        RAISE WARNING 'Bypassing copying rows for table (%) with user-defined data types.  You must copy them manually.', tblname;
+        -- RAISE WARNING 'Bypassing copying rows for table (%) with user-defined data types.  You must copy them manually.', tblname;
         -- wont work --> INSERT INTO sample_clone1.address (id2, id3, addr) SELECT cast(id2 as sample_clone1.udt_myint), cast(id3 as sample_clone1.udt_myint), addr FROM sample.address;
+
+        -- Issue#79 implementation follows        
+        -- COPY sample.statuses(id, s) TO '/tmp/statuses.txt' WITH DELIMITER AS ',';
+	-- COPY sample_clone1.statuses FROM '/tmp/statuses.txt' (DELIMITER ',', NULL '');
+	IF bWindows THEN
+	    buffer2   := 'COPY ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || '  TO  ''C:\WINDOWS\TEMP\cloneschema.tmp'' WITH DELIMITER AS '','';';
+	    tblarray2 := tblarray2 || buffer2;
+	    buffer2   := 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM  ''C:\WINDOWS\TEMP\cloneschema.tmp'' (DELIMITER '','', NULL '''');';
+	    tblarray2 := tblarray2 || buffer2;
+	ELSE
+	    buffer2   := 'COPY ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || '  TO  ''/tmp/cloneschema.tmp'' WITH DELIMITER AS '','';';
+	    tblarray2 := tblarray2 || buffer2;
+	    buffer2   := 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM  ''/tmp/cloneschema.tmp'' (DELIMITER '','', NULL '''');';
+	    tblarray2 := tblarray2 || buffer2;
+	END IF;
+
       ELSE
         -- bypass child tables since we populate them when we populate the parents
-        -- RAISE INFO 'tblname=%  bRelispart=%  relknd=%  l_child=%  bChild=%', tblname, bRelispart, relknd, l_child, bChild;
+        -- RAISE NOTICE 'tblname=%  bRelispart=%  relknd=%  l_child=%  bChild=%', tblname, bRelispart, relknd, l_child, bChild;
         IF NOT bRelispart AND NOT bChild THEN
           -- Issue#75: Must defer population of tables until child tables have been added to parents
           -- RAISE NOTICE ' Deferring populating of cloned table, %', tblname;
@@ -1113,6 +1125,7 @@ BEGIN
   RAISE NOTICE '   IDENTITIES set:      %', LPAD(cnt::text, 2, ' ');
 
 
+
   -- Issue#78 forces us to defer FKeys until the end since we previously did row copies before FKeys
   --  add FK constraint
   -- action := 'FK Constraints';
@@ -1198,26 +1211,11 @@ BEGIN
     SELECT REPLACE(object, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO v_def;
     -- NOTE: definition already includes the closing statement semicolon
     IF ddl_only THEN
-      -- RAISE INFO '%', 'CREATE OR REPLACE VIEW ' || buffer || ' AS ' || v_def;
       RAISE INFO '%', v_def;
     ELSE
       -- EXECUTE 'CREATE OR REPLACE VIEW ' || buffer || ' AS ' || v_def;
       EXECUTE v_def;
       -- Issue#73: commented out comment logic for views since we do it elsewhere now.
-      -- Add comment.
-      -- SELECT obj_description(c.oid)
-      -- INTO ocomment
-      -- FROM pg_class c,
-      --   pg_namespace n
-      -- WHERE n.nspname = quote_ident(source_schema)
-      --   AND c.relnamespace = n.oid
-      --   AND c.relkind = 'v'
-      --   -- AND c.relname = object;
-      --   AND c.relname = aname;
-      -- IF ocomment IS NOT NULL THEN
-      --   EXECUTE 'COMMENT ON VIEW ' || buffer || ' IS ' || quote_literal(ocomment);
-      -- END IF;
-
     END IF;
   END LOOP;
   RAISE NOTICE '       VIEWS cloned: %', LPAD(cnt::text, 5, ' ');
@@ -1225,7 +1223,6 @@ BEGIN
   -- Create Materialized views
   action := 'Mat. Views';
   cnt := 0;
-  -- RAISE INFO 'mat views start1';
   FOR object, v_def IN
       SELECT matviewname::text, replace(definition,';','') FROM pg_catalog.pg_matviews WHERE schemaname = quote_ident(source_schema)
   LOOP
@@ -1241,10 +1238,8 @@ BEGIN
         EXECUTE 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || buffer2 || ' WITH DATA;' ;
       ELSE
         IF ddl_only THEN
-          -- RAISE INFO '%', 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || v_def || ' WITH NO DATA;' ;
           RAISE INFO '%', 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || buffer2 || ' WITH NO DATA;' ;
         ELSE
-          -- EXECUTE 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || v_def || ' WITH NO DATA;' ;
           EXECUTE 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || buffer2 || ' WITH NO DATA;' ;
         END IF;
       END IF;
@@ -1320,7 +1315,6 @@ BEGIN
         WHERE pronamespace = src_oid AND prokind = 'a'
     LOOP
       cnt := cnt + 1;
-      -- RAISE INFO 'funcoid=%', func_oid;
       SELECT
         'CREATE AGGREGATE '
         || dest_schema
@@ -1456,7 +1450,6 @@ BEGIN
   LOOP
     cnt := cnt + 1;
     buffer := REPLACE(arec.definition, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
-    -- RAISE INFO 'rules def: %', buffer;
     IF ddl_only THEN
       RAISE INFO '%', buffer;
     ELSE
@@ -1490,7 +1483,6 @@ BEGIN
     SELECT c.relrowsecurity INTO abool FROM pg_class c, pg_namespace n where n.nspname = quote_ident(arec.schemaname) AND n.oid = c.relnamespace AND c.relname = quote_ident(arec.tablename) and c.relkind = 'r';
     IF abool THEN
       buffer = 'ALTER TABLE ' || dest_schema || '.' || arec.tablename || ' ENABLE ROW LEVEL SECURITY;';
-      -- RAISE INFO 'Enabling row level security for table, %: %', dest_schema || '.' || arec.tablename, buffer;
       IF ddl_only THEN
         RAISE INFO '%', buffer;
       ELSE
@@ -1530,7 +1522,6 @@ BEGIN
     IF ddl_only THEN
       RAISE INFO '%', qry;
     ELSE
-      -- RAISE INFO 'COMMENTS DEBUG1: %', qry;
       EXECUTE qry;
     END IF;
   END LOOP;
@@ -1596,7 +1587,6 @@ BEGIN
     IF ddl_only THEN
       RAISE INFO '%', qry;
     ELSE
-      -- RAISE INFO 'COMMENTS DEBUG2: %', qry;
       EXECUTE qry;
     END IF;
   END LOOP;
@@ -1659,7 +1649,6 @@ BEGIN
     IF ddl_only THEN
       RAISE INFO '%', qry;
     ELSE
-      -- RAISE INFO 'COMMENTS DEBUG3: %', qry;
       EXECUTE qry;
     END IF;
   END LOOP;
@@ -1950,9 +1939,11 @@ BEGIN
   -- LOOP for regular tables and populate them if specified
   -- Issue#75 moved from big table loop above to here.
   IF include_recs THEN
+    EXECUTE 'SET search_path = ' || quote_ident(dest_schema) ;
+    action := 'Copy Rows';
+    RAISE NOTICE 'Copying rows from source tables to target tables...';
     FOREACH tblelement IN ARRAY tblarray
     LOOP 
-       -- RAISE NOTICE '%', tblelement;
        EXECUTE tblelement;       
        GET DIAGNOSTICS cnt = ROW_COUNT;  
        buffer = substring(tblelement, 13);
@@ -1964,14 +1955,34 @@ BEGIN
            buffer = substring(buffer,1, cnt2);       
        END IF;
        SELECT RPAD(buffer, 35, ' ') INTO buffer;
-       -- RAISE NOTICE ' Populated cloned table, %   Rows Copied: %', buffer, cnt;
-       -- RAISE NOTICE ' Populated cloned table, %   Rows Copied: % %', buffer, cnt, tblelement;
+       IF verbose_ THEN
+           RAISE NOTICE ' Populated cloned table, %   Rows Copied: %', buffer, cnt;
+       END IF;
        tblscopied := tblscopied + 1;
     END LOOP;
+    
+    -- Issue#79 implementation
+    -- Do same for tables with user-defined elements
+    FOREACH tblelement IN ARRAY tblarray2
+    LOOP 
+       EXECUTE tblelement;       
+       GET DIAGNOSTICS cnt = ROW_COUNT;  
+       cnt2 = POSITION(' FROM ' IN tblelement::text);
+       IF cnt2 > 0 THEN
+           buffer = substring(tblelement, 1, cnt2);
+           buffer = substring(buffer, 6);
+           SELECT RPAD(buffer, 35, ' ') INTO buffer;
+           IF verbose_ THEN           
+               RAISE NOTICE ' Populated cloned table, %   Rows Copied: %', buffer, cnt;
+           END IF;
+           tblscopied := tblscopied + 1;
+       END IF;
+    END LOOP;    
+
   END IF;
   RAISE NOTICE '      TABLES copied: %', LPAD(tblscopied::text, 5, ' ');
 
-
+  
   -- Issue#78 forces us to defer FKeys until the end since we previously did row copies before FKeys
   --  add FK constraint
   action := 'FK Constraints';
@@ -2034,6 +2045,6 @@ END;
 
 $BODY$
   LANGUAGE plpgsql VOLATILE  COST 100;
--- ALTER FUNCTION public.clone_schema(text, text, boolean, boolean) OWNER TO postgres;
+-- ALTER FUNCTION public.clone_schema(text, text, boolean, boolean, boolean) OWNER TO postgres;
 
 
