@@ -30,6 +30,7 @@
 -- 2022-06-16  MJV FIX: Fixed Issue#78 Fix case-sensitive object names by using quote_ident() all over the place. Also added restriction to not allow case-sensitive target schemas.
 -- 2022-06-16  MJV FIX: Fixed Issue#78 Also, since we deferred row copies until the end, we must also defer foreign key constraints to the end as well. 
 -- 2022-06-18  MJV FIX: Fixed Issue#79 Fix copying of rows in tables with user-defined column datatypes using COPY method.
+-- 2022-06-29  MJV FIX: Fixed Issue#80 Fix copying of rows reported error due to arrays not being initialized properly.
 
 -- SELECT * FROM public.get_table_ddl('sample', 'address', True);
 
@@ -356,8 +357,9 @@ DECLARE
   src_path_old     text;
   src_path_new     text;
   aclstr           text;
-  tblarray         text[];
-  tblarray2        text[];
+  -- issue#80 initialize arrays properly
+  tblarray         text[] := '{}';
+  tblarray2        text[] := '{}';
   tblelement       text;
   grantor          text;
   grantee          text;
@@ -397,7 +399,7 @@ DECLARE
   v_diag5          text;
   v_diag6          text;
   v_dummy          text;
-  v_version        text := '1.6  June 18, 2022';
+  v_version        text := '1.7  June 29, 2022';
 
 BEGIN
   RAISE NOTICE 'clone_schema version %', v_version;
@@ -1941,7 +1943,6 @@ BEGIN
   IF include_recs THEN
     EXECUTE 'SET search_path = ' || quote_ident(dest_schema) ;
     action := 'Copy Rows';
-    RAISE NOTICE 'Copying rows from source tables to target tables...';
     FOREACH tblelement IN ARRAY tblarray
     LOOP 
        EXECUTE tblelement;       
