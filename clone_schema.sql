@@ -31,7 +31,7 @@
 -- 2022-06-16  MJV FIX: Fixed Issue#78 Also, since we deferred row copies until the end, we must also defer foreign key constraints to the end as well. 
 -- 2022-06-18  MJV FIX: Fixed Issue#79 Fix copying of rows in tables with user-defined column datatypes using COPY method.
 -- 2022-06-29  MJV FIX: Fixed Issue#80 Fix copying of rows reported error due to arrays not being initialized properly.
-
+-- 2022-07-15  MJV FIX: Fixed Issue#81 Fix COPY import format for handling NULLs correctly.
 -- SELECT * FROM public.get_table_ddl('sample', 'address', True);
 
 CREATE OR REPLACE FUNCTION public.get_table_ddl(
@@ -399,7 +399,7 @@ DECLARE
   v_diag5          text;
   v_diag6          text;
   v_dummy          text;
-  v_version        text := '1.7  June 29, 2022';
+  v_version        text := '1.8  July 15, 2022';
 
 BEGIN
   RAISE NOTICE 'clone_schema version %', v_version;
@@ -410,15 +410,13 @@ BEGIN
   WHERE name = 'server_version';
   SELECT version() INTO sq_version;
   
-  RAISE INFO 'version: %', sq_version;
   IF POSITION('compiled by Visual C++' IN sq_version) > 0 THEN
       bWindows = True;
-      RAISE INFO 'OpSys = Windows';
+      RAISE NOTICE 'Windows: %', sq_version;
   ELSE
       bWindows = False;
-      RAISE INFO 'OpSys = Linux';
+      RAISE NOTICE 'Linux: %', sq_version;
   END IF;
-
   SELECT setting INTO sq_server_version_num
   FROM pg_settings
   WHERE name = 'server_version_num';
@@ -998,14 +996,19 @@ BEGIN
         -- COPY sample.statuses(id, s) TO '/tmp/statuses.txt' WITH DELIMITER AS ',';
 	-- COPY sample_clone1.statuses FROM '/tmp/statuses.txt' (DELIMITER ',', NULL '');
 	IF bWindows THEN
-	    buffer2   := 'COPY ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || '  TO  ''C:\WINDOWS\TEMP\cloneschema.tmp'' WITH DELIMITER AS '','';';
+	    buffer2   := 'COPY ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' TO  ''C:\WINDOWS\TEMP\cloneschema.tmp'' WITH DELIMITER AS '','';';
 	    tblarray2 := tblarray2 || buffer2;
-	    buffer2   := 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM  ''C:\WINDOWS\TEMP\cloneschema.tmp'' (DELIMITER '','', NULL '''');';
+	    -- Issue #81 reformat COPY command for upload
+	    -- buffer2:= 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM  ''C:\WINDOWS\TEMP\cloneschema.tmp'' (DELIMITER '','', NULL '''');';
+	    buffer2   := 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM  ''C:\WINDOWS\TEMP\cloneschema.tmp'' (DELIMITER '','', NULL ''\N'', FORMAT CSV);';
 	    tblarray2 := tblarray2 || buffer2;
 	ELSE
-	    buffer2   := 'COPY ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || '  TO  ''/tmp/cloneschema.tmp'' WITH DELIMITER AS '','';';
+	    buffer2   := 'COPY ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' TO ''/tmp/cloneschema.tmp'' WITH DELIMITER AS '','';';
 	    tblarray2 := tblarray2 || buffer2;
-	    buffer2   := 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM  ''/tmp/cloneschema.tmp'' (DELIMITER '','', NULL '''');';
+	    -- Issue #81 reformat COPY command for upload
+	    -- buffer2   := 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM ''/tmp/cloneschema.tmp'' (DELIMITER '','', NULL '''');';
+	    -- works--> COPY sample.timestamptbl2  FROM '/tmp/cloneschema.tmp' WITH (DELIMITER ',', NULL '\N', FORMAT CSV) ;
+	    buffer2   := 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM ''/tmp/cloneschema.tmp'' (DELIMITER '','', NULL ''\N'', FORMAT CSV);';
 	    tblarray2 := tblarray2 || buffer2;
 	END IF;
 
