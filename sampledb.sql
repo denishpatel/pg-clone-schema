@@ -214,10 +214,10 @@ CREATE TYPE cycle_frequency AS ENUM (
     'QUARTERLY',
     'ANNUALLY'
 );
-
-
 ALTER TYPE cycle_frequency OWNER TO postgres;
 
+CREATE TYPE banner_color AS ENUM ('green','blue','lightblue','purple','red','yellow','orange','grey','pink');
+ALTER TYPE banner_color OWNER TO postgres;
 --
 -- Name: idx; Type: DOMAIN; Schema: sample; Owner: postgres
 --
@@ -454,6 +454,10 @@ SET default_with_oids = false;
 
 
 CREATE UNLOGGED TABLE myunloggedtbl (id integer PRIMARY KEY, val text NOT NULL) WITH (autovacuum_enabled = off);
+
+CREATE table timestamptbl (akey int not null, color sample.banner_color, avalue text, tmstmp timestamptz NOT NULL, tmstmp_null timestamptz NULL,  tmstmp_null2 timestamp(0) with time zone);
+INSERT INTO timestamptbl (akey, color, avalue, tmstmp, tmstmp_null, tmstmp_null2) VALUES (1,  'green', 'aaa', now(), now(), now());
+INSERT INTO timestamptbl (akey, color, avalue, tmstmp ) VALUES (2, 'red', 'bbb', now());
 
 CREATE TABLE numerics (
     id integer,
@@ -1029,6 +1033,8 @@ GRANT ALL ON TABLE foo_bar_baz TO mydb_update;
 GRANT SELECT ON TABLE foo_bar_baz_0 TO mydb_read;
 GRANT ALL ON TABLE foo_bar_baz_0 TO mydb_update;
 
+GRANT SELECT ON TABLE timestamptbl TO mydb_read;
+GRANT ALL ON TABLE timestamptbl TO mydb_update;
 
 --
 -- Name: TABLE foo_bar_baz_1; Type: ACL; Schema: sample; Owner: postgres
