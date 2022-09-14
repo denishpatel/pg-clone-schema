@@ -827,13 +827,17 @@ BEGIN
         IF data_type = 'USER-DEFINED' THEN
           -- FIXED #65, #67
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
+          SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
+          RAISE INFO 'DEBUG: v_dummy1=%', v_dummy;
           SELECT * INTO buffer3
           FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
           
           -- #82: make sure "public" is appended to current search_path
           SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
+          RAISE INFO 'DEBUG: v_dummy2=%', v_dummy;
           v_dummy = v_dummy || ',public';
+          RAISE INFO 'DEBUG: v_dummy3=%', v_dummy;
           SELECT set_config('search_path', v_dummy, true) into v_dummy;
           EXECUTE buffer3;
         ELSE
