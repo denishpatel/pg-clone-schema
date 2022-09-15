@@ -32,7 +32,7 @@
 -- 2022-06-18  MJV FIX: Fixed Issue#79 Fix copying of rows in tables with user-defined column datatypes using COPY method.
 -- 2022-06-29  MJV FIX: Fixed Issue#80 Fix copying of rows reported error due to arrays not being initialized properly.
 -- 2022-07-15  MJV FIX: Fixed Issue#81 Fix COPY import format for handling NULLs correctly.
--- 2022-09-12  MJV FIX: Fixed Issue#82 PostGIS objects should not be recreated when cloning user-defined schemas. Also fixed the case where some tables were not being created in DDL generation mode.
+-- 2022-09-15  MJV FIX: Fixed Issue#82 PostGIS objects should not be recreated when cloning user-defined schemas. Also fixed the case where some tables were not being created in DDL generation mode.
 -- SELECT * FROM public.get_table_ddl('sample', 'address', True);
 
 CREATE OR REPLACE FUNCTION public.get_table_ddl(
@@ -404,9 +404,11 @@ DECLARE
   v_diag5          text;
   v_diag6          text;
   v_dummy          text;
-  v_version        text := '1.9  September 12, 2022';
+  v_version        text := '1.9  September 15, 2022';
 
 BEGIN
+  -- Make sure NOTICE are shown
+  SET client_min_messages = 'notice';
   RAISE NOTICE 'clone_schema version %', v_version;
 
   -- Get server version info to handle certain things differently based on the version.
@@ -430,9 +432,6 @@ BEGIN
     RAISE WARNING 'Server Version:%  Number:%  PG Versions older than v10 are not supported.', sq_server_version, sq_server_version_num;
     RETURN;
   END IF;
-
-  -- Make sure NOTICE are shown
-  set client_min_messages = 'notice';
 
   -- Check that source_schema exists
   SELECT oid INTO src_oid
@@ -471,14 +470,20 @@ BEGIN
   -- In order to avoid issues with the special schema name "$user" that may be
   -- returned unquoted by some applications, we ensure it remains double quoted.
   -- MJV FIX: #47
+  SELECT setting INTO v_dummy FROM pg_settings WHERE name='search_path';
+  RAISE INFO 'DEBUG1a: search_path=%', v_dummy;
+  
   SELECT REPLACE(REPLACE(setting, '"$user"', '$user'), '$user', '"$user"') INTO src_path_old
   FROM pg_settings
   WHERE name = 'search_path';
+
+  RAISE INFO 'DEBUG1b: src_path_old=%', src_path_old;
 
   EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
   SELECT setting INTO src_path_new
   FROM pg_settings
   WHERE name='search_path';
+  RAISE INFO 'DEBUG2: new search_path=%', src_path_new;
 
   -- Validate required types exist.  If not, create them.
   SELECT a.objtypecnt, b.permtypecnt INTO cnt, cnt2
@@ -762,8 +767,9 @@ BEGIN
   cnt := 0;
   -- Issue#61 FIX: use set_config for empty string
   -- SET search_path = '';
-  SELECT set_config('search_path', '', false)
-  into v_dummy;
+  SELECT set_config('search_path', '', false) into v_dummy;
+  RAISE INFO 'DEBUG3: setting search_path to empty string...';
+  
 
   FOR tblname, relpersist, bRelispart, relknd, data_type, udt_name, ocomment, l_child  IN
     -- 2021-03-08 MJV #39 fix: change sql to get indicator of user-defined columns to issue warnings
@@ -828,16 +834,16 @@ BEGIN
           -- FIXED #65, #67
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
           SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
-          RAISE INFO 'DEBUG: v_dummy1=%', v_dummy;
+          RAISE INFO 'DEBUG4: search_path=%', v_dummy;
           SELECT * INTO buffer3
           FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
           
           -- #82: make sure "public" is appended to current search_path
           SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
-          RAISE INFO 'DEBUG: v_dummy2=%', v_dummy;
+          RAISE INFO 'DEBUG5: search_path=%', v_dummy;
           v_dummy = v_dummy || ',public';
-          RAISE INFO 'DEBUG: v_dummy3=%', v_dummy;
+          RAISE INFO 'DEBUG6: search_path=%', v_dummy;
           SELECT set_config('search_path', v_dummy, true) into v_dummy;
           EXECUTE buffer3;
         ELSE
@@ -2031,7 +2037,7 @@ BEGIN
   RAISE NOTICE '       FKEYS cloned: %', LPAD(cnt::text, 5, ' ');
 
 
-  IF src_path_old = '' THEN
+  IF src_path_old = '' OR src_path_old = '""' THEN
     -- RAISE NOTICE 'Restoring old search_path to empty string';
     SELECT set_config('search_path', '', false) into v_dummy;
   ELSE
