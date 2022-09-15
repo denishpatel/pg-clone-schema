@@ -471,19 +471,19 @@ BEGIN
   -- returned unquoted by some applications, we ensure it remains double quoted.
   -- MJV FIX: #47
   SELECT setting INTO v_dummy FROM pg_settings WHERE name='search_path';
-  RAISE INFO 'DEBUG1a: search_path=%', v_dummy;
+  IF verbose_ THEN RAISE INFO 'DEBUG1a: search_path=%', v_dummy; END IF;
   
   SELECT REPLACE(REPLACE(setting, '"$user"', '$user'), '$user', '"$user"') INTO src_path_old
   FROM pg_settings
   WHERE name = 'search_path';
 
-  RAISE INFO 'DEBUG1b: src_path_old=%', src_path_old;
+  IF verbose_ THEN RAISE INFO 'DEBUG1b: src_path_old=%', src_path_old; END IF;
 
   EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
   SELECT setting INTO src_path_new
   FROM pg_settings
   WHERE name='search_path';
-  RAISE INFO 'DEBUG2: new search_path=%', src_path_new;
+  IF verbose_ THEN RAISE INFO 'DEBUG2: new search_path=%', src_path_new; END IF;
 
   -- Validate required types exist.  If not, create them.
   SELECT a.objtypecnt, b.permtypecnt INTO cnt, cnt2
@@ -768,7 +768,7 @@ BEGIN
   -- Issue#61 FIX: use set_config for empty string
   -- SET search_path = '';
   SELECT set_config('search_path', '', false) into v_dummy;
-  RAISE INFO 'DEBUG3: setting search_path to empty string...';
+  IF verbose_ THEN RAISE INFO 'DEBUG3: setting search_path to empty string...'; END IF;
   
 
   FOR tblname, relpersist, bRelispart, relknd, data_type, udt_name, ocomment, l_child  IN
@@ -834,16 +834,16 @@ BEGIN
           -- FIXED #65, #67
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
           SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
-          RAISE INFO 'DEBUG4: search_path=%', v_dummy;
+          IF verbose_ THEN RAISE INFO 'DEBUG4: search_path=%', v_dummy; END IF;
           SELECT * INTO buffer3
           FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
           
           -- #82: make sure "public" is appended to current search_path
           SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
-          RAISE INFO 'DEBUG5: search_path=%', v_dummy;
+          IF verbose_ THEN RAISE INFO 'DEBUG5: search_path=%', v_dummy; END IF;
           v_dummy = v_dummy || ',public';
-          RAISE INFO 'DEBUG6: search_path=%', v_dummy;
+          IF verbose_ THEN RAISE INFO 'DEBUG6: search_path=%', v_dummy; END IF;
           SELECT set_config('search_path', v_dummy, true) into v_dummy;
           EXECUTE buffer3;
         ELSE
@@ -1872,7 +1872,7 @@ BEGIN
   LOOP
     BEGIN
       cnt := cnt + 1;
-      -- RAISE NOTICE 'DEBUG: ddl=%', arec.seq_ddl;
+      -- IF verbose_ THEN RAISE NOTICE 'DEBUG: ddl=%', arec.seq_ddl; END IF;
       IF ddl_only THEN
         RAISE INFO '%', arec.seq_ddl;
       ELSE
@@ -1945,7 +1945,7 @@ BEGIN
   LOOP
     BEGIN
       cnt := cnt + 1;
-      -- RAISE NOTICE 'DEBUG: ddl=%', arec.tbl_dcl;
+      -- IF verbose_ THEN RAISE NOTICE 'DEBUG: ddl=%', arec.tbl_dcl; END IF;
       -- Issue#46. Fixed reference to invalid record name (tbl_ddl --> tbl_dcl).
       IF arec.relkind = 'f' THEN
         RAISE WARNING 'Foreign tables are not currently implemented, so skipping privs for them. ddl=%', arec.tbl_dcl;
@@ -1979,9 +1979,7 @@ BEGIN
            buffer = substring(buffer,1, cnt2);       
        END IF;
        SELECT RPAD(buffer, 35, ' ') INTO buffer;
-       IF verbose_ THEN
-           RAISE NOTICE ' Populated cloned table, %   Rows Copied: %', buffer, cnt;
-       END IF;
+       IF verbose_ THEN RAISE NOTICE ' Populated cloned table, %   Rows Copied: %', buffer, cnt; END IF;
        tblscopied := tblscopied + 1;
     END LOOP;
     
@@ -1996,9 +1994,7 @@ BEGIN
            buffer = substring(tblelement, 1, cnt2);
            buffer = substring(buffer, 6);
            SELECT RPAD(buffer, 35, ' ') INTO buffer;
-           IF verbose_ THEN           
-               RAISE NOTICE ' Populated cloned table, %   Rows Copied: %', buffer, cnt;
-           END IF;
+           IF verbose_ THEN RAISE NOTICE ' Populated cloned table, %   Rows Copied: %', buffer, cnt; END IF;
            tblscopied := tblscopied + 1;
        END IF;
     END LOOP;    
@@ -2044,6 +2040,8 @@ BEGIN
     -- RAISE NOTICE 'Restoring old search_path to:%', src_path_old;
     EXECUTE 'SET search_path = ' || src_path_old;
   END IF;
+  SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
+  IF verbose_ THEN RAISE INFO 'DEBUG7: setting search_path back to what it was: %', v_dummy; END IF;
 
   EXCEPTION
      WHEN others THEN
@@ -2070,5 +2068,3 @@ END;
 $BODY$
   LANGUAGE plpgsql VOLATILE  COST 100;
 -- ALTER FUNCTION public.clone_schema(text, text, boolean, boolean, boolean) OWNER TO postgres;
-
-
