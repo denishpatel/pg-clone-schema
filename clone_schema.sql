@@ -32,7 +32,7 @@
 -- 2022-06-18  MJV FIX: Fixed Issue#79 Fix copying of rows in tables with user-defined column datatypes using COPY method.
 -- 2022-06-29  MJV FIX: Fixed Issue#80 Fix copying of rows reported error due to arrays not being initialized properly.
 -- 2022-07-15  MJV FIX: Fixed Issue#81 Fix COPY import format for handling NULLs correctly.
--- 2022-09-15  MJV FIX: Fixed Issue#82 PostGIS objects should not be recreated when cloning user-defined schemas. Also fixed the case where some tables were not being created in DDL generation mode.
+-- 2022-09-16  MJV FIX: Fixed Issue#82 Set search_path to public when creating user-defined columns in tables to handle public datatypes like PostGIS. Also fixed a bug in DDL only mode.
 -- SELECT * FROM public.get_table_ddl('sample', 'address', True);
 
 CREATE OR REPLACE FUNCTION public.get_table_ddl(
@@ -117,18 +117,15 @@ $$
     END IF;
 
     -- Issue#61 FIX: set search_path = public before we do anything to force explicit schema qualification but dont forget to set it back before exiting...
-    SELECT setting INTO v_src_path_old
-    FROM pg_settings
-    WHERE name = 'search_path';
+    SELECT setting INTO v_src_path_old FROM pg_settings WHERE name = 'search_path';
 
     SELECT REPLACE(REPLACE(setting, '"$user"', '$user'), '$user', '"$user"') INTO v_src_path_old
     FROM pg_settings
     WHERE name = 'search_path';
+    -- RAISE INFO 'DEBUG tableddl: saving old search_path: ***%***', v_src_path_old;
 
     EXECUTE 'SET search_path = "public"';
-    SELECT setting INTO v_src_path_new
-    FROM pg_settings
-    WHERE name = 'search_path';
+    SELECT setting INTO v_src_path_new FROM pg_settings WHERE name = 'search_path';
 
     -- grab the oid of the table; https://www.postgresql.org/docs/8.3/catalog-pg-class.html
     SELECT c.oid INTO v_table_oid
@@ -189,7 +186,7 @@ $$
       END IF;
     END IF;
 
-    -- RAISE NOTICE 'version=%  schema=%  parent=%  relopts=%  tablespace=%  partitioned=%  inherited=%  relispartition=%',v_pgversion, in_schema, v_parent, v_relopts, v_tablespace, bPartitioned, bInheritance, bRelispartition;
+    -- RAISE NOTICE 'version=%  schema=%  parent=%  relopts=%  tablespace=%  partitioned=%  inherited=%  relispartition=%',v_pgversion, in_schema, v_parent, v_relopts, v_tablespace, bPartitioned, bInheritance,   bRelispartition;
 
     -- start the create definition
     v_table_ddl := 'CREATE TABLE ' || in_schema || '.' || in_table || ' (' || E'\n';
@@ -309,6 +306,7 @@ $$
     ELSE
       EXECUTE 'SET search_path = ' || v_src_path_old;
     END IF;
+    -- RAISE INFO 'DEBUG tableddl: reset search_path back to ***%***', v_src_path_old;
 
     -- return the ddl
     RETURN v_table_ddl;
@@ -404,7 +402,7 @@ DECLARE
   v_diag5          text;
   v_diag6          text;
   v_dummy          text;
-  v_version        text := '1.9  September 15, 2022';
+  v_version        text := '1.9  September 16, 2022';
 
 BEGIN
   -- Make sure NOTICE are shown
@@ -471,17 +469,16 @@ BEGIN
   -- returned unquoted by some applications, we ensure it remains double quoted.
   -- MJV FIX: #47
   SELECT setting INTO v_dummy FROM pg_settings WHERE name='search_path';
-  IF verbose_ THEN RAISE INFO 'DEBUG1a: search_path=%', v_dummy; END IF;
+  IF verbose_ THEN RAISE INFO 'DEBUG: search_path=%', v_dummy; END IF;
   
   SELECT REPLACE(REPLACE(setting, '"$user"', '$user'), '$user', '"$user"') INTO src_path_old
-  FROM pg_settings
-  WHERE name = 'search_path';
+  FROM pg_settings WHERE name = 'search_path';
 
-  IF verbose_ THEN RAISE INFO 'DEBUG1b: src_path_old=%', src_path_old; END IF;
+  IF verbose_ THEN RAISE INFO 'DEBUG: src_path_old=%', src_path_old; END IF;
 
   EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
   SELECT setting INTO src_path_new FROM pg_settings WHERE name='search_path';
-  IF verbose_ THEN RAISE INFO 'DEBUG02: new search_path=%', src_path_new; END IF;
+  IF verbose_ THEN RAISE INFO 'DEBUG: new search_path=%', src_path_new; END IF;
 
   -- Validate required types exist.  If not, create them.
   SELECT a.objtypecnt, b.permtypecnt INTO cnt, cnt2
@@ -550,9 +547,6 @@ BEGIN
 
   -- MV: Create Collations
   action := 'Collations';
-  SELECT setting INTO v_dummy FROM pg_settings WHERE name='search_path';
-  IF verbose_ THEN RAISE INFO 'DEBUG03: search_path=%', v_dummy; END IF;
-  
   cnt := 0;
   IF sq_server_version_num < 100000 THEN
     RAISE NOTICE ' Collation cloning is are not supported in PG versions older than v10.  Current version is %-%', sq_server_version, sq_server_version_num;
@@ -585,9 +579,6 @@ BEGIN
 
   -- MV: Create Domains
   action := 'Domains';
-  SELECT setting INTO v_dummy FROM pg_settings WHERE name='search_path';
-  IF verbose_ THEN RAISE INFO 'DEBUG04: search_path=%', v_dummy; END IF;
-  
   cnt := 0;
   FOR arec IN
     SELECT n.nspname AS "Schema", t.typname AS "Name", pg_catalog.format_type(t.typbasetype, t.typtypmod) AS "Type", (
@@ -634,9 +625,6 @@ BEGIN
 
   -- MV: Create types
   action := 'Types';
-  SELECT setting INTO v_dummy FROM pg_settings WHERE name='search_path';
-  IF verbose_ THEN RAISE INFO 'DEBUG05: search_path=%', v_dummy; END IF;
-  
   cnt := 0;
   FOR arec IN
     SELECT c.relkind, n.nspname AS schemaname, t.typname AS typname, t.typcategory, CASE WHEN t.typcategory = 'C' THEN
@@ -684,9 +672,6 @@ BEGIN
 
   -- Create sequences
   action := 'Sequences';
-  SELECT setting INTO v_dummy FROM pg_settings WHERE name='search_path';
-  IF verbose_ THEN RAISE INFO 'DEBUG06: search_path=%', v_dummy; END IF;
-  
   cnt := 0;
   -- fix#63  get from pg_sequences not information_schema
   -- fix#63  take 2: get it from information_schema.sequences since we need to treat IDENTITY columns differently.
@@ -775,14 +760,13 @@ BEGIN
   -- Create tables including partitioned ones (parent/children) and unlogged ones.  Order by is critical since child partition range logic is dependent on it.
   action := 'Tables';
   SELECT setting INTO v_dummy FROM pg_settings WHERE name='search_path';
-  IF verbose_ THEN RAISE INFO 'DEBUG07: search_path=%', v_dummy; END IF;
+  IF verbose_ THEN RAISE INFO 'DEBUG: search_path=%', v_dummy; END IF;
   
   cnt := 0;
   -- Issue#61 FIX: use set_config for empty string
   -- SET search_path = '';
   SELECT set_config('search_path', '', false) into v_dummy;
-  IF verbose_ THEN RAISE INFO 'DEBUG08: setting search_path to empty string...'; END IF;
-  
+  IF verbose_ THEN RAISE INFO 'DEBUG: setting search_path to empty string:%', v_dummy; END IF;
 
   FOR tblname, relpersist, bRelispart, relknd, data_type, udt_name, ocomment, l_child  IN
     -- 2021-03-08 MJV #39 fix: change sql to get indicator of user-defined columns to issue warnings
@@ -824,8 +808,6 @@ BEGIN
           -- FIXED #65, #67
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
           SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
-          SELECT setting INTO v_dummy FROM pg_settings WHERE name='search_path';
-          IF verbose_ THEN RAISE INFO 'DEBUG09: search_path=%', v_dummy; END IF;
 
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
           RAISE INFO '%', buffer3;
@@ -836,8 +818,6 @@ BEGIN
             -- FIXED #65, #67
             -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
             SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
-            SELECT setting INTO v_dummy FROM pg_settings WHERE name='search_path';
-            IF verbose_ THEN RAISE INFO 'DEBUG10: search_path=%', v_dummy; END IF;
 
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
             RAISE INFO '%', buffer3;
@@ -848,18 +828,14 @@ BEGIN
         IF data_type = 'USER-DEFINED' THEN
           -- FIXED #65, #67
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
-          SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
-          IF verbose_ THEN RAISE INFO 'DEBUG11: search_path=%', v_dummy; END IF;
           SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
-          SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
-          IF verbose_ THEN RAISE INFO 'DEBUG12: search_path=%', v_dummy; END IF;
 
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
           
-          -- #82: make sure "public" is appended to current search_path
-          v_dummy = v_dummy || ',public';
-          IF verbose_ THEN RAISE INFO 'DEBUG13: search_path=%', v_dummy; END IF;
-          SELECT set_config('search_path', v_dummy, true) into v_dummy;
+          -- #82: Table def should be fully qualified with target schema, 
+          --      so just make search path = public to handle extension types that should reside in public schema
+          v_dummy = 'public';
+          SELECT set_config('search_path', v_dummy, false) into v_dummy;
           EXECUTE buffer3;
         ELSE
           IF NOT bChild OR bRelispart THEN
@@ -868,12 +844,7 @@ BEGIN
           ELSE
             -- FIXED #65, #67
             -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
-            SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
-            IF verbose_ THEN RAISE INFO 'DEBUG14: search_path=%', v_dummy; END IF;
-
             SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
-            SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
-            IF verbose_ THEN RAISE INFO 'DEBUG15: search_path=%', v_dummy; END IF;
 
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
             -- set client_min_messages higher to avoid messages like this:
@@ -961,7 +932,8 @@ BEGIN
         SELECT quote_ident(dest_schema) || '.' || c1.relname as tablename, pg_catalog.pg_get_expr(c1.relpartbound, c1.oid) as partrange, quote_ident(dest_schema) || '.' || c2.relname as object
         FROM pg_catalog.pg_class c1, pg_namespace n, pg_catalog.pg_inherits i, pg_class c2
         WHERE n.nspname = quote_ident(source_schema) AND c1.relnamespace = n.oid AND c1.relkind = 'r' AND
-        c1.relispartition AND c1.oid=i.inhrelid AND i.inhparent = c2.oid AND c2.relnamespace = n.oid ORDER BY pg_catalog.pg_get_expr(c1.relpartbound, c1.oid) = 'DEFAULT', c1.oid::pg_catalog.regclass::pg_catalog.text
+        c1.relispartition AND c1.oid=i.inhrelid AND i.inhparent = c2.oid AND c2.relnamespace = n.oid ORDER BY pg_catalog.pg_get_expr(c1.relpartbound, c1.oid) = 'DEFAULT',
+        c1.oid::pg_catalog.regclass::pg_catalog.text
       LOOP
         qry := 'ALTER TABLE ONLY ' || object || ' ATTACH PARTITION ' || aname || ' ' || part_range || ';';
         IF ddl_only THEN
@@ -1033,24 +1005,23 @@ BEGIN
 
         -- Issue#79 implementation follows        
         -- COPY sample.statuses(id, s) TO '/tmp/statuses.txt' WITH DELIMITER AS ',';
-	-- COPY sample_clone1.statuses FROM '/tmp/statuses.txt' (DELIMITER ',', NULL '');
-	IF bWindows THEN
-	    buffer2   := 'COPY ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' TO  ''C:\WINDOWS\TEMP\cloneschema.tmp'' WITH DELIMITER AS '','';';
-	    tblarray2 := tblarray2 || buffer2;
-	    -- Issue #81 reformat COPY command for upload
-	    -- buffer2:= 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM  ''C:\WINDOWS\TEMP\cloneschema.tmp'' (DELIMITER '','', NULL '''');';
-	    buffer2   := 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM  ''C:\WINDOWS\TEMP\cloneschema.tmp'' (DELIMITER '','', NULL ''\N'', FORMAT CSV);';
-	    tblarray2 := tblarray2 || buffer2;
-	ELSE
-	    buffer2   := 'COPY ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' TO ''/tmp/cloneschema.tmp'' WITH DELIMITER AS '','';';
-	    tblarray2 := tblarray2 || buffer2;
-	    -- Issue #81 reformat COPY command for upload
-	    -- buffer2   := 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM ''/tmp/cloneschema.tmp'' (DELIMITER '','', NULL '''');';
-	    -- works--> COPY sample.timestamptbl2  FROM '/tmp/cloneschema.tmp' WITH (DELIMITER ',', NULL '\N', FORMAT CSV) ;
-	    buffer2   := 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM ''/tmp/cloneschema.tmp'' (DELIMITER '','', NULL ''\N'', FORMAT CSV);';
-	    tblarray2 := tblarray2 || buffer2;
-	END IF;
-
+	    -- COPY sample_clone1.statuses FROM '/tmp/statuses.txt' (DELIMITER ',', NULL '');
+	    IF bWindows THEN
+	        buffer2   := 'COPY ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' TO  ''C:\WINDOWS\TEMP\cloneschema.tmp'' WITH DELIMITER AS '','';';
+	        tblarray2 := tblarray2 || buffer2;
+	        -- Issue #81 reformat COPY command for upload
+	        -- buffer2:= 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM  ''C:\WINDOWS\TEMP\cloneschema.tmp'' (DELIMITER '','', NULL '''');';
+	        buffer2   := 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM  ''C:\WINDOWS\TEMP\cloneschema.tmp'' (DELIMITER '','', NULL ''\N'', FORMAT CSV);';
+	        tblarray2 := tblarray2 || buffer2;
+   	    ELSE
+	        buffer2   := 'COPY ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' TO ''/tmp/cloneschema.tmp'' WITH DELIMITER AS '','';';
+	        tblarray2 := tblarray2 || buffer2;
+	        -- Issue #81 reformat COPY command for upload
+	        -- buffer2   := 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM ''/tmp/cloneschema.tmp'' (DELIMITER '','', NULL '''');';
+	        -- works--> COPY sample.timestamptbl2  FROM '/tmp/cloneschema.tmp' WITH (DELIMITER ',', NULL '\N', FORMAT CSV) ;
+	        buffer2   := 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM ''/tmp/cloneschema.tmp'' (DELIMITER '','', NULL ''\N'', FORMAT CSV);';
+	        tblarray2 := tblarray2 || buffer2;
+	    END IF;
       ELSE
         -- bypass child tables since we populate them when we populate the parents
         -- RAISE NOTICE 'tblname=%  bRelispart=%  relknd=%  l_child=%  bChild=%', tblname, bRelispart, relknd, l_child, bChild;
@@ -1060,7 +1031,6 @@ BEGIN
           buffer2 := 'INSERT INTO ' || buffer || buffer3 || ' SELECT * FROM ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ';';
           tblarray := tblarray || buffer2;
         END IF;
-
       END IF;
     END IF;
 
@@ -1085,13 +1055,14 @@ BEGIN
         EXECUTE buffer2;
       END IF;
     END LOOP;
+    
     EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
 
   END LOOP;
   RAISE NOTICE '      TABLES cloned: %', LPAD(cnt::text, 5, ' ');
 
   SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
-  IF verbose_ THEN RAISE INFO 'DEBUG16: search_path=%', v_dummy; END IF;
+  IF verbose_ THEN RAISE INFO 'DEBUG: search_path=%', v_dummy; END IF;
 
   -- Assigning sequences to table columns.
   action := 'Sequences assigning';
@@ -2063,7 +2034,7 @@ BEGIN
     EXECUTE 'SET search_path = ' || src_path_old;
   END IF;
   SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
-  IF verbose_ THEN RAISE INFO 'DEBUG17: setting search_path back to what it was: %', v_dummy; END IF;
+  IF verbose_ THEN RAISE INFO 'DEBUG: setting search_path back to what it was: %', v_dummy; END IF;
 
   EXCEPTION
      WHEN others THEN
