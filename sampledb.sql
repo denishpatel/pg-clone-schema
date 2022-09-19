@@ -893,6 +893,9 @@ ALTER TABLE ONLY person
 ALTER TABLE ONLY test
     ADD CONSTRAINT test_pkey PRIMARY KEY (major);
 
+CREATE TABLE tablewithindexes(akey int, anum int, avalue text, 
+                              CONSTRAINT pk_akey_anum PRIMARY KEY (akey,anum), 
+                              CONSTRAINT uix_akey_anum UNIQUE (akey,anum));
 
 --
 -- Name: idx_x; Type: INDEX; Schema: sample; Owner: postgres
