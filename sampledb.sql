@@ -73,6 +73,7 @@ GRANT mydb_update TO mydb_owner GRANTED BY postgres;
 
 -- end of global stuff
 
+CREATE EXTENSION IF NOT EXISTS postgis WITH SCHEMA public;
 CREATE EXTENSION IF NOT EXISTS postgres_fdw WITH SCHEMA public;
 COMMENT ON EXTENSION postgres_fdw IS 'foreign-data wrapper for remote PostgreSQL servers';
 
@@ -893,9 +894,6 @@ ALTER TABLE ONLY person
 ALTER TABLE ONLY test
     ADD CONSTRAINT test_pkey PRIMARY KEY (major);
 
-CREATE TABLE tablewithindexes(akey int, anum int, avalue text, 
-                              CONSTRAINT pk_akey_anum PRIMARY KEY (akey,anum), 
-                              CONSTRAINT uix_akey_anum UNIQUE (akey,anum));
 
 --
 -- Name: idx_x; Type: INDEX; Schema: sample; Owner: postgres
@@ -903,6 +901,32 @@ CREATE TABLE tablewithindexes(akey int, anum int, avalue text,
 
 CREATE INDEX idx_x ON sampletable USING btree (x);
 COMMENT ON INDEX idx_x IS 'just another btree index';
+
+
+CREATE TABLE tablewithindexes(akey int, anum int, avalue text, 
+                              CONSTRAINT pk_akey_anum PRIMARY KEY (akey,anum), 
+                              CONSTRAINT uix_akey_anum UNIQUE (akey,anum));
+
+CREATE TABLE t_site (
+site_key integer NOT NULL,
+initial_trip character varying(7) NOT NULL,
+stn_code character varying(6) NULL,
+area character varying(4) NULL,
+stratum character varying(4) NULL,
+lat integer NULL,
+nors character varying(1) NULL,
+long integer NULL,
+eorw character varying(1) NULL,
+site_type character varying(8) NULL,
+dlat numeric(7,5) NULL,
+dlon numeric(8,5) NULL,
+position geometry NULL,
+CONSTRAINT pk_t_site PRIMARY KEY (site_key),
+CONSTRAINT ui_t_site UNIQUE (initial_trip, stn_code),
+CONSTRAINT enforce_dims_geom CHECK ((st_ndims("position") = 2)),
+CONSTRAINT enforce_geotype_geom CHECK (((geometrytype("position") = 'POINT'::text) OR ("position" IS NULL))),
+CONSTRAINT enforce_srid_geom CHECK ((st_srid("position") = 4326))
+) TABLESPACE pg_default;
 
 
 --
