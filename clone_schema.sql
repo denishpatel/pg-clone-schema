@@ -33,6 +33,7 @@
 -- 2022-06-29  MJV FIX: Fixed Issue#80 Fix copying of rows reported error due to arrays not being initialized properly.
 -- 2022-07-15  MJV FIX: Fixed Issue#81 Fix COPY import format for handling NULLs correctly.
 -- 2022-09-16  MJV FIX: Fixed Issue#82 Set search_path to public when creating user-defined columns in tables to handle public datatypes like PostGIS. Also fixed a bug in DDL only mode.
+-- 2022-09-19  MJV FIX: Fixed Issue#83 Tables with CONSTRAINT DEFs are duplicated as CREATE INDEX statements. Removed CREATE INDEX statements if already defined as CONSTRAINTS.
 -- SELECT * FROM public.get_table_ddl('sample', 'address', True);
 
 CREATE OR REPLACE FUNCTION public.get_table_ddl(
@@ -70,6 +71,9 @@ $$
     bPartitioned bool := False;
     bInheritance bool := False;
     bRelispartition bool;
+    constraintarr text[] := '{}';
+    constraintelement text;
+    bSkip boolean;
 
   BEGIN
     SELECT c.oid, (
@@ -235,6 +239,7 @@ $$
       ORDER BY type_rank
 
     LOOP
+      constraintarr := constraintarr || v_constraintrec.constraint_name;
       IF v_constraintrec.type_rank = 1 THEN
           v_primary := True;
           v_constraint_name := v_constraintrec.constraint_name;
@@ -292,9 +297,16 @@ $$
       FROM pg_indexes
       WHERE (schemaname, tablename) = (in_schema, in_table)
     LOOP
-      IF v_indexrec.indexname = v_constraint_name THEN
-          continue;
-      END IF;
+      -- Issue#83 fix: loop through constraints and skip ones already defined
+      bSkip = False;
+      FOREACH constraintelement IN ARRAY constraintarr
+      LOOP 
+         IF constraintelement = v_indexrec.indexname THEN
+             bSkip = True;
+             EXIT;
+         END IF;
+      END LOOP;   
+      if bSkip THEN CONTINUE; END IF;
       v_table_ddl := v_table_ddl
         || v_indexrec.indexdef
         || ';' || E'\n';
