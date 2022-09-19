@@ -818,12 +818,10 @@ BEGIN
             -- FIXED #65, #67
             -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
             SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
-
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
             RAISE INFO '%', buffer3;
           END IF;
         END IF;
-
       ELSE
         IF data_type = 'USER-DEFINED' THEN
           -- FIXED #65, #67
@@ -831,7 +829,7 @@ BEGIN
           SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
 
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
-          
+          IF verbose_ THEN RAISE INFO 'DEBUG: tabledef01:%', buffer3; END IF;
           -- #82: Table def should be fully qualified with target schema, 
           --      so just make search path = public to handle extension types that should reside in public schema
           v_dummy = 'public';
@@ -840,6 +838,7 @@ BEGIN
         ELSE
           IF NOT bChild OR bRelispart THEN
             buffer3 := 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
+            IF verbose_ THEN RAISE INFO 'DEBUG: tabledef02:%', buffer3; END IF;
             EXECUTE buffer3;
           ELSE
             -- FIXED #65, #67
@@ -850,6 +849,7 @@ BEGIN
             -- set client_min_messages higher to avoid messages like this:
             -- NOTICE:  merging column "city_id" with inherited definition
             set client_min_messages = 'WARNING';
+            IF verbose_ THEN RAISE INFO 'DEBUG: tabledef03:%', buffer3; END IF;
             EXECUTE buffer3;
             -- reset it back, only get these for inheritance-based tables
             set client_min_messages = 'notice';
@@ -925,6 +925,7 @@ BEGIN
       IF ddl_only THEN
         RAISE INFO '%', qry;
       ELSE
+        IF verbose_ THEN RAISE INFO 'DEBUG: tabledef04:%', buffer3; END IF;
         EXECUTE qry;
       END IF;
       -- loop for child tables and alter them to attach to parent for specific partition method.
