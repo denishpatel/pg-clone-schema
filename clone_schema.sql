@@ -405,7 +405,7 @@ DECLARE
   v_diag5          text;
   v_diag6          text;
   v_dummy          text;
-  v_version        text := '1.9  September 16, 2022';
+  v_version        text := '1.10  September 27, 2022';
 
 BEGIN
   -- Make sure NOTICE are shown
