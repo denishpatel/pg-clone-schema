@@ -34,6 +34,7 @@
 -- 2022-07-15  MJV FIX: Fixed Issue#81 Fix COPY import format for handling NULLs correctly.
 -- 2022-09-16  MJV FIX: Fixed Issue#82 Set search_path to public when creating user-defined columns in tables to handle public datatypes like PostGIS. Also fixed a bug in DDL only mode.
 -- 2022-09-19  MJV FIX: Fixed Issue#83 Tables with CONSTRAINT DEFs are duplicated as CREATE INDEX statements. Removed CREATE INDEX statements if already defined as CONSTRAINTS.
+-- 2022-09-27  MJV FIX: Fixed Issue#85 v13 postgres needs stricter type casting than v14
 -- SELECT * FROM public.get_table_ddl('sample', 'address', True);
 
 CREATE OR REPLACE FUNCTION public.get_table_ddl(
@@ -85,7 +86,6 @@ $$
     WHERE c.relkind IN ('r', 'p')
         AND c.relname = in_table
         AND n.nspname = in_schema;
-
     IF (v_table_oid IS NULL) THEN
       RAISE EXCEPTION 'table does not exist';
     END IF;
@@ -96,13 +96,11 @@ $$
     WHERE schemaname = in_schema
         AND tablename = in_table
         AND TABLESPACE IS NOT NULL;
-
     IF v_tablespace IS NULL THEN
       v_tablespace := 'TABLESPACE pg_default';
     ELSE
       v_tablespace := 'TABLESPACE ' || v_temp;
     END IF;
-
     -- also see if there are any SET commands for this table, ie, autovacuum_enabled=off, fillfactor=70
     WITH relopts AS (
         SELECT unnest(c.reloptions) relopts
@@ -113,7 +111,6 @@ $$
     )
     SELECT string_agg(r.relopts, ', ') AS relopts INTO v_temp
     FROM relopts r;
-
     IF v_temp IS NULL THEN
       v_relopts := '';
     ELSE
@@ -127,7 +124,6 @@ $$
     FROM pg_settings
     WHERE name = 'search_path';
     -- RAISE INFO 'DEBUG tableddl: saving old search_path: ***%***', v_src_path_old;
-
     EXECUTE 'SET search_path = "public"';
     SELECT setting INTO v_src_path_new FROM pg_settings WHERE name = 'search_path';
 
@@ -155,7 +151,6 @@ $$
       END IF;
       bPartitioned := True;
     END IF;
-
     IF v_pgversion < 100000 THEN
       SELECT c2.relname parent INTO v_parent
       FROM pg_class c1, pg_namespace n, pg_inherits i, pg_class c2
@@ -189,7 +184,6 @@ $$
         END IF;
       END IF;
     END IF;
-
     -- RAISE NOTICE 'version=%  schema=%  parent=%  relopts=%  tablespace=%  partitioned=%  inherited=%  relispartition=%',v_pgversion, in_schema, v_parent, v_relopts, v_tablespace, bPartitioned, bInheritance,   bRelispartition;
 
     -- start the create definition
@@ -217,7 +211,6 @@ $$
         || CASE WHEN v_colrec.column_default IS NOT null THEN (' DEFAULT ' || v_colrec.column_default) ELSE '' END
         || ',' || E'\n';
     END LOOP;
-
     -- define all the constraints in the; https://www.postgresql.org/docs/9.1/catalog-pg-constraint.html && https://dba.stackexchange.com/a/214877/75296
     FOR v_constraintrec IN
       SELECT
@@ -239,7 +232,9 @@ $$
       ORDER BY type_rank
 
     LOOP
-      constraintarr := constraintarr || v_constraintrec.constraint_name;
+      -- Issue#85 fix
+      -- constraintarr := constraintarr || v_constraintrec.constraint_name;
+      constraintarr := constraintarr || v_constraintrec.constraint_name::text;
       IF v_constraintrec.type_rank = 1 THEN
           v_primary := True;
           v_constraint_name := v_constraintrec.constraint_name;
@@ -253,10 +248,8 @@ $$
         || v_constraintrec.constraint_definition
         || ',' || E'\n';
     END LOOP;
-
     -- drop the last comma before ending the create statement
     v_table_ddl = substr(v_table_ddl, 0, length(v_table_ddl) - 1) || E'\n';
-
     -- end the create table def but add inherits clause if valid
     IF bPartitioned and bInheritance THEN
       v_table_ddl := v_table_ddl || ') INHERITS (' || in_schema || '.' || v_parent || ') ' || v_relopts || ' ' || v_tablespace || ';' || E'\n';
@@ -271,7 +264,6 @@ $$
           AND c1.relname = in_table
           AND c1.relkind = 'p';
     END IF;
-
     IF v_partition_key IS NOT NULL AND v_partition_key <> '' THEN
       -- add partition clause
       -- NOTE:  cannot specify default tablespace for partitioned relations
@@ -290,7 +282,6 @@ $$
     ELSE
       v_table_ddl := v_table_ddl || ') ' || v_tablespace || ';' || E'\n';
     END IF;
-
     -- suffix create statement with all of the indexes on the table
     FOR v_indexrec IN
       SELECT indexdef, indexname
@@ -839,7 +830,6 @@ BEGIN
           -- FIXED #65, #67
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
           SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
-
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
           IF verbose_ THEN RAISE INFO 'DEBUG: tabledef01:%', buffer3; END IF;
           -- #82: Table def should be fully qualified with target schema, 
