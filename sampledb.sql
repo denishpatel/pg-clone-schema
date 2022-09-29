@@ -1301,6 +1301,19 @@ INSERT INTO geometries VALUES
 
 -- SELECT name, ST_AsText(geom) FROM geometries;
  
+
+CREATE TABLE Students (
+  Id INTEGER PRIMARY KEY,
+  FirstName VARCHAR(50),
+  LastName VARCHAR(50),
+  FullName VARCHAR(101) GENERATED ALWAYS AS (FirstName || ' ' || LastName) STORED
+); 
+INSERT INTO Students (Id, FirstName, LastName) VALUES (0001, 'Lucy', 'Green');
+INSERT INTO Students (Id, FirstName, LastName) VALUES (0002, 'Aziz', 'Ahmad');
+INSERT INTO Students (Id, FirstName, LastName) VALUES (0003, 'Zohan', 'Ahuja');
+INSERT INTO Students (Id, FirstName, LastName) VALUES (0004, 'Homer', 'Presley');
+INSERT INTO Students (Id, FirstName, LastName) VALUES (0005, 'Sally', 'Smith');
+
                                                                                                                             
 --
 -- End Sample database
