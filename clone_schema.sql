@@ -24,7 +24,7 @@
 -- 2022-05-01  MJV FIX: Fixed Issue#53 Applied coding style fixes, using pgFormatter as basis for SQL.
 -- 2022-05-02  MJV FIX: Fixed Issue#72 Remove original schema references from materialized view definition
 -- 2022-05-14  MJV FIX: Fixed Issue#73 Fix dependency order for views depending on other views. Also removed duplicate comment logic for views.
--- 2022-06-12  MJV FIX: Fixed Issue#74 Change comments ddl from source_schema to dest_schema. Policies fix using quote_literal(d.description) instead of hard-coded ticks and escape ticks.
+-- 2022-06-12  MJV FIX: Fixed Issue#74 Change comments ddl from source_scshema to dest_schema. Policies fix using quote_literal(d.description) instead of hard-coded ticks and escape ticks.
 -- 2022-06-13  MJV FIX: Fixed Issue#75 Rows were not being copied correctly for parents.  Needed to move copy rows logic to end, after all DDL is done.
 -- 2022-06-15  MJV FIX: Fixed Issue#76 RLS is not being enabled for cloned tables.  Enable it right after the policy for the table is created
 -- 2022-06-16  MJV FIX: Fixed Issue#78 Fix case-sensitive object names by using quote_ident() all over the place. Also added restriction to not allow case-sensitive target schemas.
@@ -35,6 +35,8 @@
 -- 2022-09-16  MJV FIX: Fixed Issue#82 Set search_path to public when creating user-defined columns in tables to handle public datatypes like PostGIS. Also fixed a bug in DDL only mode.
 -- 2022-09-19  MJV FIX: Fixed Issue#83 Tables with CONSTRAINT DEFs are duplicated as CREATE INDEX statements. Removed CREATE INDEX statements if already defined as CONSTRAINTS.
 -- 2022-09-27  MJV FIX: Fixed Issue#85 v13 postgres needs stricter type casting than v14
+-- 2022-09-29  MJV FIX: Fixed Issue#86 v12+ handle generated columns by not trying to insert rows into them
+-- 2022-09-29  MJV FIX: Fixed Issue#87 v10 requires double quotes around collation name, 11+ doesnt care
 -- SELECT * FROM public.get_table_ddl('sample', 'address', True);
 
 CREATE OR REPLACE FUNCTION public.get_table_ddl(
@@ -253,7 +255,7 @@ $$
     -- end the create table def but add inherits clause if valid
     IF bPartitioned and bInheritance THEN
       v_table_ddl := v_table_ddl || ') INHERITS (' || in_schema || '.' || v_parent || ') ' || v_relopts || ' ' || v_tablespace || ';' || E'\n';
-    ELSEIF v_pgversion >= 100000 AND bPartitioned and NOT bInheritance THEN
+    ELSIF v_pgversion >= 100000 AND bPartitioned and NOT bInheritance THEN
       -- See if this is a partitioned table (pg_class.relkind = 'p') and add the partitioned key
       SELECT pg_get_partkeydef (c1.oid) AS partition_key INTO v_partition_key
       FROM pg_class c1
@@ -268,16 +270,16 @@ $$
       -- add partition clause
       -- NOTE:  cannot specify default tablespace for partitioned relations
       v_table_ddl := v_table_ddl || ') PARTITION BY ' || v_partition_key || ';' || E'\n';
-    ELSEIF bPartitioned AND not bInheritance THEN
+    ELSIF bPartitioned AND not bInheritance THEN
       IF v_relopts <> '' THEN
         v_table_ddl := 'CREATE TABLE ' || in_schema || '.' || in_table || ' PARTITION OF ' || in_schema || '.' || v_parent || ' ' || v_partbound || v_relopts || ' ' || v_tablespace || '; ' || E'\n';
       ELSE
         v_table_ddl := 'CREATE TABLE ' || in_schema || '.' || in_table || ' PARTITION OF ' || in_schema || '.' || v_parent || ' ' || v_partbound || ' ' || v_tablespace || '; ' || E'\n';
       END IF;
-    ELSEIF bPartitioned and bInheritance THEN
+    ELSIF bPartitioned and bInheritance THEN
       -- we already did this above
       v_table_ddl := v_table_ddl;
-    ELSEIF v_relopts <> '' THEN
+    ELSIF v_relopts <> '' THEN
       v_table_ddl := v_table_ddl || ') ' || v_relopts || ' ' || v_tablespace || ';' || E'\n';
     ELSE
       v_table_ddl := v_table_ddl || ') ' || v_tablespace || ';' || E'\n';
@@ -405,7 +407,11 @@ DECLARE
   v_diag5          text;
   v_diag6          text;
   v_dummy          text;
-  v_version        text := '1.10  September 27, 2022';
+  
+  -- issue#86 fix
+  isGenerated      text;
+  
+  v_version        text := '1.11  September 29, 2022';
 
 BEGIN
   -- Make sure NOTICE are shown
@@ -660,7 +666,7 @@ BEGIN
         ELSE
           EXECUTE arec.type_ddl;
         END IF;
-      ELSEIF arec.typcategory = 'C' THEN
+      ELSIF arec.typcategory = 'C' THEN
         IF ddl_only THEN
           RAISE INFO '%', arec.type_ddl;
         ELSE
@@ -770,21 +776,23 @@ BEGIN
   -- SET search_path = '';
   SELECT set_config('search_path', '', false) into v_dummy;
   IF verbose_ THEN RAISE INFO 'DEBUG: setting search_path to empty string:%', v_dummy; END IF;
-
-  FOR tblname, relpersist, bRelispart, relknd, data_type, udt_name, ocomment, l_child  IN
+  --Fix#86 add isgenerated to column list
+  FOR tblname, relpersist, bRelispart, relknd, data_type, udt_name, ocomment, l_child, isGenerated  IN
     -- 2021-03-08 MJV #39 fix: change sql to get indicator of user-defined columns to issue warnings
     -- select c.relname, c.relpersistence, c.relispartition, c.relkind
     -- FROM pg_class c, pg_namespace n where n.oid = c.relnamespace and n.nspname = quote_ident(source_schema) and c.relkind in ('r','p') and
     -- order by c.relkind desc, c.relname
     --Fix#65 add another left join to distinguish child tables by inheritance
-    SELECT DISTINCT c.relname, c.relpersistence, c.relispartition, c.relkind, co.data_type, co.udt_name, obj_description(c.oid), i.inhrelid
+    -- Fix#86 add is_generated to column select
+    SELECT DISTINCT c.relname, c.relpersistence, c.relispartition, c.relkind, co.data_type, co.udt_name, obj_description(c.oid), i.inhrelid, COALESCE(co.is_generated, '')
     FROM pg_class c
         JOIN pg_namespace n ON (n.oid = c.relnamespace
                 AND n.nspname = quote_ident(source_schema)
                 AND c.relkind IN ('r', 'p'))
         LEFT JOIN information_schema.columns co ON (co.table_schema = n.nspname
                 AND co.table_name = c.relname
-                AND co.data_type = 'USER-DEFINED')
+                -- AND co.data_type = 'USER-DEFINED')
+                AND (co.data_type = 'USER-DEFINED' OR co.is_generated = 'ALWAYS'))
         LEFT JOIN pg_inherits i ON (c.oid = i.inhrelid)
     ORDER BY c.relkind DESC, c.relname
   LOOP
@@ -838,7 +846,7 @@ BEGIN
           SELECT set_config('search_path', v_dummy, false) into v_dummy;
           EXECUTE buffer3;
         ELSE
-          IF NOT bChild OR bRelispart THEN
+          IF (NOT bChild OR bRelispart) THEN
             buffer3 := 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
             IF verbose_ THEN RAISE INFO 'DEBUG: tabledef02:%', buffer3; END IF;
             EXECUTE buffer3;
@@ -1002,35 +1010,39 @@ BEGIN
       -- BUG for inserting rows from tables with user-defined columns
       -- INSERT INTO sample_clone.address OVERRIDING SYSTEM VALUE SELECT * FROM sample.address;
       -- ERROR:  column "id2" is of type sample_clone.udt_myint but expression is of type udt_myint
-      IF data_type = 'USER-DEFINED' THEN
+      
+      -- Issue#86 fix:
+      -- IF data_type = 'USER-DEFINED' THEN
+      IF verbose_ THEN RAISE INFO 'DEBUG includerecs branch  table=%  data_type=%  isgenerated=%', tblname, data_type, isGenerated; END IF;
+      IF data_type = 'USER-DEFINED' OR isGenerated = 'ALWAYS' THEN
+
         -- RAISE WARNING 'Bypassing copying rows for table (%) with user-defined data types.  You must copy them manually.', tblname;
         -- wont work --> INSERT INTO sample_clone1.address (id2, id3, addr) SELECT cast(id2 as sample_clone1.udt_myint), cast(id3 as sample_clone1.udt_myint), addr FROM sample.address;
 
         -- Issue#79 implementation follows        
         -- COPY sample.statuses(id, s) TO '/tmp/statuses.txt' WITH DELIMITER AS ',';
-	    -- COPY sample_clone1.statuses FROM '/tmp/statuses.txt' (DELIMITER ',', NULL '');
-	    IF bWindows THEN
-	        buffer2   := 'COPY ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' TO  ''C:\WINDOWS\TEMP\cloneschema.tmp'' WITH DELIMITER AS '','';';
-	        tblarray2 := tblarray2 || buffer2;
-	        -- Issue #81 reformat COPY command for upload
-	        -- buffer2:= 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM  ''C:\WINDOWS\TEMP\cloneschema.tmp'' (DELIMITER '','', NULL '''');';
-	        buffer2   := 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM  ''C:\WINDOWS\TEMP\cloneschema.tmp'' (DELIMITER '','', NULL ''\N'', FORMAT CSV);';
-	        tblarray2 := tblarray2 || buffer2;
-   	    ELSE
-	        buffer2   := 'COPY ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' TO ''/tmp/cloneschema.tmp'' WITH DELIMITER AS '','';';
-	        tblarray2 := tblarray2 || buffer2;
-	        -- Issue #81 reformat COPY command for upload
-	        -- buffer2   := 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM ''/tmp/cloneschema.tmp'' (DELIMITER '','', NULL '''');';
-	        -- works--> COPY sample.timestamptbl2  FROM '/tmp/cloneschema.tmp' WITH (DELIMITER ',', NULL '\N', FORMAT CSV) ;
-	        buffer2   := 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM ''/tmp/cloneschema.tmp'' (DELIMITER '','', NULL ''\N'', FORMAT CSV);';
-	        tblarray2 := tblarray2 || buffer2;
-	    END IF;
+        -- COPY sample_clone1.statuses FROM '/tmp/statuses.txt' (DELIMITER ',', NULL '');
+        IF bWindows THEN
+            buffer2   := 'COPY ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' TO  ''C:\WINDOWS\TEMP\cloneschema.tmp'' WITH DELIMITER AS '','';';
+            tblarray2 := tblarray2 || buffer2;
+            -- Issue #81 reformat COPY command for upload
+            -- buffer2:= 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM  ''C:\WINDOWS\TEMP\cloneschema.tmp'' (DELIMITER '','', NULL '''');';
+            buffer2   := 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM  ''C:\WINDOWS\TEMP\cloneschema.tmp'' (DELIMITER '','', NULL ''\N'', FORMAT CSV);';
+            tblarray2 := tblarray2 || buffer2;
+        ELSE
+            buffer2   := 'COPY ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' TO ''/tmp/cloneschema.tmp'' WITH DELIMITER AS '','';';
+            tblarray2 := tblarray2 || buffer2;
+            -- Issue #81 reformat COPY command for upload
+            -- buffer2   := 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM ''/tmp/cloneschema.tmp'' (DELIMITER '','', NULL '''');';
+            -- works--> COPY sample.timestamptbl2  FROM '/tmp/cloneschema.tmp' WITH (DELIMITER ',', NULL '\N', FORMAT CSV) ;
+            buffer2   := 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM ''/tmp/cloneschema.tmp'' (DELIMITER '','', NULL ''\N'', FORMAT CSV);';
+            tblarray2 := tblarray2 || buffer2;
+        END IF;
       ELSE
         -- bypass child tables since we populate them when we populate the parents
         -- RAISE NOTICE 'tblname=%  bRelispart=%  relknd=%  l_child=%  bChild=%', tblname, bRelispart, relknd, l_child, bChild;
         IF NOT bRelispart AND NOT bChild THEN
           -- Issue#75: Must defer population of tables until child tables have been added to parents
-          -- RAISE NOTICE ' Deferring populating of cloned table, %', tblname;
           buffer2 := 'INSERT INTO ' || buffer || buffer3 || ' SELECT * FROM ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ';';
           tblarray := tblarray || buffer2;
         END IF;
@@ -1633,7 +1645,8 @@ BEGIN
       AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default
       AND pg_catalog.obj_description(t.oid, 'pg_type') IS NOT NULL and t.typtype = 'c'
     UNION
-    SELECT 'COMMENT ON COLLATION ' || dest_schema || '.' || c.collname || ' IS ''' || pg_catalog.obj_description(c.oid, 'pg_collation') || ''';' as ddl
+    -- FIX Isse#87 by adding double quotes around collation name
+    SELECT 'COMMENT ON COLLATION ' || dest_schema || '."' || c.collname || '" IS ''' || pg_catalog.obj_description(c.oid, 'pg_collation') || ''';' as ddl
     FROM pg_catalog.pg_collation c, pg_catalog.pg_namespace n
     WHERE n.oid = c.collnamespace AND c.collencoding IN (-1, pg_catalog.pg_char_to_encoding(pg_catalog.getdatabaseencoding()))
       AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default AND pg_catalog.obj_description(c.oid, 'pg_collation') IS NOT NULL
@@ -1809,14 +1822,14 @@ BEGIN
               ELSE
                 EXECUTE buffer;
               END IF;
-                        ELSIF POSITION('U' IN privs) THEN
+            ELSIF POSITION('U' IN privs) THEN
               buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT USAGE ON TYPES TO "' || grantee || '";';
               IF ddl_only THEN
                 RAISE INFO '%', buffer;
               ELSE
                 EXECUTE buffer;
               END IF;
-          ELSE
+            ELSE
               RAISE WARNING 'Unhandled TYPE Privs:: type=%  privs=%  owner=%   defaclacl=%  defaclstr=%  grantor=%  grantee=% ', arec.atype, privs, arec.owner, arec.defaclacl, arec.defaclstr, grantor, grantee;
           END IF;
         ELSE
