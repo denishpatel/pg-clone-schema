@@ -37,6 +37,10 @@
 -- 2022-09-27  MJV FIX: Fixed Issue#85 v13 postgres needs stricter type casting than v14
 -- 2022-09-29  MJV FIX: Fixed Issue#86 v12+ handle generated columns by not trying to insert rows into them
 -- 2022-09-29  MJV FIX: Fixed Issue#87 v10 requires double quotes around collation name, 11+ doesnt care
+-- 2022-12-02  MJV FIX: Fixed Issue#90 Clone functions before views to avoid cloning error for views that call functions.
+-- 2022-12-02  MJV FIX: Fixed Issue#91 Fix ownership of objects.  Currently it is defaulting to the one running this script. Let it be the same owner as the source schema to preserve access control.
+-- 2022-12-02  MJV FIX: Fixed Issue#92 Default privileges error: Must set the role before executing the command.
+
 -- SELECT * FROM public.get_table_ddl('sample', 'address', True);
 
 CREATE OR REPLACE FUNCTION public.get_table_ddl(
@@ -411,7 +415,18 @@ DECLARE
   -- issue#86 fix
   isGenerated      text;
   
-  v_version        text := '1.11  September 29, 2022';
+  -- issue#91 fix
+  tblowner         text;
+  func_owner       text;
+  func_name        text;
+  func_args        text;
+  func_argno       integer;
+  view_owner       text; 
+
+  -- issue#92    
+  calleruser       text;
+  
+  v_version        text := '1.12  December 02, 2022';
 
 BEGIN
   -- Make sure NOTICE are shown
@@ -473,6 +488,9 @@ BEGIN
     RETURN ;
   END IF;
 
+  -- Issue#92
+  SELECT current_user into calleruser;
+  
   -- Set the search_path to source schema. Before exiting set it back to what it was before.
   -- In order to avoid issues with the special schema name "$user" that may be
   -- returned unquoted by some applications, we ensure it remains double quoted.
@@ -776,15 +794,17 @@ BEGIN
   -- SET search_path = '';
   SELECT set_config('search_path', '', false) into v_dummy;
   IF verbose_ THEN RAISE INFO 'DEBUG: setting search_path to empty string:%', v_dummy; END IF;
-  --Fix#86 add isgenerated to column list
-  FOR tblname, relpersist, bRelispart, relknd, data_type, udt_name, ocomment, l_child, isGenerated  IN
+  -- Fix#86 add isgenerated to column list
+  -- Fix#91 add tblowner for setting the table ownership to that of the source
+  FOR tblname, relpersist, bRelispart, relknd, data_type, udt_name, ocomment, l_child, isGenerated, tblowner  IN
     -- 2021-03-08 MJV #39 fix: change sql to get indicator of user-defined columns to issue warnings
     -- select c.relname, c.relpersistence, c.relispartition, c.relkind
     -- FROM pg_class c, pg_namespace n where n.oid = c.relnamespace and n.nspname = quote_ident(source_schema) and c.relkind in ('r','p') and
     -- order by c.relkind desc, c.relname
     --Fix#65 add another left join to distinguish child tables by inheritance
     -- Fix#86 add is_generated to column select
-    SELECT DISTINCT c.relname, c.relpersistence, c.relispartition, c.relkind, co.data_type, co.udt_name, obj_description(c.oid), i.inhrelid, COALESCE(co.is_generated, '')
+    -- Fix#91 add tblowner to the select
+    SELECT DISTINCT c.relname, c.relpersistence, c.relispartition, c.relkind, co.data_type, co.udt_name, obj_description(c.oid), i.inhrelid, COALESCE(co.is_generated, ''), pg_catalog.pg_get_userbyid(c.relowner) as "Owner"
     FROM pg_class c
         JOIN pg_namespace n ON (n.oid = c.relnamespace
                 AND n.nspname = quote_ident(source_schema)
@@ -822,15 +842,21 @@ BEGIN
 
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
           RAISE INFO '%', buffer3;
+          -- issue#91 fix
+          RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || tblname, tblowner;
         ELSE
           IF NOT bChild THEN
             RAISE INFO '%', 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL);';
+            -- issue#91 fix
+            RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || tblname, tblowner;
           ELSE
             -- FIXED #65, #67
             -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
             SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
             RAISE INFO '%', buffer3;
+            -- issue#91 fix
+            RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || tblname, tblowner;            
           END IF;
         END IF;
       ELSE
@@ -845,9 +871,16 @@ BEGIN
           v_dummy = 'public';
           SELECT set_config('search_path', v_dummy, false) into v_dummy;
           EXECUTE buffer3;
+          -- issue#91 fix
+          buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
+          EXECUTE buffer3;
         ELSE
           IF (NOT bChild OR bRelispart) THEN
             buffer3 := 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
+            IF verbose_ THEN RAISE INFO 'DEBUG: tabledef02:%', buffer3; END IF;
+            EXECUTE buffer3;
+            -- issue#91 fix
+            buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.'  || quote_ident(tblname) || ' OWNER TO ' || tblowner;            
             IF verbose_ THEN RAISE INFO 'DEBUG: tabledef02:%', buffer3; END IF;
             EXECUTE buffer3;
           ELSE
@@ -861,6 +894,10 @@ BEGIN
             set client_min_messages = 'WARNING';
             IF verbose_ THEN RAISE INFO 'DEBUG: tabledef03:%', buffer3; END IF;
             EXECUTE buffer3;
+            -- issue#91 fix
+            buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
+            EXECUTE buffer3;
+            
             -- reset it back, only get these for inheritance-based tables
             set client_min_messages = 'notice';
           END IF;
@@ -934,9 +971,14 @@ BEGIN
       qry := buffer || ') PARTITION BY ' || buffer2 || ';';
       IF ddl_only THEN
         RAISE INFO '%', qry;
+        RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || pc.relname, tblowner;
       ELSE
         IF verbose_ THEN RAISE INFO 'DEBUG: tabledef04:%', buffer3; END IF;
         EXECUTE qry;
+        -- issue#91 fix
+        buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || pc.relname || ' OWNER TO ' || tblowner;
+        EXECUTE buffer3;
+        
       END IF;
       -- loop for child tables and alter them to attach to parent for specific partition method.
       FOR aname, part_range, object IN
@@ -947,6 +989,7 @@ BEGIN
         c1.oid::pg_catalog.regclass::pg_catalog.text
       LOOP
         qry := 'ALTER TABLE ONLY ' || object || ' ATTACH PARTITION ' || aname || ' ' || part_range || ';';
+        -- issue#91, not sure if we need to do this for child tables
         IF ddl_only THEN
           RAISE INFO '%', qry;
         ELSE
@@ -1166,6 +1209,158 @@ BEGIN
 
   -- Issue#62: Add comments on indexes, and then removed them from here and reworked later below.
 
+  -- Issue 90: moved functions to here, before views or MVs that might use them
+  -- Create functions
+    action := 'Functions';
+    cnt := 0;
+    -- MJV FIX per issue# 34
+    -- SET search_path = '';
+    EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
+  
+  
+    -- Fixed Issue#65
+    -- FOR func_oid IN SELECT oid FROM pg_proc WHERE pronamespace = src_oid AND prokind != 'a'
+    IF is_prokind THEN
+      FOR func_oid, func_owner, func_name, func_args, func_argno IN SELECT p.oid, pg_catalog.pg_get_userbyid(p.proowner), p.proname, oidvectortypes(p.proargtypes), p.pronargs FROM pg_proc p WHERE p.pronamespace = src_oid AND p.prokind != 'a'
+      LOOP
+        cnt := cnt + 1;
+        SELECT pg_get_functiondef(func_oid)
+        INTO qry;
+  
+        SELECT replace(qry, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO dest_qry;
+        IF ddl_only THEN
+          RAISE INFO '%;', dest_qry;
+          -- Issue#91 Fix
+          IF func_argno = 0 THEN
+              RAISE INFO 'ALTER FUNCTION % OWNER TO %', quote_ident(dest_schema) || '.' || func_name, func_owner || ';';
+          ELSE
+              RAISE INFO 'ALTER FUNCTION % OWNER TO %', quote_ident(dest_schema) || '.' || func_name || '(' || func_args || ')', func_owner || ';';
+          END IF;
+        ELSE
+          EXECUTE dest_qry;
+
+          -- Issue#91 Fix
+          IF func_argno = 0 THEN
+              dest_qry = 'ALTER FUNCTION ' || quote_ident(dest_schema) || '.' || func_name || ' OWNER TO ' || func_owner || ';';
+          ELSE
+              dest_qry = 'ALTER FUNCTION ' || quote_ident(dest_schema) || '.' || func_name || '(' || func_args || ') OWNER TO ' || func_owner || ';';
+          END IF;
+          EXECUTE dest_qry;
+        END IF;
+      END LOOP;
+    ELSE
+      FOR func_oid IN SELECT oid
+                      FROM pg_proc
+                      WHERE pronamespace = src_oid AND not proisagg
+      LOOP
+        cnt := cnt + 1;
+        SELECT pg_get_functiondef(func_oid) INTO qry;
+        SELECT replace(qry, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO dest_qry;
+        IF ddl_only THEN
+          RAISE INFO '%;', dest_qry;
+        ELSE
+          EXECUTE dest_qry;
+        END IF;
+      END LOOP;
+    END IF;
+  
+    -- Create aggregate functions.
+    -- Fixed Issue#65
+    -- FOR func_oid IN SELECT oid FROM pg_proc WHERE pronamespace = src_oid AND prokind = 'a'
+    IF is_prokind THEN
+      FOR func_oid IN
+          SELECT oid
+          FROM pg_proc
+          WHERE pronamespace = src_oid AND prokind = 'a'
+      LOOP
+        cnt := cnt + 1;
+        SELECT
+          'CREATE AGGREGATE '
+          || dest_schema
+          || '.'
+          || p.proname
+          || '('
+          -- || format_type(a.aggtranstype, NULL)
+          -- Issue#65 Fixes for specific datatype mappings
+          || CASE WHEN format_type(a.aggtranstype, NULL) = 'double precision[]' THEN 'float8'
+                  WHEN format_type(a.aggtranstype, NULL) = 'anyarray'           THEN 'anyelement'
+             ELSE format_type(a.aggtranstype, NULL) END
+          || ') (sfunc = '
+          || regexp_replace(a.aggtransfn::text, '(^|\W)' || quote_ident(source_schema) || '\.', '\1' || quote_ident(dest_schema) || '.')
+          || ', stype = '
+          -- || format_type(a.aggtranstype, NULL)
+          -- Issue#65 Fixes for specific datatype mappings
+          || CASE WHEN format_type(a.aggtranstype, NULL) = 'double precision[]' THEN 'float8[]' ELSE format_type(a.aggtranstype, NULL) END
+          || CASE
+              WHEN op.oprname IS NULL THEN ''
+              ELSE ', sortop = ' || op.oprname
+            END
+          || CASE
+              WHEN a.agginitval IS NULL THEN ''
+              ELSE ', initcond = ''' || a.agginitval || ''''
+            END
+          || ')'
+        INTO dest_qry
+        FROM pg_proc p
+        JOIN pg_aggregate a ON a.aggfnoid = p.oid
+        LEFT JOIN pg_operator op ON op.oid = a.aggsortop
+        WHERE p.oid = func_oid;
+  
+        IF ddl_only THEN
+          RAISE INFO '%;', dest_qry;
+        ELSE
+          EXECUTE dest_qry;
+        END IF;
+  
+      END LOOP;
+      RAISE NOTICE '   FUNCTIONS cloned: %', LPAD(cnt::text, 5, ' ');
+  
+    ELSE
+      FOR func_oid IN SELECT oid FROM pg_proc WHERE pronamespace = src_oid AND proisagg
+      LOOP
+        cnt := cnt + 1;
+        SELECT
+          'CREATE AGGREGATE '
+          || dest_schema
+          || '.'
+          || p.proname
+          || '('
+          -- || format_type(a.aggtranstype, NULL)
+          -- Issue#65 Fixes for specific datatype mappings
+          || CASE WHEN format_type(a.aggtranstype, NULL) = 'double precision[]' THEN 'float8'
+                  WHEN format_type(a.aggtranstype, NULL) = 'anyarray'           THEN 'anyelement'
+             ELSE format_type(a.aggtranstype, NULL) END
+          || ') (sfunc = '
+          || regexp_replace(a.aggtransfn::text, '(^|\W)' || quote_ident(source_schema) || '\.', '\1' || quote_ident(dest_schema) || '.')
+          || ', stype = '
+          -- || format_type(a.aggtranstype, NULL)
+          -- Issue#65 Fixes for specific datatype mappings
+          || CASE WHEN format_type(a.aggtranstype, NULL) = 'double precision[]' THEN 'float8[]' ELSE format_type(a.aggtranstype, NULL) END
+          || CASE
+              WHEN op.oprname IS NULL THEN ''
+              ELSE ', sortop = ' || op.oprname
+            END
+          || CASE
+              WHEN a.agginitval IS NULL THEN ''
+              ELSE ', initcond = ''' || a.agginitval || ''''
+            END
+          || ')'
+        INTO dest_qry
+        FROM pg_proc p
+        JOIN pg_aggregate a ON a.aggfnoid = p.oid
+        LEFT JOIN pg_operator op ON op.oid = a.aggsortop
+        WHERE p.oid = func_oid;
+  
+        IF ddl_only THEN
+          RAISE INFO '%;', dest_qry;
+        ELSE
+          EXECUTE dest_qry;
+        END IF;
+  
+      END LOOP;
+      RAISE NOTICE '   FUNCTIONS cloned: %', LPAD(cnt::text, 5, ' ');
+    END IF;
+  
   -- Create views
   action := 'Views';
 
@@ -1182,10 +1377,11 @@ BEGIN
     -- WHERE table_schema = quote_ident(source_schema)
 
   -- Issue#73 replace loop query to handle dependencies
-  FOR srctbl, aname, object IN
+  -- Issue#91 get view_owner
+  FOR srctbl, aname, view_owner, object IN
     WITH RECURSIVE views AS (
        SELECT n.nspname as schemaname, v.relname as tablename, v.oid::regclass AS viewname,
-              v.relkind = 'm' AS is_materialized,
+              v.relkind = 'm' AS is_materialized, pg_catalog.pg_get_userbyid(v.relowner) as owner, 
               1 AS level
        FROM pg_depend AS d
           JOIN pg_rewrite AS r
@@ -1202,7 +1398,7 @@ BEGIN
     UNION
        -- add the views that depend on these
        SELECT n.nspname as schemaname, v.relname as tablename, v.oid::regclass AS viewname,
-              v.relkind = 'm',
+              v.relkind = 'm', pg_catalog.pg_get_userbyid(v.relowner) as owner, 
               views.level + 1
        FROM views
           JOIN pg_depend AS d
@@ -1220,7 +1416,7 @@ BEGIN
          AND d.deptype = 'n'
          AND v.oid <> views.viewname
     )
-    SELECT tablename, viewname, format('CREATE OR REPLACE%s VIEW %s AS%s',
+    SELECT tablename, viewname, owner, format('CREATE OR REPLACE%s VIEW %s AS%s',
                   CASE WHEN is_materialized
                        THEN ' MATERIALIZED'
                        ELSE ''
@@ -1229,7 +1425,7 @@ BEGIN
                   pg_get_viewdef(viewname))
     FROM views
     WHERE schemaname = quote_ident(source_schema)
-    GROUP BY schemaname, tablename, viewname, is_materialized
+    GROUP BY schemaname, tablename, viewname, owner, is_materialized
     ORDER BY max(level), schemaname, tablename
   LOOP
     cnt := cnt + 1;
@@ -1243,12 +1439,18 @@ BEGIN
     --   AND table_name = quote_ident(object);
     SELECT REPLACE(object, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO v_def;
     -- NOTE: definition already includes the closing statement semicolon
+    SELECT REPLACE(aname, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO buffer3;
     IF ddl_only THEN
       RAISE INFO '%', v_def;
+      -- Issue#91 Fix
+      RAISE INFO 'ALTER TABLE % OWNER TO %', buffer3, view_owner || ';';
     ELSE
       -- EXECUTE 'CREATE OR REPLACE VIEW ' || buffer || ' AS ' || v_def;
       EXECUTE v_def;
       -- Issue#73: commented out comment logic for views since we do it elsewhere now.
+      -- Issue#91 Fix
+      v_def = 'ALTER TABLE ' || buffer3 || ' OWNER TO ' || view_owner || ';';
+      EXECUTE v_def;
     END IF;
   END LOOP;
   RAISE NOTICE '       VIEWS cloned: %', LPAD(cnt::text, 5, ' ');
@@ -1256,8 +1458,9 @@ BEGIN
   -- Create Materialized views
   action := 'Mat. Views';
   cnt := 0;
-  FOR object, v_def IN
-      SELECT matviewname::text, replace(definition,';','') FROM pg_catalog.pg_matviews WHERE schemaname = quote_ident(source_schema)
+  -- Issue#91 get view_owner
+  FOR object, view_owner, v_def IN
+      SELECT matviewname::text, matviewowner::text, replace(definition,';','') FROM pg_catalog.pg_matviews WHERE schemaname = quote_ident(source_schema)
   LOOP
       cnt := cnt + 1;
       -- Issue#78 FIX: handle case-sensitive names with quote_ident() on target schema and object
@@ -1272,8 +1475,13 @@ BEGIN
       ELSE
         IF ddl_only THEN
           RAISE INFO '%', 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || buffer2 || ' WITH NO DATA;' ;
+          -- Issue#91
+          RAISE INFO '%', 'ALTER MATERIALIZED VIEW ' || buffer || ' OWNER TO ' || view_owner || ';' ;
         ELSE
           EXECUTE 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || buffer2 || ' WITH NO DATA;' ;
+          -- Issue#91
+          buffer3 = 'ALTER MATERIALIZED VIEW ' || buffer || ' OWNER TO ' || view_owner || ';' ;
+          EXECUTE buffer3;
         END IF;
       END IF;
       SELECT coalesce(obj_description(oid), '') into adef from pg_class where relkind = 'm' and relname = object;
@@ -1298,144 +1506,8 @@ BEGIN
   END LOOP;
   RAISE NOTICE '   MAT VIEWS cloned: %', LPAD(cnt::text, 5, ' ');
 
-
-  -- Create functions
-  action := 'Functions';
-  cnt := 0;
-  -- MJV FIX per issue# 34
-  -- SET search_path = '';
-  EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
-
-  -- Fixed Issue#65
-  -- FOR func_oid IN SELECT oid FROM pg_proc WHERE pronamespace = src_oid AND prokind != 'a'
-  IF is_prokind THEN
-    FOR func_oid IN SELECT oid FROM pg_proc WHERE pronamespace = src_oid AND prokind != 'a'
-    LOOP
-      cnt := cnt + 1;
-      SELECT pg_get_functiondef(func_oid)
-      INTO qry;
-
-      SELECT replace(qry, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO dest_qry;
-      IF ddl_only THEN
-        RAISE INFO '%;', dest_qry;
-      ELSE
-        EXECUTE dest_qry;
-      END IF;
-    END LOOP;
-  ELSE
-    FOR func_oid IN SELECT oid
-                    FROM pg_proc
-                    WHERE pronamespace = src_oid AND not proisagg
-    LOOP
-      cnt := cnt + 1;
-      SELECT pg_get_functiondef(func_oid) INTO qry;
-      SELECT replace(qry, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO dest_qry;
-      IF ddl_only THEN
-        RAISE INFO '%;', dest_qry;
-      ELSE
-        EXECUTE dest_qry;
-      END IF;
-    END LOOP;
-  END IF;
-
-  -- Create aggregate functions.
-  -- Fixed Issue#65
-  -- FOR func_oid IN SELECT oid FROM pg_proc WHERE pronamespace = src_oid AND prokind = 'a'
-  IF is_prokind THEN
-    FOR func_oid IN
-        SELECT oid
-        FROM pg_proc
-        WHERE pronamespace = src_oid AND prokind = 'a'
-    LOOP
-      cnt := cnt + 1;
-      SELECT
-        'CREATE AGGREGATE '
-        || dest_schema
-        || '.'
-        || p.proname
-        || '('
-        -- || format_type(a.aggtranstype, NULL)
-        -- Issue#65 Fixes for specific datatype mappings
-        || CASE WHEN format_type(a.aggtranstype, NULL) = 'double precision[]' THEN 'float8'
-                WHEN format_type(a.aggtranstype, NULL) = 'anyarray'           THEN 'anyelement'
-           ELSE format_type(a.aggtranstype, NULL) END
-        || ') (sfunc = '
-        || regexp_replace(a.aggtransfn::text, '(^|\W)' || quote_ident(source_schema) || '\.', '\1' || quote_ident(dest_schema) || '.')
-        || ', stype = '
-        -- || format_type(a.aggtranstype, NULL)
-        -- Issue#65 Fixes for specific datatype mappings
-        || CASE WHEN format_type(a.aggtranstype, NULL) = 'double precision[]' THEN 'float8[]' ELSE format_type(a.aggtranstype, NULL) END
-        || CASE
-            WHEN op.oprname IS NULL THEN ''
-            ELSE ', sortop = ' || op.oprname
-          END
-        || CASE
-            WHEN a.agginitval IS NULL THEN ''
-            ELSE ', initcond = ''' || a.agginitval || ''''
-          END
-        || ')'
-      INTO dest_qry
-      FROM pg_proc p
-      JOIN pg_aggregate a ON a.aggfnoid = p.oid
-      LEFT JOIN pg_operator op ON op.oid = a.aggsortop
-      WHERE p.oid = func_oid;
-
-      IF ddl_only THEN
-        RAISE INFO '%;', dest_qry;
-      ELSE
-        EXECUTE dest_qry;
-      END IF;
-
-    END LOOP;
-    RAISE NOTICE '   FUNCTIONS cloned: %', LPAD(cnt::text, 5, ' ');
-
-  ELSE
-    FOR func_oid IN SELECT oid FROM pg_proc WHERE pronamespace = src_oid AND proisagg
-    LOOP
-      cnt := cnt + 1;
-      SELECT
-        'CREATE AGGREGATE '
-        || dest_schema
-        || '.'
-        || p.proname
-        || '('
-        -- || format_type(a.aggtranstype, NULL)
-        -- Issue#65 Fixes for specific datatype mappings
-        || CASE WHEN format_type(a.aggtranstype, NULL) = 'double precision[]' THEN 'float8'
-                WHEN format_type(a.aggtranstype, NULL) = 'anyarray'           THEN 'anyelement'
-           ELSE format_type(a.aggtranstype, NULL) END
-        || ') (sfunc = '
-        || regexp_replace(a.aggtransfn::text, '(^|\W)' || quote_ident(source_schema) || '\.', '\1' || quote_ident(dest_schema) || '.')
-        || ', stype = '
-        -- || format_type(a.aggtranstype, NULL)
-        -- Issue#65 Fixes for specific datatype mappings
-        || CASE WHEN format_type(a.aggtranstype, NULL) = 'double precision[]' THEN 'float8[]' ELSE format_type(a.aggtranstype, NULL) END
-        || CASE
-            WHEN op.oprname IS NULL THEN ''
-            ELSE ', sortop = ' || op.oprname
-          END
-        || CASE
-            WHEN a.agginitval IS NULL THEN ''
-            ELSE ', initcond = ''' || a.agginitval || ''''
-          END
-        || ')'
-      INTO dest_qry
-      FROM pg_proc p
-      JOIN pg_aggregate a ON a.aggfnoid = p.oid
-      LEFT JOIN pg_operator op ON op.oid = a.aggsortop
-      WHERE p.oid = func_oid;
-
-      IF ddl_only THEN
-        RAISE INFO '%;', dest_qry;
-      ELSE
-        EXECUTE dest_qry;
-      END IF;
-
-    END LOOP;
-    RAISE NOTICE '   FUNCTIONS cloned: %', LPAD(cnt::text, 5, ' ');
-  END IF;
-
-
+  -- Issue 90 Move create functions to before views
+  
   -- MV: Create Triggers
 
   -- MJV FIX: #38
@@ -1721,21 +1793,41 @@ BEGIN
           IF arec.atype = 'function' THEN
             -- Just having execute is enough to grant all apparently.
             buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ALL ON FUNCTIONS TO "' || grantee || '";';
+            
+            -- Issue#92 Fix
+            -- set role = cm_stage_ro_grp;
+            -- ALTER DEFAULT PRIVILEGES FOR ROLE cm_stage_ro_grp IN SCHEMA cm_stage GRANT REFERENCES, TRIGGER ON TABLES TO cm_stage_ro_grp;            
+            IF grantor = grantee THEN
+                -- append set role to statement
+                buffer = 'SET ROLE = ' || grantor || '; ' || buffer;
+            END IF;
+            
             IF ddl_only THEN
               RAISE INFO '%', buffer;
             ELSE
               EXECUTE buffer;
             END IF;
-
+            -- Issue#92 Fix:
+            EXECUTE 'SET ROLE = ' || calleruser;
+            
           ELSIF arec.atype = 'sequence' THEN
             IF POSITION('r' IN privs) > 0 AND POSITION('w' IN privs) > 0 AND POSITION('U' IN privs) > 0 THEN
               -- arU is enough for all privs
               buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ALL ON SEQUENCES TO "' || grantee || '";';
+              
+              -- Issue#92 Fix
+              IF grantor = grantee THEN
+                  -- append set role to statement
+                  buffer = 'SET ROLE = ' || grantor || '; ' || buffer;
+              END IF;
+
               IF ddl_only THEN
                 RAISE INFO '%', buffer;
               ELSE
                 EXECUTE buffer;
               END IF;
+              -- Issue#92 Fix:
+              EXECUTE 'SET ROLE = ' || calleruser;
 
             ELSE
               -- have to specify each priv individually
@@ -1758,11 +1850,21 @@ BEGIN
                 END IF;
               END IF;
               buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ' || buffer2 || ' ON SEQUENCES TO "' || grantee || '";';
+
+              -- Issue#92 Fix
+              IF grantor = grantee THEN
+                  -- append set role to statement
+                  buffer = 'SET ROLE = ' || grantor || '; ' || buffer;
+              END IF;
+              
               IF ddl_only THEN
                 RAISE INFO '%', buffer;
               ELSE
                 EXECUTE buffer;
               END IF;
+              select current_user into buffer;
+              -- Issue#92 Fix:
+              EXECUTE 'SET ROLE = ' || calleruser;
             END IF;
 
           ELSIF arec.atype = 'table' THEN
@@ -1807,28 +1909,58 @@ BEGIN
               END IF;
             END IF;
             buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ' || buffer2 || ' ON TABLES TO "' || grantee || '";';
+            
+            -- Issue#92 Fix
+            IF grantor = grantee THEN
+                -- append set role to statement
+                buffer = 'SET ROLE = ' || grantor || '; ' || buffer;
+            END IF;
+            
             IF ddl_only THEN
               RAISE INFO '%', buffer;
             ELSE
               EXECUTE buffer;
             END IF;
+            select current_user into buffer;
+            -- Issue#92 Fix:
+            EXECUTE 'SET ROLE = ' || calleruser;
 
           ELSIF arec.atype = 'type' THEN
             IF POSITION('r' IN privs) > 0 AND POSITION('w' IN privs) > 0 AND POSITION('U' IN privs) > 0 THEN
               -- arU is enough for all privs
               buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ALL ON TYPES TO "' || grantee || '";';
+              
+              -- Issue#92 Fix
+              IF grantor = grantee THEN
+                  -- append set role to statement
+                  buffer = 'SET ROLE = ' || grantor || '; ' || buffer;
+              END IF;
+              
               IF ddl_only THEN
                 RAISE INFO '%', buffer;
               ELSE
                 EXECUTE buffer;
               END IF;
+              -- Issue#92 Fix:
+              EXECUTE 'SET ROLE = ' || calleruser;
+              
             ELSIF POSITION('U' IN privs) THEN
               buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT USAGE ON TYPES TO "' || grantee || '";';
+              
+              -- Issue#92 Fix
+              IF grantor = grantee THEN
+                  -- append set role to statement
+                  buffer = 'SET ROLE = ' || grantor || '; ' || buffer;
+              END IF;
+              
               IF ddl_only THEN
                 RAISE INFO '%', buffer;
               ELSE
                 EXECUTE buffer;
               END IF;
+              -- Issue#92 Fix:
+              EXECUTE 'SET ROLE = ' || calleruser;
+              
             ELSE
               RAISE WARNING 'Unhandled TYPE Privs:: type=%  privs=%  owner=%   defaclacl=%  defaclstr=%  grantor=%  grantee=% ', arec.atype, privs, arec.owner, arec.defaclacl, arec.defaclstr, grantor, grantee;
           END IF;
