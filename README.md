@@ -27,17 +27,17 @@ Arguments:
 No parameters implies create the target schema objects with no data.
 <br/><br/>
 
-You can call function like this to clone the schema with no data:
+Clone the schema with no data:
 <br/>
 >select clone_schema('sample', 'sample_clone');
 <br/>
 
-Alternatively, if you want to clone schema with data:
+Clone the schema with data:
 <br/>
 >select clone_schema('sample', 'sample_clone', 'DATA');
 <br/>
 
-If you just want to generate the DDL, call it like this:
+Just generate DDL:
 <br/>
 >select clone_schema('sample', 'sample_clone', 'DDLONLY');
 
