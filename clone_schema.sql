@@ -40,6 +40,24 @@
 -- 2022-12-02  MJV FIX: Fixed Issue#90 Clone functions before views to avoid cloning error for views that call functions.
 -- 2022-12-02  MJV FIX: Fixed Issue#91 Fix ownership of objects.  Currently it is defaulting to the one running this script. Let it be the same owner as the source schema to preserve access control.
 -- 2022-12-02  MJV FIX: Fixed Issue#92 Default privileges error: Must set the role before executing the command.
+-- 2022-12-03  MJV FIX: Fixed Issue#94 Make parameters variadic
+
+do $$ 
+<<first_block>>
+DECLARE
+    cnt int;
+BEGIN
+  SELECT count(*) into cnt
+  FROM pg_catalog.pg_type t LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class c WHERE c.oid = t.typrelid)) 
+  AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_type el WHERE el.oid = t.typelem AND el.typarray = t.oid)
+  AND n.nspname <> 'pg_catalog' AND n.nspname <> 'information_schema' AND pg_catalog.pg_type_is_visible(t.oid)
+  AND pg_catalog.format_type(t.oid, NULL) in ('cloneparms');
+  IF cnt = 0 THEN
+    RAISE INFO 'Creating custom types.';
+    CREATE TYPE public.cloneparms AS ENUM ('DATA', 'DDLONLY','NOOWNER','NOACL','VERBOSE');
+  END IF;
+end first_block $$;
+
 
 -- SELECT * FROM public.get_table_ddl('sample', 'address', True);
 
@@ -330,15 +348,13 @@ DROP FUNCTION IF EXISTS public.clone_schema(text, text, boolean, boolean);
 CREATE OR REPLACE FUNCTION public.clone_schema(
     source_schema text,
     dest_schema text,
-    include_recs boolean,
-    ddl_only     boolean,
-    verbose_     boolean DEFAULT False)
+    VARIADIC arr public.cloneparms[] DEFAULT '{}':: public.cloneparms[])
   RETURNS void AS
 $BODY$
 
 --  This function will clone all sequences, tables, data, views & functions from any existing schema to a new one
 -- SAMPLE CALL:
--- SELECT clone_schema('sample', 'sample_clone2', True, False, False);
+-- SELECT clone_schema('sample', 'sample_clone2');
 
 DECLARE
   src_oid          oid;
@@ -426,6 +442,16 @@ DECLARE
   -- issue#92    
   calleruser       text;
   
+  -- issue#94
+  bData            boolean := False;
+  bDDLOnly         boolean := False;
+  bVerbose         boolean := False;
+  bNoACL           boolean := False;
+  bNoOwner         boolean := False;
+  arglen           integer;
+  vargs            text;
+  avarg            public.cloneparms;
+  
   v_version        text := '1.12  December 02, 2022';
 
 BEGIN
@@ -433,6 +459,38 @@ BEGIN
   SET client_min_messages = 'notice';
   RAISE NOTICE 'clone_schema version %', v_version;
 
+  IF 'VERBOSE' = ANY ($3) THEN bVerbose = True; END IF;
+  RAISE INFO 'verbose= %', bVerbose;
+  
+  arglen := array_length($3, 1);
+  IF arglen IS NULL THEN
+    -- nothing to do, so defaults are assumed
+    NULL;
+  ELSE
+    -- loop thru args
+    -- IF 'NO_TRIGGERS' = ANY ($3)
+    -- select array_to_string($3, ',', '***') INTO vargs;
+    IF bVerbose THEN RAISE NOTICE 'arguments=%', $3; END IF;
+    FOREACH avarg IN ARRAY $3 LOOP
+      IF bVerbose THEN RAISE INFO 'arg=%', avarg; END IF;
+      IF avarg = 'DATA' THEN
+        bData = True;
+      ELSEIF avarg = 'DDLONLY' THEN
+        bDDLOnly = True;
+      ELSEIF avarg = 'NOACL' THEN
+        bNoOwner = True;
+      ELSEIF avarg = 'NOOWNER' THEN
+        bNoOwner = True;        
+      END IF;
+    END LOOP;
+    IF bData and bDDLOnly THEN 
+      RAISE WARNING 'You can only specify DDLONLY or DATA, but not both.';
+      RETURN '';
+    END IF;
+  END IF;  
+    
+  RETURN '';
+  
   -- Get server version info to handle certain things differently based on the version.
   SELECT setting INTO sq_server_version
   FROM pg_settings
@@ -483,7 +541,7 @@ BEGIN
     RAISE NOTICE ' dest schema % already exists!', dest_schema;
     RETURN ;
   END IF;
-  IF ddl_only and include_recs THEN
+  IF bDDLOnly and bData THEN
     RAISE WARNING 'You cannot specify to clone data and generate ddl at the same time.';
     RETURN ;
   END IF;
@@ -496,16 +554,16 @@ BEGIN
   -- returned unquoted by some applications, we ensure it remains double quoted.
   -- MJV FIX: #47
   SELECT setting INTO v_dummy FROM pg_settings WHERE name='search_path';
-  IF verbose_ THEN RAISE INFO 'DEBUG: search_path=%', v_dummy; END IF;
+  IF _verbose THEN RAISE INFO 'DEBUG: search_path=%', v_dummy; END IF;
   
   SELECT REPLACE(REPLACE(setting, '"$user"', '$user'), '$user', '"$user"') INTO src_path_old
   FROM pg_settings WHERE name = 'search_path';
 
-  IF verbose_ THEN RAISE INFO 'DEBUG: src_path_old=%', src_path_old; END IF;
+  IF _verbose THEN RAISE INFO 'DEBUG: src_path_old=%', src_path_old; END IF;
 
   EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
   SELECT setting INTO src_path_new FROM pg_settings WHERE name='search_path';
-  IF verbose_ THEN RAISE INFO 'DEBUG: new search_path=%', src_path_new; END IF;
+  IF _verbose THEN RAISE INFO 'DEBUG: new search_path=%', src_path_new; END IF;
 
   -- Validate required types exist.  If not, create them.
   SELECT a.objtypecnt, b.permtypecnt INTO cnt, cnt2
@@ -552,7 +610,7 @@ BEGIN
     CREATE TYPE perm_type AS ENUM ('SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER','USAGE','CREATE','EXECUTE','CONNECT','TEMPORARY');
   END IF;
 
-  IF ddl_only THEN
+  IF bDDLOnly THEN
     RAISE NOTICE ' Only generating DDL, not actually creating anything...';
     RAISE INFO 'CREATE SCHEMA %;', quote_ident(dest_schema);
     RAISE INFO 'SET search_path=%;', quote_ident(dest_schema);
@@ -594,7 +652,7 @@ BEGIN
     LOOP
       BEGIN
         cnt := cnt + 1;
-        IF ddl_only THEN
+        IF bDDLOnly THEN
           RAISE INFO '%', arec.coll_ddl;
         ELSE
           EXECUTE arec.coll_ddl;
@@ -641,7 +699,7 @@ BEGIN
   LOOP
     BEGIN
       cnt := cnt + 1;
-      IF ddl_only THEN
+      IF bDDLOnly THEN
         RAISE INFO '%', arec.dom_ddl;
       ELSE
         EXECUTE arec.dom_ddl;
@@ -679,13 +737,13 @@ BEGIN
       cnt := cnt + 1;
       -- Keep composite and enum types in separate branches for fine tuning later if needed.
       IF arec.typcategory = 'E' THEN
-        IF ddl_only THEN
+        IF bDDLOnly THEN
           RAISE INFO '%', arec.type_ddl;
         ELSE
           EXECUTE arec.type_ddl;
         END IF;
       ELSIF arec.typcategory = 'C' THEN
-        IF ddl_only THEN
+        IF bDDLOnly THEN
           RAISE INFO '%', arec.type_ddl;
         ELSE
           EXECUTE arec.type_ddl;
@@ -708,7 +766,7 @@ BEGIN
     WHERE sequence_schema = quote_ident(source_schema)
   LOOP
     cnt := cnt + 1;
-    IF ddl_only THEN
+    IF bDDLOnly THEN
       RAISE INFO '%', 'CREATE SEQUENCE ' || quote_ident(dest_schema) || '.' || quote_ident(object) || ';';
     ELSE
       EXECUTE 'CREATE SEQUENCE ' || quote_ident(dest_schema) || '.' || quote_ident(object);
@@ -759,17 +817,17 @@ BEGIN
              || ' '              || sq_cycled || ' ;' ;
     END IF;
 
-    IF ddl_only THEN
+    IF bDDLOnly THEN
       RAISE INFO '%', qry;
     ELSE
       EXECUTE qry;
     END IF;
 
     buffer := quote_ident(dest_schema) || '.' || quote_ident(object);
-    IF include_recs THEN
+    IF bData THEN
       EXECUTE 'SELECT setval( ''' || buffer || ''', ' || sq_last_value || ', ' || sq_is_called || ');' ;
     ELSE
-      if ddl_only THEN
+      if bDDLOnly THEN
         -- fix#63
         --  RAISE INFO '%', 'SELECT setval( ''' || buffer || ''', ' || sq_start_value || ', ' || sq_is_called || ');' ;
         RAISE INFO '%', 'SELECT setval( ''' || buffer || ''', ' || sq_last_value || ', ' || sq_is_called || ');' ;
@@ -787,13 +845,13 @@ BEGIN
   -- Create tables including partitioned ones (parent/children) and unlogged ones.  Order by is critical since child partition range logic is dependent on it.
   action := 'Tables';
   SELECT setting INTO v_dummy FROM pg_settings WHERE name='search_path';
-  IF verbose_ THEN RAISE INFO 'DEBUG: search_path=%', v_dummy; END IF;
+  IF _verbose THEN RAISE INFO 'DEBUG: search_path=%', v_dummy; END IF;
   
   cnt := 0;
   -- Issue#61 FIX: use set_config for empty string
   -- SET search_path = '';
   SELECT set_config('search_path', '', false) into v_dummy;
-  IF verbose_ THEN RAISE INFO 'DEBUG: setting search_path to empty string:%', v_dummy; END IF;
+  IF _verbose THEN RAISE INFO 'DEBUG: setting search_path to empty string:%', v_dummy; END IF;
   -- Fix#86 add isgenerated to column list
   -- Fix#91 add tblowner for setting the table ownership to that of the source
   FOR tblname, relpersist, bRelispart, relknd, data_type, udt_name, ocomment, l_child, isGenerated, tblowner  IN
@@ -834,7 +892,7 @@ BEGIN
       buffer2 := 'UNLOGGED ';
     END IF;
     IF relknd = 'r' THEN
-      IF ddl_only THEN
+      IF bDDLOnly THEN
         IF data_type = 'USER-DEFINED' THEN
           -- FIXED #65, #67
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
@@ -865,7 +923,7 @@ BEGIN
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
           SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
-          IF verbose_ THEN RAISE INFO 'DEBUG: tabledef01:%', buffer3; END IF;
+          IF _verbose THEN RAISE INFO 'DEBUG: tabledef01:%', buffer3; END IF;
           -- #82: Table def should be fully qualified with target schema, 
           --      so just make search path = public to handle extension types that should reside in public schema
           v_dummy = 'public';
@@ -877,11 +935,11 @@ BEGIN
         ELSE
           IF (NOT bChild OR bRelispart) THEN
             buffer3 := 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
-            IF verbose_ THEN RAISE INFO 'DEBUG: tabledef02:%', buffer3; END IF;
+            IF _verbose THEN RAISE INFO 'DEBUG: tabledef02:%', buffer3; END IF;
             EXECUTE buffer3;
             -- issue#91 fix
             buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.'  || quote_ident(tblname) || ' OWNER TO ' || tblowner;            
-            IF verbose_ THEN RAISE INFO 'DEBUG: tabledef02:%', buffer3; END IF;
+            IF _verbose THEN RAISE INFO 'DEBUG: tabledef02:%', buffer3; END IF;
             EXECUTE buffer3;
           ELSE
             -- FIXED #65, #67
@@ -892,7 +950,7 @@ BEGIN
             -- set client_min_messages higher to avoid messages like this:
             -- NOTICE:  merging column "city_id" with inherited definition
             set client_min_messages = 'WARNING';
-            IF verbose_ THEN RAISE INFO 'DEBUG: tabledef03:%', buffer3; END IF;
+            IF _verbose THEN RAISE INFO 'DEBUG: tabledef03:%', buffer3; END IF;
             EXECUTE buffer3;
             -- issue#91 fix
             buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
@@ -969,11 +1027,11 @@ BEGIN
       WHERE c.relname = quote_ident(tblname) COLLATE pg_catalog.default AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default;
 
       qry := buffer || ') PARTITION BY ' || buffer2 || ';';
-      IF ddl_only THEN
+      IF bDDLOnly THEN
         RAISE INFO '%', qry;
         RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || pc.relname, tblowner;
       ELSE
-        IF verbose_ THEN RAISE INFO 'DEBUG: tabledef04:%', buffer3; END IF;
+        IF _verbose THEN RAISE INFO 'DEBUG: tabledef04:%', buffer3; END IF;
         EXECUTE qry;
         -- issue#91 fix
         buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || pc.relname || ' OWNER TO ' || tblowner;
@@ -990,7 +1048,7 @@ BEGIN
       LOOP
         qry := 'ALTER TABLE ONLY ' || object || ' ATTACH PARTITION ' || aname || ' ' || part_range || ';';
         -- issue#91, not sure if we need to do this for child tables
-        IF ddl_only THEN
+        IF bDDLOnly THEN
           RAISE INFO '%', qry;
         ELSE
           EXECUTE qry;
@@ -1011,7 +1069,7 @@ BEGIN
         AND regexp_replace(old.indexdef, E'.*USING','') = regexp_replace(new.indexdef, E'.*USING','')
         ORDER BY old.indexdef, new.indexdef
     LOOP
-      IF ddl_only THEN
+      IF bDDLOnly THEN
         RAISE INFO '%', 'ALTER INDEX ' || quote_ident(dest_schema) || '.'  || quote_ident(ix_new_name) || ' RENAME TO ' || quote_ident(ix_old_name) || ';';
       ELSE
         -- The SELECT query above may return duplicate names when a column is
@@ -1037,7 +1095,7 @@ BEGIN
       END IF;
     END LOOP;
 
-    IF include_recs THEN
+    IF bData THEN
       -- Insert records from source table
 
       -- 2021-03-03  MJV FIX
@@ -1056,7 +1114,7 @@ BEGIN
       
       -- Issue#86 fix:
       -- IF data_type = 'USER-DEFINED' THEN
-      IF verbose_ THEN RAISE INFO 'DEBUG includerecs branch  table=%  data_type=%  isgenerated=%', tblname, data_type, isGenerated; END IF;
+      IF _verbose THEN RAISE INFO 'DEBUG includerecs branch  table=%  data_type=%  isgenerated=%', tblname, data_type, isGenerated; END IF;
       IF data_type = 'USER-DEFINED' OR isGenerated = 'ALWAYS' THEN
 
         -- RAISE WARNING 'Bypassing copying rows for table (%) with user-defined data types.  You must copy them manually.', tblname;
@@ -1106,7 +1164,7 @@ BEGIN
     LOOP
       -- Issue#78 FIX: handle case-sensitive names with quote_ident() on column name
       buffer2 = 'ALTER TABLE ' || buffer || ' ALTER COLUMN ' || quote_ident(column_) || ' SET DEFAULT ' || default_ || ';';
-      IF ddl_only THEN
+      IF bDDLOnly THEN
         -- May need to come back and revisit this since previous sql will not return anything since no schema as created!
         RAISE INFO '%', buffer2;
       ELSE
@@ -1120,7 +1178,7 @@ BEGIN
   RAISE NOTICE '      TABLES cloned: %', LPAD(cnt::text, 5, ' ');
 
   SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
-  IF verbose_ THEN RAISE INFO 'DEBUG: search_path=%', v_dummy; END IF;
+  IF _verbose THEN RAISE INFO 'DEBUG: search_path=%', v_dummy; END IF;
 
   -- Assigning sequences to table columns.
   action := 'Sequences assigning';
@@ -1162,7 +1220,7 @@ BEGIN
         || sq_owned
         || ';';
 
-      IF ddl_only THEN
+      IF bDDLOnly THEN
         RAISE INFO '%', qry;
       ELSE
         EXECUTE qry;
@@ -1186,10 +1244,10 @@ BEGIN
     END IF;
     cnt := cnt + 1;
     buffer := quote_ident(dest_schema) || '.' || quote_ident(object);
-    IF include_recs THEN
+    IF bData THEN
       EXECUTE 'SELECT setval( ''' || buffer || ''', ' || sq_last_value || ', ' || sq_is_called || ');' ;
     ELSE
-      if ddl_only THEN
+      if bDDLOnly THEN
         -- fix#63
         RAISE INFO '%', 'SELECT setval( ''' || buffer || ''', ' || sq_last_value || ', ' || sq_is_called || ');' ;
       ELSE
@@ -1228,7 +1286,7 @@ BEGIN
         INTO qry;
   
         SELECT replace(qry, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO dest_qry;
-        IF ddl_only THEN
+        IF bDDLOnly THEN
           RAISE INFO '%;', dest_qry;
           -- Issue#91 Fix
           IF func_argno = 0 THEN
@@ -1256,7 +1314,7 @@ BEGIN
         cnt := cnt + 1;
         SELECT pg_get_functiondef(func_oid) INTO qry;
         SELECT replace(qry, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO dest_qry;
-        IF ddl_only THEN
+        IF bDDLOnly THEN
           RAISE INFO '%;', dest_qry;
         ELSE
           EXECUTE dest_qry;
@@ -1306,7 +1364,7 @@ BEGIN
         LEFT JOIN pg_operator op ON op.oid = a.aggsortop
         WHERE p.oid = func_oid;
   
-        IF ddl_only THEN
+        IF bDDLOnly THEN
           RAISE INFO '%;', dest_qry;
         ELSE
           EXECUTE dest_qry;
@@ -1351,7 +1409,7 @@ BEGIN
         LEFT JOIN pg_operator op ON op.oid = a.aggsortop
         WHERE p.oid = func_oid;
   
-        IF ddl_only THEN
+        IF bDDLOnly THEN
           RAISE INFO '%;', dest_qry;
         ELSE
           EXECUTE dest_qry;
@@ -1440,7 +1498,7 @@ BEGIN
     SELECT REPLACE(object, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO v_def;
     -- NOTE: definition already includes the closing statement semicolon
     SELECT REPLACE(aname, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO buffer3;
-    IF ddl_only THEN
+    IF bDDLOnly THEN
       RAISE INFO '%', v_def;
       -- Issue#91 Fix
       RAISE INFO 'ALTER TABLE % OWNER TO %', buffer3, view_owner || ';';
@@ -1469,11 +1527,11 @@ BEGIN
       -- MJV FIX: #72 remove source schema in MV def
       SELECT REPLACE(v_def, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO buffer2;
 
-      IF include_recs THEN
+      IF bData THEN
         -- EXECUTE 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || v_def || ' WITH DATA;' ;
         EXECUTE 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || buffer2 || ' WITH DATA;' ;
       ELSE
-        IF ddl_only THEN
+        IF bDDLOnly THEN
           RAISE INFO '%', 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || buffer2 || ' WITH NO DATA;' ;
           -- Issue#91
           RAISE INFO '%', 'ALTER MATERIALIZED VIEW ' || buffer || ' OWNER TO ' || view_owner || ';' ;
@@ -1486,7 +1544,7 @@ BEGIN
       END IF;
       SELECT coalesce(obj_description(oid), '') into adef from pg_class where relkind = 'm' and relname = object;
       IF adef <> '' THEN
-        IF ddl_only THEN
+        IF bDDLOnly THEN
           RAISE INFO '%', 'COMMENT ON MATERIALIZED VIEW ' || quote_ident(dest_schema) || '.' || object || ' IS ''' || adef || ''';';
         ELSE
           EXECUTE 'COMMENT ON MATERIALIZED VIEW ' || quote_ident(dest_schema) || '.' || object || ' IS ''' || adef || ''';';
@@ -1496,7 +1554,7 @@ BEGIN
       FOR aname, adef IN
         SELECT indexname, replace(indexdef, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') as newdef FROM pg_indexes where schemaname = quote_ident(source_schema) and tablename = object order by indexname
       LOOP
-        IF ddl_only THEN
+        IF bDDLOnly THEN
           RAISE INFO '%', adef || ';';
         ELSE
           EXECUTE adef || ';';
@@ -1533,7 +1591,7 @@ BEGIN
   LOOP
     BEGIN
       cnt := cnt + 1;
-      IF ddl_only THEN
+      IF bDDLOnly THEN
         RAISE INFO '%', arec.trig_ddl;
       ELSE
         EXECUTE arec.trig_ddl;
@@ -1555,7 +1613,7 @@ BEGIN
   LOOP
     cnt := cnt + 1;
     buffer := REPLACE(arec.definition, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
-    IF ddl_only THEN
+    IF bDDLOnly THEN
       RAISE INFO '%', buffer;
     ELSE
       EXECUTE buffer;
@@ -1578,7 +1636,7 @@ BEGIN
     ORDER BY policyname
   LOOP
     cnt := cnt + 1;
-    IF ddl_only THEN
+    IF bDDLOnly THEN
       RAISE INFO '%', arec.definition;
     ELSE
       EXECUTE arec.definition;
@@ -1588,7 +1646,7 @@ BEGIN
     SELECT c.relrowsecurity INTO abool FROM pg_class c, pg_namespace n where n.nspname = quote_ident(arec.schemaname) AND n.oid = c.relnamespace AND c.relname = quote_ident(arec.tablename) and c.relkind = 'r';
     IF abool THEN
       buffer = 'ALTER TABLE ' || dest_schema || '.' || arec.tablename || ' ENABLE ROW LEVEL SECURITY;';
-      IF ddl_only THEN
+      IF bDDLOnly THEN
         RAISE INFO '%', buffer;
       ELSE
         EXECUTE buffer;
@@ -1624,7 +1682,7 @@ BEGIN
     -- BAD : "COMMENT ON SEQUENCE sample_clone2.CaseSensitive_ID_seq IS 'just a comment on CaseSensitive sequence';"
     -- GOOD: "COMMENT ON SEQUENCE "CaseSensitive_ID_seq" IS 'just a comment on CaseSensitive sequence';"
     
-    IF ddl_only THEN
+    IF bDDLOnly THEN
       RAISE INFO '%', qry;
     ELSE
       EXECUTE qry;
@@ -1689,7 +1747,7 @@ BEGIN
     ORDER BY 1
   LOOP
     cnt2 := cnt2 + 1;
-    IF ddl_only THEN
+    IF bDDLOnly THEN
       RAISE INFO '%', qry;
     ELSE
       EXECUTE qry;
@@ -1752,7 +1810,7 @@ BEGIN
     ORDER BY 1
   LOOP
     cnt2 := cnt2 + 1;
-    IF ddl_only THEN
+    IF bDDLOnly THEN
       RAISE INFO '%', qry;
     ELSE
       EXECUTE qry;
@@ -1802,7 +1860,7 @@ BEGIN
                 buffer = 'SET ROLE = ' || grantor || '; ' || buffer;
             END IF;
             
-            IF ddl_only THEN
+            IF bDDLOnly THEN
               RAISE INFO '%', buffer;
             ELSE
               EXECUTE buffer;
@@ -1821,7 +1879,7 @@ BEGIN
                   buffer = 'SET ROLE = ' || grantor || '; ' || buffer;
               END IF;
 
-              IF ddl_only THEN
+              IF bDDLOnly THEN
                 RAISE INFO '%', buffer;
               ELSE
                 EXECUTE buffer;
@@ -1857,7 +1915,7 @@ BEGIN
                   buffer = 'SET ROLE = ' || grantor || '; ' || buffer;
               END IF;
               
-              IF ddl_only THEN
+              IF bDDLOnly THEN
                 RAISE INFO '%', buffer;
               ELSE
                 EXECUTE buffer;
@@ -1916,7 +1974,7 @@ BEGIN
                 buffer = 'SET ROLE = ' || grantor || '; ' || buffer;
             END IF;
             
-            IF ddl_only THEN
+            IF bDDLOnly THEN
               RAISE INFO '%', buffer;
             ELSE
               EXECUTE buffer;
@@ -1936,7 +1994,7 @@ BEGIN
                   buffer = 'SET ROLE = ' || grantor || '; ' || buffer;
               END IF;
               
-              IF ddl_only THEN
+              IF bDDLOnly THEN
                 RAISE INFO '%', buffer;
               ELSE
                 EXECUTE buffer;
@@ -1953,7 +2011,7 @@ BEGIN
                   buffer = 'SET ROLE = ' || grantor || '; ' || buffer;
               END IF;
               
-              IF ddl_only THEN
+              IF bDDLOnly THEN
                 RAISE INFO '%', buffer;
               ELSE
                 EXECUTE buffer;
@@ -1990,7 +2048,7 @@ BEGIN
   LOOP
     BEGIN
       cnt := cnt + 1;
-      IF ddl_only THEN
+      IF bDDLOnly THEN
         RAISE INFO '%', arec.schema_ddl;
       ELSE
         EXECUTE arec.schema_ddl;
@@ -2013,8 +2071,8 @@ BEGIN
   LOOP
     BEGIN
       cnt := cnt + 1;
-      -- IF verbose_ THEN RAISE NOTICE 'DEBUG: ddl=%', arec.seq_ddl; END IF;
-      IF ddl_only THEN
+      -- IF _verbose THEN RAISE NOTICE 'DEBUG: ddl=%', arec.seq_ddl; END IF;
+      IF bDDLOnly THEN
         RAISE INFO '%', arec.seq_ddl;
       ELSE
         EXECUTE arec.seq_ddl;
@@ -2055,7 +2113,7 @@ BEGIN
   LOOP
     BEGIN
       cnt := cnt + 1;
-      IF ddl_only THEN
+      IF bDDLOnly THEN
         RAISE INFO '%', arec.func_dcl;
       ELSE
         EXECUTE arec.func_dcl;
@@ -2086,12 +2144,12 @@ BEGIN
   LOOP
     BEGIN
       cnt := cnt + 1;
-      -- IF verbose_ THEN RAISE NOTICE 'DEBUG: ddl=%', arec.tbl_dcl; END IF;
+      -- IF _verbose THEN RAISE NOTICE 'DEBUG: ddl=%', arec.tbl_dcl; END IF;
       -- Issue#46. Fixed reference to invalid record name (tbl_ddl --> tbl_dcl).
       IF arec.relkind = 'f' THEN
         RAISE WARNING 'Foreign tables are not currently implemented, so skipping privs for them. ddl=%', arec.tbl_dcl;
       ELSE
-          IF ddl_only THEN
+          IF bDDLOnly THEN
               RAISE INFO '%', arec.tbl_dcl;
           ELSE
               EXECUTE arec.tbl_dcl;
@@ -2104,7 +2162,7 @@ BEGIN
 
   -- LOOP for regular tables and populate them if specified
   -- Issue#75 moved from big table loop above to here.
-  IF include_recs THEN
+  IF bData THEN
     EXECUTE 'SET search_path = ' || quote_ident(dest_schema) ;
     action := 'Copy Rows';
     FOREACH tblelement IN ARRAY tblarray
@@ -2120,7 +2178,7 @@ BEGIN
            buffer = substring(buffer,1, cnt2);       
        END IF;
        SELECT RPAD(buffer, 35, ' ') INTO buffer;
-       IF verbose_ THEN RAISE NOTICE ' Populated cloned table, %   Rows Copied: %', buffer, cnt; END IF;
+       IF _verbose THEN RAISE NOTICE ' Populated cloned table, %   Rows Copied: %', buffer, cnt; END IF;
        tblscopied := tblscopied + 1;
     END LOOP;
     
@@ -2135,7 +2193,7 @@ BEGIN
            buffer = substring(tblelement, 1, cnt2);
            buffer = substring(buffer, 6);
            SELECT RPAD(buffer, 35, ' ') INTO buffer;
-           IF verbose_ THEN RAISE NOTICE ' Populated cloned table, %   Rows Copied: %', buffer, cnt; END IF;
+           IF _verbose THEN RAISE NOTICE ' Populated cloned table, %   Rows Copied: %', buffer, cnt; END IF;
            tblscopied := tblscopied + 1;
        END IF;
     END LOOP;    
@@ -2164,7 +2222,7 @@ BEGIN
         AND ct.contype = 'f'
   LOOP
     cnt := cnt + 1;
-    IF ddl_only THEN
+    IF bDDLOnly THEN
       RAISE INFO '%', qry;
     ELSE
       EXECUTE qry;
@@ -2182,7 +2240,7 @@ BEGIN
     EXECUTE 'SET search_path = ' || src_path_old;
   END IF;
   SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
-  IF verbose_ THEN RAISE INFO 'DEBUG: setting search_path back to what it was: %', v_dummy; END IF;
+  IF _verbose THEN RAISE INFO 'DEBUG: setting search_path back to what it was: %', v_dummy; END IF;
 
   EXCEPTION
      WHEN others THEN
@@ -2209,4 +2267,3 @@ END;
 $BODY$
   LANGUAGE plpgsql VOLATILE  COST 100;
 -- ALTER FUNCTION public.clone_schema(text, text, boolean, boolean, boolean) OWNER TO postgres;
- 
