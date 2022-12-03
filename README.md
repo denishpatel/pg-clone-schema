@@ -25,7 +25,7 @@ Arguments:
 <pre>source schema  Required: text - schema name</pre>
 <pre>target schema  Required: text - table name</pre>
 <pre>ENUM list      Optional: 'DATA', 'DDLONLY','NOOWNER','NOACL','VERBOSE'</pre>
-<pre>                          Default= <none> implies create the target schema objects with no data</pre>
+                               Default= <none> implies create the target schema objects with no data</pre>
 
 You can call function like this to clone the schema with no data:
 <br/>
