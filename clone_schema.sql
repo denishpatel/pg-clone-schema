@@ -460,7 +460,6 @@ BEGIN
   RAISE NOTICE 'clone_schema version %', v_version;
 
   IF 'VERBOSE' = ANY ($3) THEN bVerbose = True; END IF;
-  RAISE INFO 'verbose= %', bVerbose;
   
   arglen := array_length($3, 1);
   IF arglen IS NULL THEN
@@ -485,11 +484,9 @@ BEGIN
     END LOOP;
     IF bData and bDDLOnly THEN 
       RAISE WARNING 'You can only specify DDLONLY or DATA, but not both.';
-      RETURN '';
+      RETURN;
     END IF;
   END IF;  
-    
-  RETURN '';
   
   -- Get server version info to handle certain things differently based on the version.
   SELECT setting INTO sq_server_version
@@ -554,16 +551,16 @@ BEGIN
   -- returned unquoted by some applications, we ensure it remains double quoted.
   -- MJV FIX: #47
   SELECT setting INTO v_dummy FROM pg_settings WHERE name='search_path';
-  IF _verbose THEN RAISE INFO 'DEBUG: search_path=%', v_dummy; END IF;
+  IF bVerbose THEN RAISE INFO 'DEBUG: search_path=%', v_dummy; END IF;
   
   SELECT REPLACE(REPLACE(setting, '"$user"', '$user'), '$user', '"$user"') INTO src_path_old
   FROM pg_settings WHERE name = 'search_path';
 
-  IF _verbose THEN RAISE INFO 'DEBUG: src_path_old=%', src_path_old; END IF;
+  IF bVerbose THEN RAISE INFO 'DEBUG: src_path_old=%', src_path_old; END IF;
 
   EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
   SELECT setting INTO src_path_new FROM pg_settings WHERE name='search_path';
-  IF _verbose THEN RAISE INFO 'DEBUG: new search_path=%', src_path_new; END IF;
+  IF bVerbose THEN RAISE INFO 'DEBUG: new search_path=%', src_path_new; END IF;
 
   -- Validate required types exist.  If not, create them.
   SELECT a.objtypecnt, b.permtypecnt INTO cnt, cnt2
@@ -845,13 +842,13 @@ BEGIN
   -- Create tables including partitioned ones (parent/children) and unlogged ones.  Order by is critical since child partition range logic is dependent on it.
   action := 'Tables';
   SELECT setting INTO v_dummy FROM pg_settings WHERE name='search_path';
-  IF _verbose THEN RAISE INFO 'DEBUG: search_path=%', v_dummy; END IF;
+  IF bVerbose THEN RAISE INFO 'DEBUG: search_path=%', v_dummy; END IF;
   
   cnt := 0;
   -- Issue#61 FIX: use set_config for empty string
   -- SET search_path = '';
   SELECT set_config('search_path', '', false) into v_dummy;
-  IF _verbose THEN RAISE INFO 'DEBUG: setting search_path to empty string:%', v_dummy; END IF;
+  IF bVerbose THEN RAISE INFO 'DEBUG: setting search_path to empty string:%', v_dummy; END IF;
   -- Fix#86 add isgenerated to column list
   -- Fix#91 add tblowner for setting the table ownership to that of the source
   FOR tblname, relpersist, bRelispart, relknd, data_type, udt_name, ocomment, l_child, isGenerated, tblowner  IN
@@ -923,7 +920,7 @@ BEGIN
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
           SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
-          IF _verbose THEN RAISE INFO 'DEBUG: tabledef01:%', buffer3; END IF;
+          IF bVerbose THEN RAISE INFO 'DEBUG: tabledef01:%', buffer3; END IF;
           -- #82: Table def should be fully qualified with target schema, 
           --      so just make search path = public to handle extension types that should reside in public schema
           v_dummy = 'public';
@@ -935,11 +932,11 @@ BEGIN
         ELSE
           IF (NOT bChild OR bRelispart) THEN
             buffer3 := 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
-            IF _verbose THEN RAISE INFO 'DEBUG: tabledef02:%', buffer3; END IF;
+            IF bVerbose THEN RAISE INFO 'DEBUG: tabledef02:%', buffer3; END IF;
             EXECUTE buffer3;
             -- issue#91 fix
             buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.'  || quote_ident(tblname) || ' OWNER TO ' || tblowner;            
-            IF _verbose THEN RAISE INFO 'DEBUG: tabledef02:%', buffer3; END IF;
+            IF bVerbose THEN RAISE INFO 'DEBUG: tabledef02:%', buffer3; END IF;
             EXECUTE buffer3;
           ELSE
             -- FIXED #65, #67
@@ -950,7 +947,7 @@ BEGIN
             -- set client_min_messages higher to avoid messages like this:
             -- NOTICE:  merging column "city_id" with inherited definition
             set client_min_messages = 'WARNING';
-            IF _verbose THEN RAISE INFO 'DEBUG: tabledef03:%', buffer3; END IF;
+            IF bVerbose THEN RAISE INFO 'DEBUG: tabledef03:%', buffer3; END IF;
             EXECUTE buffer3;
             -- issue#91 fix
             buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
@@ -1029,12 +1026,12 @@ BEGIN
       qry := buffer || ') PARTITION BY ' || buffer2 || ';';
       IF bDDLOnly THEN
         RAISE INFO '%', qry;
-        RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || pc.relname, tblowner;
+        RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || quote_ident(tblname), tblowner;
       ELSE
-        IF _verbose THEN RAISE INFO 'DEBUG: tabledef04:%', buffer3; END IF;
+        IF bVerbose THEN RAISE INFO 'DEBUG: tabledef04:%', buffer3; END IF;
         EXECUTE qry;
         -- issue#91 fix
-        buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || pc.relname || ' OWNER TO ' || tblowner;
+        buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || ' OWNER TO ' || tblowner;
         EXECUTE buffer3;
         
       END IF;
@@ -1114,7 +1111,7 @@ BEGIN
       
       -- Issue#86 fix:
       -- IF data_type = 'USER-DEFINED' THEN
-      IF _verbose THEN RAISE INFO 'DEBUG includerecs branch  table=%  data_type=%  isgenerated=%', tblname, data_type, isGenerated; END IF;
+      IF bVerbose THEN RAISE INFO 'DEBUG includerecs branch  table=%  data_type=%  isgenerated=%', tblname, data_type, isGenerated; END IF;
       IF data_type = 'USER-DEFINED' OR isGenerated = 'ALWAYS' THEN
 
         -- RAISE WARNING 'Bypassing copying rows for table (%) with user-defined data types.  You must copy them manually.', tblname;
@@ -1178,7 +1175,7 @@ BEGIN
   RAISE NOTICE '      TABLES cloned: %', LPAD(cnt::text, 5, ' ');
 
   SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
-  IF _verbose THEN RAISE INFO 'DEBUG: search_path=%', v_dummy; END IF;
+  IF bVerbose THEN RAISE INFO 'DEBUG: search_path=%', v_dummy; END IF;
 
   -- Assigning sequences to table columns.
   action := 'Sequences assigning';
@@ -1274,12 +1271,14 @@ BEGIN
     -- MJV FIX per issue# 34
     -- SET search_path = '';
     EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
-  
-  
+    
     -- Fixed Issue#65
     -- FOR func_oid IN SELECT oid FROM pg_proc WHERE pronamespace = src_oid AND prokind != 'a'
     IF is_prokind THEN
-      FOR func_oid, func_owner, func_name, func_args, func_argno IN SELECT p.oid, pg_catalog.pg_get_userbyid(p.proowner), p.proname, oidvectortypes(p.proargtypes), p.pronargs FROM pg_proc p WHERE p.pronamespace = src_oid AND p.prokind != 'a'
+      FOR func_oid, func_owner, func_name, func_args, func_argno, buffer3 IN 
+          SELECT p.oid, pg_catalog.pg_get_userbyid(p.proowner), p.proname, oidvectortypes(p.proargtypes), p.pronargs,
+          CASE WHEN prokind = 'p' THEN 'PROCEDURE' WHEN prokind = 'f' THEN 'FUNCTION' ELSE '' END CASE 
+          FROM pg_proc p WHERE p.pronamespace = src_oid AND p.prokind != 'a'
       LOOP
         cnt := cnt + 1;
         SELECT pg_get_functiondef(func_oid)
@@ -1290,18 +1289,19 @@ BEGIN
           RAISE INFO '%;', dest_qry;
           -- Issue#91 Fix
           IF func_argno = 0 THEN
-              RAISE INFO 'ALTER FUNCTION % OWNER TO %', quote_ident(dest_schema) || '.' || func_name, func_owner || ';';
+              RAISE INFO 'ALTER % %() OWNER TO %', buffer3, quote_ident(dest_schema) || '.' || quote_ident(func_name), func_owner || ';';
           ELSE
-              RAISE INFO 'ALTER FUNCTION % OWNER TO %', quote_ident(dest_schema) || '.' || func_name || '(' || func_args || ')', func_owner || ';';
+              RAISE INFO 'ALTER % % OWNER TO %', buffer3, quote_ident(dest_schema) || '.' || quote_ident(func_name) || '(' || func_args || ')', func_owner || ';';
           END IF;
         ELSE
+          IF bVerbose THEN RAISE NOTICE '%', dest_qry; END IF;
           EXECUTE dest_qry;
 
           -- Issue#91 Fix
           IF func_argno = 0 THEN
-              dest_qry = 'ALTER FUNCTION ' || quote_ident(dest_schema) || '.' || func_name || ' OWNER TO ' || func_owner || ';';
+              dest_qry = 'ALTER ' || buffer3 || ' ' || quote_ident(dest_schema) || '.' || quote_ident(func_name) || '() OWNER TO ' || func_owner || ';';
           ELSE
-              dest_qry = 'ALTER FUNCTION ' || quote_ident(dest_schema) || '.' || func_name || '(' || func_args || ') OWNER TO ' || func_owner || ';';
+              dest_qry = 'ALTER ' || buffer3 || ' ' || quote_ident(dest_schema) || '.' || quote_ident(func_name) || '(' || func_args || ') OWNER TO ' || func_owner || ';';
           END IF;
           EXECUTE dest_qry;
         END IF;
@@ -2071,7 +2071,7 @@ BEGIN
   LOOP
     BEGIN
       cnt := cnt + 1;
-      -- IF _verbose THEN RAISE NOTICE 'DEBUG: ddl=%', arec.seq_ddl; END IF;
+      -- IF bVerbose THEN RAISE NOTICE 'DEBUG: ddl=%', arec.seq_ddl; END IF;
       IF bDDLOnly THEN
         RAISE INFO '%', arec.seq_ddl;
       ELSE
@@ -2144,7 +2144,7 @@ BEGIN
   LOOP
     BEGIN
       cnt := cnt + 1;
-      -- IF _verbose THEN RAISE NOTICE 'DEBUG: ddl=%', arec.tbl_dcl; END IF;
+      -- IF bVerbose THEN RAISE NOTICE 'DEBUG: ddl=%', arec.tbl_dcl; END IF;
       -- Issue#46. Fixed reference to invalid record name (tbl_ddl --> tbl_dcl).
       IF arec.relkind = 'f' THEN
         RAISE WARNING 'Foreign tables are not currently implemented, so skipping privs for them. ddl=%', arec.tbl_dcl;
@@ -2178,7 +2178,7 @@ BEGIN
            buffer = substring(buffer,1, cnt2);       
        END IF;
        SELECT RPAD(buffer, 35, ' ') INTO buffer;
-       IF _verbose THEN RAISE NOTICE ' Populated cloned table, %   Rows Copied: %', buffer, cnt; END IF;
+       IF bVerbose THEN RAISE NOTICE ' Populated cloned table, %   Rows Copied: %', buffer, cnt; END IF;
        tblscopied := tblscopied + 1;
     END LOOP;
     
@@ -2193,7 +2193,7 @@ BEGIN
            buffer = substring(tblelement, 1, cnt2);
            buffer = substring(buffer, 6);
            SELECT RPAD(buffer, 35, ' ') INTO buffer;
-           IF _verbose THEN RAISE NOTICE ' Populated cloned table, %   Rows Copied: %', buffer, cnt; END IF;
+           IF bVerbose THEN RAISE NOTICE ' Populated cloned table, %   Rows Copied: %', buffer, cnt; END IF;
            tblscopied := tblscopied + 1;
        END IF;
     END LOOP;    
@@ -2240,7 +2240,7 @@ BEGIN
     EXECUTE 'SET search_path = ' || src_path_old;
   END IF;
   SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
-  IF _verbose THEN RAISE INFO 'DEBUG: setting search_path back to what it was: %', v_dummy; END IF;
+  IF bVerbose THEN RAISE INFO 'DEBUG: setting search_path back to what it was: %', v_dummy; END IF;
 
   EXCEPTION
      WHEN others THEN
