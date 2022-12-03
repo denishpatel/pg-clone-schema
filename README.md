@@ -19,14 +19,13 @@ Handles following objects:
 Arguments:
 * source schema
 * target schema
-* clone with data (boolean)
-* only generate DDL (boolean)
+* Enumerated list
 
 <pre>source schema  Required: text - schema name</pre>
 <pre>target schema  Required: text - table name</pre>
 <pre>ENUM list      Optional: 'DATA', 'DDLONLY','NOOWNER','NOACL','VERBOSE'</pre>
 No parameters implies create the target schema objects with no data.
-
+<br/><br/>
 
 You can call function like this to clone the schema with no data:
 <br/>
