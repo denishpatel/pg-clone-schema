@@ -2209,3 +2209,4 @@ END;
 $BODY$
   LANGUAGE plpgsql VOLATILE  COST 100;
 -- ALTER FUNCTION public.clone_schema(text, text, boolean, boolean, boolean) OWNER TO postgres;
+ 
