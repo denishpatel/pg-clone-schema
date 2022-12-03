@@ -22,19 +22,24 @@ Arguments:
 * clone with data (boolean)
 * only generate DDL (boolean)
 
-You can call function like this to copy schema with data:
+<pre>source schema  Required: text - schema name</pre>
+<pre>target schema  Required: text - table name</pre>
+<pre>ENUM list      Optional: 'DATA', 'DDLONLY','NOOWNER','NOACL','VERBOSE'</pre>
+<pre>                          Default= <none> implies create the target schema objects with no data</pre>
+
+You can call function like this to clone the schema with no data:
 <br/>
->select clone_schema('sample', 'sample_clone', true, false);
+>select clone_schema('sample', 'sample_clone');
 <br/>
 
-Alternatively, if you want to copy only schema without data:
+Alternatively, if you want to clone schema with data:
 <br/>
->select clone_schema('sample', 'sample_clone', false, false);
+>select clone_schema('sample', 'sample_clone', 'DATA');
 <br/>
 
 If you just want to generate the DDL, call it like this:
 <br/>
->select clone_schema('sample', 'sample_clone', false, true);
+>select clone_schema('sample', 'sample_clone', 'DDLONLY');
 
 In this case, standard output with "INFO" lines are the generated DDL.
 <br/><br/><br/>
