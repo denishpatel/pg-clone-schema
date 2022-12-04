@@ -41,6 +41,7 @@
 -- 2022-12-02  MJV FIX: Fixed Issue#91 Fix ownership of objects.  Currently it is defaulting to the one running this script. Let it be the same owner as the source schema to preserve access control.
 -- 2022-12-02  MJV FIX: Fixed Issue#92 Default privileges error: Must set the role before executing the command.
 -- 2022-12-03  MJV FIX: Fixed Issue#94 Make parameters variadic
+-- 2022-12-04  MJV FIX: Fixed Issue#96 PG15 may not populate the collcollate and collctype columns of the pg_collation table.  Handle this.
 
 do $$ 
 <<first_block>>
@@ -53,8 +54,8 @@ BEGIN
   AND n.nspname <> 'pg_catalog' AND n.nspname <> 'information_schema' AND pg_catalog.pg_type_is_visible(t.oid)
   AND pg_catalog.format_type(t.oid, NULL) in ('cloneparms');
   IF cnt = 0 THEN
-    RAISE INFO 'Creating custom types.';
-    CREATE TYPE public.cloneparms AS ENUM ('DATA', 'DDLONLY','NOOWNER','NOACL','VERBOSE');
+    RAISE NOTICE 'Creating custom types.';
+    CREATE TYPE public.cloneparms AS ENUM ('DATA', 'DDLONLY','NOOWNER','NOACL','VERBOSE','DEBUG');
   END IF;
 end first_block $$;
 
@@ -333,7 +334,7 @@ $$
     ELSE
       EXECUTE 'SET search_path = ' || v_src_path_old;
     END IF;
-    -- RAISE INFO 'DEBUG tableddl: reset search_path back to ***%***', v_src_path_old;
+    -- RAISE NOTICE 'DEBUG tableddl: reset search_path back to ***%***', v_src_path_old;
 
     -- return the ddl
     RETURN v_table_ddl;
@@ -446,6 +447,7 @@ DECLARE
   bData            boolean := False;
   bDDLOnly         boolean := False;
   bVerbose         boolean := False;
+  bDebug           boolean := False;
   bNoACL           boolean := False;
   bNoOwner         boolean := False;
   arglen           integer;
@@ -459,6 +461,7 @@ BEGIN
   SET client_min_messages = 'notice';
   RAISE NOTICE 'clone_schema version %', v_version;
 
+  IF 'DEBUG'   = ANY ($3) THEN bDebug = True; END IF;
   IF 'VERBOSE' = ANY ($3) THEN bVerbose = True; END IF;
   
   arglen := array_length($3, 1);
@@ -469,15 +472,15 @@ BEGIN
     -- loop thru args
     -- IF 'NO_TRIGGERS' = ANY ($3)
     -- select array_to_string($3, ',', '***') INTO vargs;
-    IF bVerbose THEN RAISE NOTICE 'arguments=%', $3; END IF;
+    IF bDebug THEN RAISE NOTICE 'arguments=%', $3; END IF;
     FOREACH avarg IN ARRAY $3 LOOP
-      IF bVerbose THEN RAISE INFO 'arg=%', avarg; END IF;
+      IF bDebug THEN RAISE NOTICE 'arg=%', avarg; END IF;
       IF avarg = 'DATA' THEN
         bData = True;
       ELSEIF avarg = 'DDLONLY' THEN
         bDDLOnly = True;
       ELSEIF avarg = 'NOACL' THEN
-        bNoOwner = True;
+        bNoACL = True;
       ELSEIF avarg = 'NOOWNER' THEN
         bNoOwner = True;        
       END IF;
@@ -485,6 +488,9 @@ BEGIN
     IF bData and bDDLOnly THEN 
       RAISE WARNING 'You can only specify DDLONLY or DATA, but not both.';
       RETURN;
+    ELSEIF bNoACL or bNoOwner THEN
+      RAISE WARNING 'NOACL and NOOWNER are not implemented yet. Please try again without these parameters.';
+      RETURN;    
     END IF;
   END IF;  
   
@@ -551,16 +557,16 @@ BEGIN
   -- returned unquoted by some applications, we ensure it remains double quoted.
   -- MJV FIX: #47
   SELECT setting INTO v_dummy FROM pg_settings WHERE name='search_path';
-  IF bVerbose THEN RAISE INFO 'DEBUG: search_path=%', v_dummy; END IF;
+  IF bDebug THEN RAISE NOTICE 'search_path=%', v_dummy; END IF;
   
   SELECT REPLACE(REPLACE(setting, '"$user"', '$user'), '$user', '"$user"') INTO src_path_old
   FROM pg_settings WHERE name = 'search_path';
 
-  IF bVerbose THEN RAISE INFO 'DEBUG: src_path_old=%', src_path_old; END IF;
+  IF bDebug THEN RAISE NOTICE 'src_path_old=%', src_path_old; END IF;
 
   EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
   SELECT setting INTO src_path_new FROM pg_settings WHERE name='search_path';
-  IF bVerbose THEN RAISE INFO 'DEBUG: new search_path=%', src_path_new; END IF;
+  IF bDebug THEN RAISE NOTICE 'new search_path=%', src_path_new; END IF;
 
   -- Validate required types exist.  If not, create them.
   SELECT a.objtypecnt, b.permtypecnt INTO cnt, cnt2
@@ -609,8 +615,8 @@ BEGIN
 
   IF bDDLOnly THEN
     RAISE NOTICE ' Only generating DDL, not actually creating anything...';
-    RAISE INFO 'CREATE SCHEMA %;', quote_ident(dest_schema);
-    RAISE INFO 'SET search_path=%;', quote_ident(dest_schema);
+    RAISE NOTICE 'CREATE SCHEMA %;', quote_ident(dest_schema);
+    RAISE NOTICE 'SET search_path=%;', quote_ident(dest_schema);
   ELSE
     EXECUTE 'CREATE SCHEMA ' || quote_ident(dest_schema) ;
   END IF;
@@ -630,17 +636,36 @@ BEGIN
   -- MV: Create Collations
   action := 'Collations';
   cnt := 0;
+  -- Issue#96 Handle differently based on PG Versions (PG15 rely on colliculocale, not collcolocate)
   IF sq_server_version_num < 100000 THEN
     RAISE NOTICE ' Collation cloning is are not supported in PG versions older than v10.  Current version is %-%', sq_server_version, sq_server_version_num;
+  ELSEIF sq_server_version_num > 150000 THEN 
+    FOR arec IN
+      SELECT n.nspname AS schemaname, a.rolname AS ownername, c.collname, c.collprovider, c.collcollate AS locale, 
+             'CREATE COLLATION ' || quote_ident(dest_schema) || '."' || c.collname || '" (provider = ' || 
+             CASE WHEN c.collprovider = 'i' THEN 'icu' WHEN c.collprovider = 'c' THEN 'libc' ELSE '' END || 
+             ', locale = ''' || c.colliculocale || ''');' AS COLL_DDL
+      FROM pg_collation c
+          JOIN pg_namespace n ON (c.collnamespace = n.oid)
+          JOIN pg_roles a ON (c.collowner = a.oid)
+      WHERE n.nspname = quote_ident(source_schema)
+      ORDER BY c.collname
+    LOOP
+      BEGIN
+        cnt := cnt + 1;
+        IF bDDLOnly THEN
+          RAISE INFO '%', arec.coll_ddl;
+        ELSE
+          EXECUTE arec.coll_ddl;
+        END IF;
+      END;
+    END LOOP;
   ELSE
     FOR arec IN
-      SELECT n.nspname AS schemaname, a.rolname AS ownername, c.collname, c.collprovider, c.collcollate AS locale, 'CREATE COLLATION ' || quote_ident(dest_schema) || '."' || c.collname || '" (provider = ' || CASE WHEN c.collprovider = 'i' THEN
-              'icu'
-          WHEN c.collprovider = 'c' THEN
-              'libc'
-          ELSE
-              ''
-          END || ', locale = ''' || c.collcollate || ''');' AS COLL_DDL
+      SELECT n.nspname AS schemaname, a.rolname AS ownername, c.collname, c.collprovider, c.collcollate AS locale, 
+             'CREATE COLLATION ' || quote_ident(dest_schema) || '."' || c.collname || '" (provider = ' || 
+             CASE WHEN c.collprovider = 'i' THEN 'icu' WHEN c.collprovider = 'c' THEN 'libc' ELSE '' END || 
+             ', locale = ''' || c.collcollate || ''');' AS COLL_DDL
       FROM pg_collation c
           JOIN pg_namespace n ON (c.collnamespace = n.oid)
           JOIN pg_roles a ON (c.collowner = a.oid)
@@ -842,13 +867,13 @@ BEGIN
   -- Create tables including partitioned ones (parent/children) and unlogged ones.  Order by is critical since child partition range logic is dependent on it.
   action := 'Tables';
   SELECT setting INTO v_dummy FROM pg_settings WHERE name='search_path';
-  IF bVerbose THEN RAISE INFO 'DEBUG: search_path=%', v_dummy; END IF;
+  IF bDebug THEN RAISE NOTICE 'search_path=%', v_dummy; END IF;
   
   cnt := 0;
   -- Issue#61 FIX: use set_config for empty string
   -- SET search_path = '';
   SELECT set_config('search_path', '', false) into v_dummy;
-  IF bVerbose THEN RAISE INFO 'DEBUG: setting search_path to empty string:%', v_dummy; END IF;
+  IF bDebug THEN RAISE NOTICE 'setting search_path to empty string:%', v_dummy; END IF;
   -- Fix#86 add isgenerated to column list
   -- Fix#91 add tblowner for setting the table ownership to that of the source
   FOR tblname, relpersist, bRelispart, relknd, data_type, udt_name, ocomment, l_child, isGenerated, tblowner  IN
@@ -920,7 +945,7 @@ BEGIN
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
           SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
-          IF bVerbose THEN RAISE INFO 'DEBUG: tabledef01:%', buffer3; END IF;
+          IF bDebug THEN RAISE NOTICE 'tabledef01:%', buffer3; END IF;
           -- #82: Table def should be fully qualified with target schema, 
           --      so just make search path = public to handle extension types that should reside in public schema
           v_dummy = 'public';
@@ -932,11 +957,11 @@ BEGIN
         ELSE
           IF (NOT bChild OR bRelispart) THEN
             buffer3 := 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
-            IF bVerbose THEN RAISE INFO 'DEBUG: tabledef02:%', buffer3; END IF;
+            IF bDebug THEN RAISE NOTICE 'tabledef02:%', buffer3; END IF;
             EXECUTE buffer3;
             -- issue#91 fix
             buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.'  || quote_ident(tblname) || ' OWNER TO ' || tblowner;            
-            IF bVerbose THEN RAISE INFO 'DEBUG: tabledef02:%', buffer3; END IF;
+            IF bDebug THEN RAISE NOTICE 'tabledef02:%', buffer3; END IF;
             EXECUTE buffer3;
           ELSE
             -- FIXED #65, #67
@@ -947,7 +972,7 @@ BEGIN
             -- set client_min_messages higher to avoid messages like this:
             -- NOTICE:  merging column "city_id" with inherited definition
             set client_min_messages = 'WARNING';
-            IF bVerbose THEN RAISE INFO 'DEBUG: tabledef03:%', buffer3; END IF;
+            IF bDebug THEN RAISE NOTICE 'tabledef03:%', buffer3; END IF;
             EXECUTE buffer3;
             -- issue#91 fix
             buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
@@ -1028,7 +1053,7 @@ BEGIN
         RAISE INFO '%', qry;
         RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || quote_ident(tblname), tblowner;
       ELSE
-        IF bVerbose THEN RAISE INFO 'DEBUG: tabledef04:%', buffer3; END IF;
+        IF bDebug THEN RAISE NOTICE 'tabledef04:%', buffer3; END IF;
         EXECUTE qry;
         -- issue#91 fix
         buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || ' OWNER TO ' || tblowner;
@@ -1111,7 +1136,7 @@ BEGIN
       
       -- Issue#86 fix:
       -- IF data_type = 'USER-DEFINED' THEN
-      IF bVerbose THEN RAISE INFO 'DEBUG includerecs branch  table=%  data_type=%  isgenerated=%', tblname, data_type, isGenerated; END IF;
+      IF bDebug THEN RAISE NOTICE 'includerecs branch  table=%  data_type=%  isgenerated=%', tblname, data_type, isGenerated; END IF;
       IF data_type = 'USER-DEFINED' OR isGenerated = 'ALWAYS' THEN
 
         -- RAISE WARNING 'Bypassing copying rows for table (%) with user-defined data types.  You must copy them manually.', tblname;
@@ -1175,7 +1200,7 @@ BEGIN
   RAISE NOTICE '      TABLES cloned: %', LPAD(cnt::text, 5, ' ');
 
   SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
-  IF bVerbose THEN RAISE INFO 'DEBUG: search_path=%', v_dummy; END IF;
+  IF bDebug THEN RAISE NOTICE 'search_path=%', v_dummy; END IF;
 
   -- Assigning sequences to table columns.
   action := 'Sequences assigning';
@@ -1294,7 +1319,7 @@ BEGIN
               RAISE INFO 'ALTER % % OWNER TO %', buffer3, quote_ident(dest_schema) || '.' || quote_ident(func_name) || '(' || func_args || ')', func_owner || ';';
           END IF;
         ELSE
-          IF bVerbose THEN RAISE NOTICE '%', dest_qry; END IF;
+          IF bDebug THEN RAISE NOTICE '%', dest_qry; END IF;
           EXECUTE dest_qry;
 
           -- Issue#91 Fix
@@ -2071,7 +2096,7 @@ BEGIN
   LOOP
     BEGIN
       cnt := cnt + 1;
-      -- IF bVerbose THEN RAISE NOTICE 'DEBUG: ddl=%', arec.seq_ddl; END IF;
+      -- IF bDebug THEN RAISE NOTICE 'DEBUG: ddl=%', arec.seq_ddl; END IF;
       IF bDDLOnly THEN
         RAISE INFO '%', arec.seq_ddl;
       ELSE
@@ -2144,7 +2169,7 @@ BEGIN
   LOOP
     BEGIN
       cnt := cnt + 1;
-      -- IF bVerbose THEN RAISE NOTICE 'DEBUG: ddl=%', arec.tbl_dcl; END IF;
+      -- IF bDebug THEN RAISE NOTICE 'DEBUG: ddl=%', arec.tbl_dcl; END IF;
       -- Issue#46. Fixed reference to invalid record name (tbl_ddl --> tbl_dcl).
       IF arec.relkind = 'f' THEN
         RAISE WARNING 'Foreign tables are not currently implemented, so skipping privs for them. ddl=%', arec.tbl_dcl;
@@ -2240,7 +2265,7 @@ BEGIN
     EXECUTE 'SET search_path = ' || src_path_old;
   END IF;
   SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
-  IF bVerbose THEN RAISE INFO 'DEBUG: setting search_path back to what it was: %', v_dummy; END IF;
+  IF bDebug THEN RAISE NOTICE 'setting search_path back to what it was: %', v_dummy; END IF;
 
   EXCEPTION
      WHEN others THEN
