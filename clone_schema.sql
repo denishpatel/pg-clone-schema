@@ -42,6 +42,7 @@
 -- 2022-12-02  MJV FIX: Fixed Issue#92 Default privileges error: Must set the role before executing the command.
 -- 2022-12-03  MJV FIX: Fixed Issue#94 Make parameters variadic
 -- 2022-12-04  MJV FIX: Fixed Issue#96 PG15 may not populate the collcollate and collctype columns of the pg_collation table.  Handle this.
+-- 2022-12-04  MJV FIX: Fixed Issue#97 Regression testing: invalid CASE STATEMENT syntax found.  PG13 is stricter than PG14 and up.  Remove CASE from END CASE to terminate CASE statements.
 
 do $$ 
 <<first_block>>
@@ -1298,11 +1299,13 @@ BEGIN
     EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
     
     -- Fixed Issue#65
+    -- Fixed Issue#97
     -- FOR func_oid IN SELECT oid FROM pg_proc WHERE pronamespace = src_oid AND prokind != 'a'
     IF is_prokind THEN
       FOR func_oid, func_owner, func_name, func_args, func_argno, buffer3 IN 
           SELECT p.oid, pg_catalog.pg_get_userbyid(p.proowner), p.proname, oidvectortypes(p.proargtypes), p.pronargs,
-          CASE WHEN prokind = 'p' THEN 'PROCEDURE' WHEN prokind = 'f' THEN 'FUNCTION' ELSE '' END CASE 
+          -- CASE WHEN prokind = 'p' THEN 'PROCEDURE' WHEN prokind = 'f' THEN 'FUNCTION' ELSE '' END CASE
+          CASE WHEN prokind = 'p' THEN 'PROCEDURE' WHEN prokind = 'f' THEN 'FUNCTION' ELSE '' END 
           FROM pg_proc p WHERE p.pronamespace = src_oid AND p.prokind != 'a'
       LOOP
         cnt := cnt + 1;
