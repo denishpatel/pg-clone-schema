@@ -1304,7 +1304,6 @@ BEGIN
     IF is_prokind THEN
       FOR func_oid, func_owner, func_name, func_args, func_argno, buffer3 IN 
           SELECT p.oid, pg_catalog.pg_get_userbyid(p.proowner), p.proname, oidvectortypes(p.proargtypes), p.pronargs,
-          -- CASE WHEN prokind = 'p' THEN 'PROCEDURE' WHEN prokind = 'f' THEN 'FUNCTION' ELSE '' END CASE
           CASE WHEN prokind = 'p' THEN 'PROCEDURE' WHEN prokind = 'f' THEN 'FUNCTION' ELSE '' END 
           FROM pg_proc p WHERE p.pronamespace = src_oid AND p.prokind != 'a'
       LOOP
