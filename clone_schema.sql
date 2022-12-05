@@ -43,6 +43,7 @@
 -- 2022-12-03  MJV FIX: Fixed Issue#94 Make parameters variadic
 -- 2022-12-04  MJV FIX: Fixed Issue#96 PG15 may not populate the collcollate and collctype columns of the pg_collation table.  Handle this.
 -- 2022-12-04  MJV FIX: Fixed Issue#97 Regression testing: invalid CASE STATEMENT syntax found.  PG13 is stricter than PG14 and up.  Remove CASE from END CASE to terminate CASE statements.
+-- 2022-12-05  MJV FIX: Fixed Issue#95 Implemented owner/ACL rules.
 
 do $$ 
 <<first_block>>
@@ -617,12 +618,25 @@ BEGIN
     CREATE TYPE perm_type AS ENUM ('SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER','USAGE','CREATE','EXECUTE','CONNECT','TEMPORARY');
   END IF;
 
+  -- Issue#95
+  SELECT pg_catalog.pg_get_userbyid(nspowner) INTO buffer FROM pg_namespace WHERE nspname = quote_ident(source_schema);
+
   IF bDDLOnly THEN
     RAISE NOTICE ' Only generating DDL, not actually creating anything...';
-    RAISE NOTICE 'CREATE SCHEMA %;', quote_ident(dest_schema);
+    -- issue#95
+    IF bNoOwner THEN
+        RAISE NOTICE 'CREATE SCHEMA %;', quote_ident(dest_schema);    
+    ELSE
+        RAISE NOTICE 'CREATE SCHEMA % AUTHORIZATION %;', quote_ident(dest_schema), buffer;    
+    END IF;
     RAISE NOTICE 'SET search_path=%;', quote_ident(dest_schema);
   ELSE
-    EXECUTE 'CREATE SCHEMA ' || quote_ident(dest_schema) ;
+    -- issue#95
+    IF bNoOwner THEN
+        EXECUTE 'CREATE SCHEMA ' || quote_ident(dest_schema) ;
+    ELSE
+        EXECUTE 'CREATE SCHEMA ' || quote_ident(dest_schema) || ' AUTHORIZATION ' || buffer;
+    END IF;
   END IF;
 
   -- Do system table validations for subsequent system table queries
@@ -786,16 +800,19 @@ BEGIN
   cnt := 0;
   -- fix#63  get from pg_sequences not information_schema
   -- fix#63  take 2: get it from information_schema.sequences since we need to treat IDENTITY columns differently.
-  FOR object IN
-    SELECT sequence_name::text
-    FROM information_schema.sequences
-    WHERE sequence_schema = quote_ident(source_schema)
+  -- fix#95  get owner as well by joining to pg_sequences
+  FOR object, buffer IN
+    SELECT s1.sequence_name::text, s2.sequenceowner FROM information_schema.sequences s1 
+    JOIN pg_sequences s2 ON (s1.sequence_schema = s2.schemaname AND s1.sequence_name = s2.sequencename)
+    AND s1.sequence_schema = quote_ident(source_schema)
   LOOP
     cnt := cnt + 1;
     IF bDDLOnly THEN
       RAISE INFO '%', 'CREATE SEQUENCE ' || quote_ident(dest_schema) || '.' || quote_ident(object) || ';';
+      RAISE INFO '%', 'ALTER  SEQUENCE ' || quote_ident(dest_schema) || '.' || quote_ident(object) || ' OWNER TO ' || buffer || ';';
     ELSE
       EXECUTE 'CREATE SEQUENCE ' || quote_ident(dest_schema) || '.' || quote_ident(object);
+      EXECUTE 'ALTER SEQUENCE '  || quote_ident(dest_schema) || '.' || quote_ident(object) || ' OWNER TO ' || buffer;
     END IF;
     srctbl := quote_ident(source_schema) || '.' || quote_ident(object);
 
@@ -932,7 +949,11 @@ BEGIN
           IF NOT bChild THEN
             RAISE INFO '%', 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL);';
             -- issue#91 fix
-            RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || tblname, tblowner;
+            -- issue#95 fix
+            -- RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || tblname, tblowner;
+            
+            
+            
           ELSE
             -- FIXED #65, #67
             -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
