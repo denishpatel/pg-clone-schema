@@ -56,7 +56,7 @@ BEGIN
   AND pg_catalog.format_type(t.oid, NULL) in ('cloneparms');
   IF cnt = 0 THEN
     RAISE NOTICE 'Creating custom types.';
-    CREATE TYPE public.cloneparms AS ENUM ('DATA', 'DDLONLY','NOOWNER','NOACL','VERBOSE','DEBUG');
+    CREATE TYPE public.cloneparms AS ENUM ('DATA', 'NODATA','DDLONLY','NOOWNER','NOACL','VERBOSE','DEBUG');
   END IF;
 end first_block $$;
 
@@ -478,6 +478,9 @@ BEGIN
       IF bDebug THEN RAISE NOTICE 'arg=%', avarg; END IF;
       IF avarg = 'DATA' THEN
         bData = True;
+      ELSEIF avarg = 'NODATA' THEN
+        -- already set to that by default
+        bData = False;
       ELSEIF avarg = 'DDLONLY' THEN
         bDDLOnly = True;
       ELSEIF avarg = 'NOACL' THEN
