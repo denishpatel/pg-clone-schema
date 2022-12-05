@@ -23,7 +23,8 @@ Arguments:
 
 <pre>source schema  Required: text - schema name</pre>
 <pre>target schema  Required: text - table name</pre>
-<pre>ENUM list      Optional: 'DATA','NODATA','DDLONLY','NOOWNER','NOACL','VERBOSE'</pre>
+<pre>ENUM list      Required: One of 'DATA','NODATA','DDLONLY'</pre>
+<pre>ENUM list      Optional: 'NOOWNER','NOACL','VERBOSE'</pre>
 By default, ownership and privileges are also cloned from source to target schema.  To override, specify **NOOWNER** and/or **NOACL**. When **NOOWNER** is specified, the one running the script is the default owner unless overridden by a **SET ROLE** command before running this script.
 <br/><br/>
 
