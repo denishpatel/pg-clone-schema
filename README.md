@@ -23,13 +23,13 @@ Arguments:
 
 <pre>source schema  Required: text - schema name</pre>
 <pre>target schema  Required: text - table name</pre>
-<pre>ENUM list      Optional: 'DATA', 'DDLONLY','NOOWNER','NOACL','VERBOSE'</pre>
+<pre>ENUM list      Optional: 'DATA','NODATA','DDLONLY','NOOWNER','NOACL','VERBOSE'</pre>
 No enumerated parameters implies create the target schema objects with no data.
 <br/><br/>
 
 Clone the schema with no data:
 <br/>
->select clone_schema('sample', 'sample_clone');
+>select clone_schema('sample', 'sample_clone', 'NODATA');
 <br/>
 
 Clone the schema with data:
