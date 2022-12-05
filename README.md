@@ -1,6 +1,6 @@
 # clone_schema
 
-Works on Linux distros and all Windows versions.
+Works on Linux distros and all Windows versions.  It also runs on PostgreSQL in the cloud (AWS, GCP, MS Azure).
 
 Handles following objects:
 
