@@ -456,7 +456,7 @@ DECLARE
   vargs            text;
   avarg            public.cloneparms;
   
-  v_version        text := '1.12  December 02, 2022';
+  v_version        text := '1.13  December 05, 2022';
 
 BEGIN
   -- Make sure NOTICE are shown
@@ -493,9 +493,6 @@ BEGIN
     IF bData and bDDLOnly THEN 
       RAISE WARNING 'You can only specify DDLONLY or DATA, but not both.';
       RETURN;
-    ELSEIF bNoACL or bNoOwner THEN
-      RAISE WARNING 'NOACL and NOOWNER are not implemented yet. Please try again without these parameters.';
-      RETURN;    
     END IF;
   END IF;  
   
@@ -808,11 +805,17 @@ BEGIN
   LOOP
     cnt := cnt + 1;
     IF bDDLOnly THEN
+      -- issue#95
       RAISE INFO '%', 'CREATE SEQUENCE ' || quote_ident(dest_schema) || '.' || quote_ident(object) || ';';
-      RAISE INFO '%', 'ALTER  SEQUENCE ' || quote_ident(dest_schema) || '.' || quote_ident(object) || ' OWNER TO ' || buffer || ';';
+      IF NOT bNoOwner THEN    
+        RAISE INFO '%', 'ALTER  SEQUENCE ' || quote_ident(dest_schema) || '.' || quote_ident(object) || ' OWNER TO ' || buffer || ';';
+      END IF;
     ELSE
       EXECUTE 'CREATE SEQUENCE ' || quote_ident(dest_schema) || '.' || quote_ident(object);
-      EXECUTE 'ALTER SEQUENCE '  || quote_ident(dest_schema) || '.' || quote_ident(object) || ' OWNER TO ' || buffer;
+      -- issue#95
+      IF NOT bNoOwner THEN    
+        EXECUTE 'ALTER SEQUENCE '  || quote_ident(dest_schema) || '.' || quote_ident(object) || ' OWNER TO ' || buffer;
+      END IF;
     END IF;
     srctbl := quote_ident(source_schema) || '.' || quote_ident(object);
 
@@ -944,16 +947,18 @@ BEGIN
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
           RAISE INFO '%', buffer3;
           -- issue#91 fix
-          RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || tblname, tblowner;
+          -- issue#95
+          IF NOT bNoOwner THEN    
+            RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || tblname, tblowner;          
+          END IF;
         ELSE
           IF NOT bChild THEN
             RAISE INFO '%', 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL);';
             -- issue#91 fix
-            -- issue#95 fix
-            -- RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || tblname, tblowner;
-            
-            
-            
+             -- issue#95
+            IF NOT bNoOwner THEN    
+              RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || tblname, tblowner;
+            END IF;
           ELSE
             -- FIXED #65, #67
             -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
@@ -961,7 +966,10 @@ BEGIN
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
             RAISE INFO '%', buffer3;
             -- issue#91 fix
-            RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || tblname, tblowner;            
+            -- issue#95
+            IF NOT bNoOwner THEN    
+              RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || tblname, tblowner;
+            END IF;
           END IF;
         END IF;
       ELSE
@@ -977,17 +985,25 @@ BEGIN
           SELECT set_config('search_path', v_dummy, false) into v_dummy;
           EXECUTE buffer3;
           -- issue#91 fix
-          buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
-          EXECUTE buffer3;
+          -- issue#95
+          IF NOT bNoOwner THEN    
+            buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
+            EXECUTE buffer3;
+          END IF;
+          
         ELSE
           IF (NOT bChild OR bRelispart) THEN
             buffer3 := 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
             IF bDebug THEN RAISE NOTICE 'tabledef02:%', buffer3; END IF;
             EXECUTE buffer3;
             -- issue#91 fix
-            buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.'  || quote_ident(tblname) || ' OWNER TO ' || tblowner;            
+            -- issue#95
+            IF NOT bNoOwner THEN    
+              buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.'  || quote_ident(tblname) || ' OWNER TO ' || tblowner;            
+              EXECUTE buffer3;              
+            END IF;
             IF bDebug THEN RAISE NOTICE 'tabledef02:%', buffer3; END IF;
-            EXECUTE buffer3;
+
           ELSE
             -- FIXED #65, #67
             -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
@@ -1000,9 +1016,12 @@ BEGIN
             IF bDebug THEN RAISE NOTICE 'tabledef03:%', buffer3; END IF;
             EXECUTE buffer3;
             -- issue#91 fix
-            buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
-            EXECUTE buffer3;
-            
+            -- issue#95
+            IF NOT bNoOwner THEN                
+              buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
+              EXECUTE buffer3;
+            END IF;
+
             -- reset it back, only get these for inheritance-based tables
             set client_min_messages = 'notice';
           END IF;
@@ -1076,13 +1095,19 @@ BEGIN
       qry := buffer || ') PARTITION BY ' || buffer2 || ';';
       IF bDDLOnly THEN
         RAISE INFO '%', qry;
-        RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || quote_ident(tblname), tblowner;
+        -- issue#95
+        IF NOT bNoOwner THEN                
+            RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || quote_ident(tblname), tblowner;
+        END IF;
       ELSE
         IF bDebug THEN RAISE NOTICE 'tabledef04:%', buffer3; END IF;
         EXECUTE qry;
         -- issue#91 fix
-        buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || ' OWNER TO ' || tblowner;
-        EXECUTE buffer3;
+        -- issue#95
+        IF NOT bNoOwner THEN                
+          buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || ' OWNER TO ' || tblowner;
+          EXECUTE buffer3;
+        END IF;
         
       END IF;
       -- loop for child tables and alter them to attach to parent for specific partition method.
@@ -1095,12 +1120,18 @@ BEGIN
       LOOP
         qry := 'ALTER TABLE ONLY ' || object || ' ATTACH PARTITION ' || aname || ' ' || part_range || ';';
         -- issue#91, not sure if we need to do this for child tables
+        -- issue#95 we dont set ownership here
         IF bDDLOnly THEN
           RAISE INFO '%', qry;
+          IF NOT bNoOwner THEN
+            NULL;
+          END IF;
         ELSE
           EXECUTE qry;
+          IF NOT bNoOwner THEN                
+            NULL;
+          END IF;
         END IF;
-
       END LOOP;
     END IF;
     -- INCLUDING ALL creates new index names, we restore them to the old name.
@@ -1339,20 +1370,26 @@ BEGIN
         IF bDDLOnly THEN
           RAISE INFO '%;', dest_qry;
           -- Issue#91 Fix
-          IF func_argno = 0 THEN
-              RAISE INFO 'ALTER % %() OWNER TO %', buffer3, quote_ident(dest_schema) || '.' || quote_ident(func_name), func_owner || ';';
-          ELSE
-              RAISE INFO 'ALTER % % OWNER TO %', buffer3, quote_ident(dest_schema) || '.' || quote_ident(func_name) || '(' || func_args || ')', func_owner || ';';
+          -- issue#95 
+          IF NOT bNoOwner THEN
+            IF func_argno = 0 THEN
+                RAISE INFO 'ALTER % %() OWNER TO %', buffer3, quote_ident(dest_schema) || '.' || quote_ident(func_name), func_owner || ';';
+            ELSE
+                RAISE INFO 'ALTER % % OWNER TO %', buffer3, quote_ident(dest_schema) || '.' || quote_ident(func_name) || '(' || func_args || ')', func_owner || ';';
+            END IF;
           END IF;
         ELSE
           IF bDebug THEN RAISE NOTICE '%', dest_qry; END IF;
           EXECUTE dest_qry;
 
           -- Issue#91 Fix
-          IF func_argno = 0 THEN
-              dest_qry = 'ALTER ' || buffer3 || ' ' || quote_ident(dest_schema) || '.' || quote_ident(func_name) || '() OWNER TO ' || func_owner || ';';
-          ELSE
-              dest_qry = 'ALTER ' || buffer3 || ' ' || quote_ident(dest_schema) || '.' || quote_ident(func_name) || '(' || func_args || ') OWNER TO ' || func_owner || ';';
+          -- issue#95 
+          IF NOT bNoOwner THEN
+            IF func_argno = 0 THEN
+                dest_qry = 'ALTER ' || buffer3 || ' ' || quote_ident(dest_schema) || '.' || quote_ident(func_name) || '() OWNER TO ' || func_owner || ';';
+            ELSE
+                dest_qry = 'ALTER ' || buffer3 || ' ' || quote_ident(dest_schema) || '.' || quote_ident(func_name) || '(' || func_args || ') OWNER TO ' || func_owner || ';';
+            END IF;
           END IF;
           EXECUTE dest_qry;
         END IF;
@@ -1552,14 +1589,20 @@ BEGIN
     IF bDDLOnly THEN
       RAISE INFO '%', v_def;
       -- Issue#91 Fix
-      RAISE INFO 'ALTER TABLE % OWNER TO %', buffer3, view_owner || ';';
+      -- issue#95 
+      IF NOT bNoOwner THEN
+        RAISE INFO 'ALTER TABLE % OWNER TO %', buffer3, view_owner || ';';
+      END IF;        
     ELSE
       -- EXECUTE 'CREATE OR REPLACE VIEW ' || buffer || ' AS ' || v_def;
       EXECUTE v_def;
       -- Issue#73: commented out comment logic for views since we do it elsewhere now.
       -- Issue#91 Fix
-      v_def = 'ALTER TABLE ' || buffer3 || ' OWNER TO ' || view_owner || ';';
-      EXECUTE v_def;
+      -- issue#95 
+      IF NOT bNoOwner THEN      
+        v_def = 'ALTER TABLE ' || buffer3 || ' OWNER TO ' || view_owner || ';';
+        EXECUTE v_def;
+      END IF;
     END IF;
   END LOOP;
   RAISE NOTICE '       VIEWS cloned: %', LPAD(cnt::text, 5, ' ');
@@ -1585,12 +1628,18 @@ BEGIN
         IF bDDLOnly THEN
           RAISE INFO '%', 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || buffer2 || ' WITH NO DATA;' ;
           -- Issue#91
-          RAISE INFO '%', 'ALTER MATERIALIZED VIEW ' || buffer || ' OWNER TO ' || view_owner || ';' ;
+          -- issue#95 
+          IF NOT bNoOwner THEN      
+            RAISE INFO '%', 'ALTER MATERIALIZED VIEW ' || buffer || ' OWNER TO ' || view_owner || ';' ;
+          END IF;
         ELSE
           EXECUTE 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || buffer2 || ' WITH NO DATA;' ;
           -- Issue#91
-          buffer3 = 'ALTER MATERIALIZED VIEW ' || buffer || ' OWNER TO ' || view_owner || ';' ;
-          EXECUTE buffer3;
+          -- issue#95 
+          IF NOT bNoOwner THEN      
+            buffer3 = 'ALTER MATERIALIZED VIEW ' || buffer || ' OWNER TO ' || view_owner || ';' ;
+            EXECUTE buffer3;
+          END IF;
         END IF;
       END IF;
       SELECT coalesce(obj_description(oid), '') into adef from pg_class where relkind = 'm' and relname = object;
@@ -1871,65 +1920,48 @@ BEGIN
   RAISE NOTICE ' COMMENTS(2) cloned: %', LPAD(cnt2::text, 5, ' ');
 
 
-  -- ---------------------
-  -- MV: Permissions: Defaults
-  -- ---------------------
-  EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
-  action := 'PRIVS: Defaults';
-  cnt := 0;
-  FOR arec IN
-    SELECT pg_catalog.pg_get_userbyid(d.defaclrole) AS "owner", n.nspname AS schema,
-    CASE d.defaclobjtype WHEN 'r' THEN 'table' WHEN 'S' THEN 'sequence' WHEN 'f' THEN 'function' WHEN 'T' THEN 'type' WHEN 'n' THEN 'schema' END AS atype,
-    d.defaclacl as defaclacl, pg_catalog.array_to_string(d.defaclacl, ',') as defaclstr
-    FROM pg_catalog.pg_default_acl d LEFT JOIN pg_catalog.pg_namespace n ON (n.oid = d.defaclnamespace)
-    WHERE n.nspname IS NOT NULL AND n.nspname = quote_ident(source_schema)
-    ORDER BY 3, 2, 1
-  LOOP
-    BEGIN
-      -- RAISE NOTICE ' owner=%  type=%  defaclacl=%  defaclstr=%', arec.owner, arec.atype, arec.defaclacl, arec.defaclstr;
+  -- Issue#95 bypass if No ACL specified.
+  IF NOT bNoACL THEN
+    -- ---------------------
+    -- MV: Permissions: Defaults
+    -- ---------------------
+    EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
+    action := 'PRIVS: Defaults';
+    cnt := 0;
+    FOR arec IN
+      SELECT pg_catalog.pg_get_userbyid(d.defaclrole) AS "owner", n.nspname AS schema,
+      CASE d.defaclobjtype WHEN 'r' THEN 'table' WHEN 'S' THEN 'sequence' WHEN 'f' THEN 'function' WHEN 'T' THEN 'type' WHEN 'n' THEN 'schema' END AS atype,
+      d.defaclacl as defaclacl, pg_catalog.array_to_string(d.defaclacl, ',') as defaclstr
+      FROM pg_catalog.pg_default_acl d LEFT JOIN pg_catalog.pg_namespace n ON (n.oid = d.defaclnamespace)
+      WHERE n.nspname IS NOT NULL AND n.nspname = quote_ident(source_schema)
+      ORDER BY 3, 2, 1
+    LOOP
+      BEGIN
+        -- RAISE NOTICE ' owner=%  type=%  defaclacl=%  defaclstr=%', arec.owner, arec.atype, arec.defaclacl, arec.defaclstr;
 
-      FOREACH aclstr IN ARRAY arec.defaclacl
-      LOOP
-          cnt := cnt + 1;
-          -- RAISE NOTICE ' aclstr=%', aclstr;
-          -- break up into grantor, grantee, and privs, mydb_update=rwU/mydb_owner
-          SELECT split_part(aclstr, '=',1) INTO grantee;
-          SELECT split_part(aclstr, '=',2) INTO grantor;
-          SELECT split_part(grantor, '/',1) INTO privs;
-          SELECT split_part(grantor, '/',2) INTO grantor;
-          -- RAISE NOTICE ' grantor=%  grantee=%  privs=%', grantor, grantee, privs;
+        FOREACH aclstr IN ARRAY arec.defaclacl
+        LOOP
+            cnt := cnt + 1;
+            -- RAISE NOTICE ' aclstr=%', aclstr;
+            -- break up into grantor, grantee, and privs, mydb_update=rwU/mydb_owner
+            SELECT split_part(aclstr, '=',1) INTO grantee;
+            SELECT split_part(aclstr, '=',2) INTO grantor;
+            SELECT split_part(grantor, '/',1) INTO privs;
+            SELECT split_part(grantor, '/',2) INTO grantor;
+            -- RAISE NOTICE ' grantor=%  grantee=%  privs=%', grantor, grantee, privs;
 
-          IF arec.atype = 'function' THEN
-            -- Just having execute is enough to grant all apparently.
-            buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ALL ON FUNCTIONS TO "' || grantee || '";';
+            IF arec.atype = 'function' THEN
+              -- Just having execute is enough to grant all apparently.
+              buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ALL ON FUNCTIONS TO "' || grantee || '";';
             
-            -- Issue#92 Fix
-            -- set role = cm_stage_ro_grp;
-            -- ALTER DEFAULT PRIVILEGES FOR ROLE cm_stage_ro_grp IN SCHEMA cm_stage GRANT REFERENCES, TRIGGER ON TABLES TO cm_stage_ro_grp;            
-            IF grantor = grantee THEN
-                -- append set role to statement
-                buffer = 'SET ROLE = ' || grantor || '; ' || buffer;
-            END IF;
-            
-            IF bDDLOnly THEN
-              RAISE INFO '%', buffer;
-            ELSE
-              EXECUTE buffer;
-            END IF;
-            -- Issue#92 Fix:
-            EXECUTE 'SET ROLE = ' || calleruser;
-            
-          ELSIF arec.atype = 'sequence' THEN
-            IF POSITION('r' IN privs) > 0 AND POSITION('w' IN privs) > 0 AND POSITION('U' IN privs) > 0 THEN
-              -- arU is enough for all privs
-              buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ALL ON SEQUENCES TO "' || grantee || '";';
-              
               -- Issue#92 Fix
+              -- set role = cm_stage_ro_grp;
+              -- ALTER DEFAULT PRIVILEGES FOR ROLE cm_stage_ro_grp IN SCHEMA cm_stage GRANT REFERENCES, TRIGGER ON TABLES TO cm_stage_ro_grp;            
               IF grantor = grantee THEN
                   -- append set role to statement
                   buffer = 'SET ROLE = ' || grantor || '; ' || buffer;
               END IF;
-
+            
               IF bDDLOnly THEN
                 RAISE INFO '%', buffer;
               ELSE
@@ -1937,12 +1969,76 @@ BEGIN
               END IF;
               -- Issue#92 Fix:
               EXECUTE 'SET ROLE = ' || calleruser;
+            
+            ELSIF arec.atype = 'sequence' THEN
+              IF POSITION('r' IN privs) > 0 AND POSITION('w' IN privs) > 0 AND POSITION('U' IN privs) > 0 THEN
+                -- arU is enough for all privs
+                buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ALL ON SEQUENCES TO "' || grantee || '";';
+              
+                -- Issue#92 Fix
+                IF grantor = grantee THEN
+                    -- append set role to statement
+                    buffer = 'SET ROLE = ' || grantor || '; ' || buffer;
+                END IF;
 
-            ELSE
-              -- have to specify each priv individually
+                IF bDDLOnly THEN
+                  RAISE INFO '%', buffer;
+                ELSE
+                  EXECUTE buffer;
+                END IF;
+                -- Issue#92 Fix:
+                EXECUTE 'SET ROLE = ' || calleruser;
+
+              ELSE
+                -- have to specify each priv individually
+                buffer2 := '';
+                IF POSITION('r' IN privs) > 0 THEN
+                      buffer2 := 'SELECT';
+                END IF;
+                IF POSITION('w' IN privs) > 0 THEN
+                  IF buffer2 = '' THEN
+                    buffer2 := 'UPDATE';
+                  ELSE
+                    buffer2 := buffer2 || ', UPDATE';
+                  END IF;
+                END IF;
+                IF POSITION('U' IN privs) > 0 THEN
+                      IF buffer2 = '' THEN
+                    buffer2 := 'USAGE';
+                  ELSE
+                    buffer2 := buffer2 || ', USAGE';
+                  END IF;
+                END IF;
+                buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ' || buffer2 || ' ON SEQUENCES TO "' || grantee || '";';
+
+                -- Issue#92 Fix
+                IF grantor = grantee THEN
+                    -- append set role to statement
+                    buffer = 'SET ROLE = ' || grantor || '; ' || buffer;
+                END IF;
+              
+                IF bDDLOnly THEN
+                  RAISE INFO '%', buffer;
+                ELSE
+                  EXECUTE buffer;
+                END IF;
+                select current_user into buffer;
+                -- Issue#92 Fix:
+                EXECUTE 'SET ROLE = ' || calleruser;
+              END IF;
+
+            ELSIF arec.atype = 'table' THEN
+              -- do each priv individually, jeeeesh!
               buffer2 := '';
+              IF POSITION('a' IN privs) > 0 THEN
+                buffer2 := 'INSERT';
+              END IF;
               IF POSITION('r' IN privs) > 0 THEN
-                    buffer2 := 'SELECT';
+                IF buffer2 = '' THEN
+                  buffer2 := 'SELECT';
+                ELSE
+                  buffer2 := buffer2 || ', SELECT';
+                END IF;
               END IF;
               IF POSITION('w' IN privs) > 0 THEN
                 IF buffer2 = '' THEN
@@ -1951,21 +2047,35 @@ BEGIN
                   buffer2 := buffer2 || ', UPDATE';
                 END IF;
               END IF;
-              IF POSITION('U' IN privs) > 0 THEN
-                    IF buffer2 = '' THEN
-                  buffer2 := 'USAGE';
+              IF POSITION('d' IN privs) > 0 THEN
+                IF buffer2 = '' THEN
+                  buffer2 := 'DELETE';
                 ELSE
-                  buffer2 := buffer2 || ', USAGE';
+                  buffer2 := buffer2 || ', DELETE';
                 END IF;
               END IF;
-              buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ' || buffer2 || ' ON SEQUENCES TO "' || grantee || '";';
-
+              IF POSITION('t' IN privs) > 0 THEN
+                IF buffer2 = '' THEN
+                  buffer2 := 'TRIGGER';
+                ELSE
+                  buffer2 := buffer2 || ', TRIGGER';
+                END IF;
+              END IF;
+              IF POSITION('T' IN privs) > 0 THEN
+                IF buffer2 = '' THEN
+                  buffer2 := 'TRUNCATE';
+                ELSE
+                  buffer2 := buffer2 || ', TRUNCATE';
+                END IF;
+              END IF;
+              buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ' || buffer2 || ' ON TABLES TO "' || grantee || '";';
+            
               -- Issue#92 Fix
               IF grantor = grantee THEN
                   -- append set role to statement
                   buffer = 'SET ROLE = ' || grantor || '; ' || buffer;
               END IF;
-              
+            
               IF bDDLOnly THEN
                 RAISE INFO '%', buffer;
               ELSE
@@ -1974,242 +2084,193 @@ BEGIN
               select current_user into buffer;
               -- Issue#92 Fix:
               EXECUTE 'SET ROLE = ' || calleruser;
-            END IF;
 
-          ELSIF arec.atype = 'table' THEN
-            -- do each priv individually, jeeeesh!
-            buffer2 := '';
-            IF POSITION('a' IN privs) > 0 THEN
-              buffer2 := 'INSERT';
-            END IF;
-            IF POSITION('r' IN privs) > 0 THEN
-              IF buffer2 = '' THEN
-                buffer2 := 'SELECT';
-              ELSE
-                buffer2 := buffer2 || ', SELECT';
-              END IF;
-            END IF;
-            IF POSITION('w' IN privs) > 0 THEN
-              IF buffer2 = '' THEN
-                buffer2 := 'UPDATE';
-              ELSE
-                buffer2 := buffer2 || ', UPDATE';
-              END IF;
-            END IF;
-            IF POSITION('d' IN privs) > 0 THEN
-              IF buffer2 = '' THEN
-                buffer2 := 'DELETE';
-              ELSE
-                buffer2 := buffer2 || ', DELETE';
-              END IF;
-            END IF;
-            IF POSITION('t' IN privs) > 0 THEN
-              IF buffer2 = '' THEN
-                buffer2 := 'TRIGGER';
-              ELSE
-                buffer2 := buffer2 || ', TRIGGER';
-              END IF;
-            END IF;
-            IF POSITION('T' IN privs) > 0 THEN
-              IF buffer2 = '' THEN
-                buffer2 := 'TRUNCATE';
-              ELSE
-                buffer2 := buffer2 || ', TRUNCATE';
-              END IF;
-            END IF;
-            buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ' || buffer2 || ' ON TABLES TO "' || grantee || '";';
-            
-            -- Issue#92 Fix
-            IF grantor = grantee THEN
-                -- append set role to statement
-                buffer = 'SET ROLE = ' || grantor || '; ' || buffer;
-            END IF;
-            
-            IF bDDLOnly THEN
-              RAISE INFO '%', buffer;
-            ELSE
-              EXECUTE buffer;
-            END IF;
-            select current_user into buffer;
-            -- Issue#92 Fix:
-            EXECUTE 'SET ROLE = ' || calleruser;
-
-          ELSIF arec.atype = 'type' THEN
-            IF POSITION('r' IN privs) > 0 AND POSITION('w' IN privs) > 0 AND POSITION('U' IN privs) > 0 THEN
-              -- arU is enough for all privs
-              buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ALL ON TYPES TO "' || grantee || '";';
+            ELSIF arec.atype = 'type' THEN
+              IF POSITION('r' IN privs) > 0 AND POSITION('w' IN privs) > 0 AND POSITION('U' IN privs) > 0 THEN
+                -- arU is enough for all privs
+                buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT ALL ON TYPES TO "' || grantee || '";';
+                
+                -- Issue#92 Fix
+                IF grantor = grantee THEN
+                    -- append set role to statement
+                    buffer = 'SET ROLE = ' || grantor || '; ' || buffer;
+                END IF;
               
-              -- Issue#92 Fix
-              IF grantor = grantee THEN
-                  -- append set role to statement
-                  buffer = 'SET ROLE = ' || grantor || '; ' || buffer;
-              END IF;
+                IF bDDLOnly THEN
+                  RAISE INFO '%', buffer;
+                ELSE
+                  EXECUTE buffer;
+                END IF;
+                -- Issue#92 Fix:
+                EXECUTE 'SET ROLE = ' || calleruser;
               
-              IF bDDLOnly THEN
-                RAISE INFO '%', buffer;
+              ELSIF POSITION('U' IN privs) THEN
+                buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT USAGE ON TYPES TO "' || grantee || '";';
+              
+                -- Issue#92 Fix
+                IF grantor = grantee THEN
+                    -- append set role to statement
+                    buffer = 'SET ROLE = ' || grantor || '; ' || buffer;
+                END IF;
+              
+                IF bDDLOnly THEN
+                  RAISE INFO '%', buffer;
+                ELSE
+                  EXECUTE buffer;
+                END IF;
+                -- Issue#92 Fix:
+                EXECUTE 'SET ROLE = ' || calleruser;
+              
               ELSE
-                EXECUTE buffer;
-              END IF;
-              -- Issue#92 Fix:
-              EXECUTE 'SET ROLE = ' || calleruser;
-              
-            ELSIF POSITION('U' IN privs) THEN
-              buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT USAGE ON TYPES TO "' || grantee || '";';
-              
-              -- Issue#92 Fix
-              IF grantor = grantee THEN
-                  -- append set role to statement
-                  buffer = 'SET ROLE = ' || grantor || '; ' || buffer;
-              END IF;
-              
-              IF bDDLOnly THEN
-                RAISE INFO '%', buffer;
-              ELSE
-                EXECUTE buffer;
-              END IF;
-              -- Issue#92 Fix:
-              EXECUTE 'SET ROLE = ' || calleruser;
-              
-            ELSE
-              RAISE WARNING 'Unhandled TYPE Privs:: type=%  privs=%  owner=%   defaclacl=%  defaclstr=%  grantor=%  grantee=% ', arec.atype, privs, arec.owner, arec.defaclacl, arec.defaclstr, grantor, grantee;
-          END IF;
-        ELSE
-          RAISE WARNING 'Unhandled Privs:: type=%  privs=%  owner=%   defaclacl=%  defaclstr=%  grantor=%  grantee=% ', arec.atype, privs, arec.owner, arec.defaclacl, arec.defaclstr, grantor, grantee;
-        END IF;
-      END LOOP;
-    END;
-  END LOOP;
-
-  RAISE NOTICE '  DFLT PRIVS cloned: %', LPAD(cnt::text, 5, ' ');
-
-  -- MV: PRIVS: schema
-  -- crunchy data extension, check_access
-  -- SELECT role_path, base_role, as_role, objtype, schemaname, objname, array_to_string(array_agg(privname),',') as privs  FROM all_access()
-  -- WHERE base_role != CURRENT_USER and objtype = 'schema' and schemaname = 'public' group by 1,2,3,4,5,6;
-
-  action := 'PRIVS: Schema';
-  cnt := 0;
-  FOR arec IN
-    SELECT 'GRANT ' || p.perm::perm_type || ' ON SCHEMA ' || quote_ident(dest_schema) || ' TO "' || r.rolname || '";' as schema_ddl
-    FROM pg_catalog.pg_namespace AS n
-    CROSS JOIN pg_catalog.pg_roles AS r
-    CROSS JOIN (VALUES ('USAGE'), ('CREATE')) AS p(perm)
-    WHERE n.nspname = quote_ident(source_schema) AND NOT r.rolsuper AND has_schema_privilege(r.oid, n.oid, p.perm)
-    ORDER BY r.rolname, p.perm::perm_type
-  LOOP
-    BEGIN
-      cnt := cnt + 1;
-      IF bDDLOnly THEN
-        RAISE INFO '%', arec.schema_ddl;
-      ELSE
-        EXECUTE arec.schema_ddl;
-      END IF;
-
-    END;
-  END LOOP;
-  RAISE NOTICE 'SCHEMA PRIVS cloned: %', LPAD(cnt::text, 5, ' ');
-
-  -- MV: PRIVS: sequences
-  action := 'PRIVS: Sequences';
-  cnt := 0;
-  FOR arec IN
-    -- Issue#78 FIX: handle case-sensitive names with quote_ident() on t.relname
-    SELECT 'GRANT ' || p.perm::perm_type || ' ON ' || quote_ident(dest_schema) || '.' || quote_ident(t.relname::text) || ' TO "' || r.rolname || '";' as seq_ddl
-    FROM pg_catalog.pg_class AS t
-    CROSS JOIN pg_catalog.pg_roles AS r
-    CROSS JOIN (VALUES ('SELECT'), ('USAGE'), ('UPDATE')) AS p(perm)
-    WHERE t.relnamespace::regnamespace::name = quote_ident(source_schema) AND t.relkind = 'S'  AND NOT r.rolsuper AND has_sequence_privilege(r.oid, t.oid, p.perm)
-  LOOP
-    BEGIN
-      cnt := cnt + 1;
-      -- IF bDebug THEN RAISE NOTICE 'DEBUG: ddl=%', arec.seq_ddl; END IF;
-      IF bDDLOnly THEN
-        RAISE INFO '%', arec.seq_ddl;
-      ELSE
-        EXECUTE arec.seq_ddl;
-      END IF;
-
-    END;
-  END LOOP;
-  RAISE NOTICE '  SEQ. PRIVS cloned: %', LPAD(cnt::text, 5, ' ');
-
-  -- MV: PRIVS: functions
-  action := 'PRIVS: Functions/Procedures';
-  cnt := 0;
-
-  -- Issue#61 FIX: use set_config for empty string
-  -- SET search_path = '';
-  SELECT set_config('search_path', '', false) into v_dummy;
-
-  -- RAISE NOTICE ' source_schema=%  dest_schema=%',source_schema, dest_schema;
-  FOR arec IN
-    -- 2021-03-05 MJV FIX: issue#35: caused exception in some functions with parameters and gave privileges to other users that should not have gotten them.
-    -- SELECT 'GRANT EXECUTE ON FUNCTION ' || quote_ident(dest_schema) || '.' || replace(regexp_replace(f.oid::regprocedure::text, '^((("[^"]*")|([^"][^.]*))\.)?', ''), source_schema, dest_schema) || ' TO "' || r.rolname || '";' as func_ddl
-    -- FROM pg_catalog.pg_proc f CROSS JOIN pg_catalog.pg_roles AS r WHERE f.pronamespace::regnamespace::name = quote_ident(source_schema) AND NOT r.rolsuper AND has_function_privilege(r.oid, f.oid, 'EXECUTE')
-    -- order by regexp_replace(f.oid::regprocedure::text, '^((("[^"]*")|([^"][^.]*))\.)?', '')
-
-    -- 2021-03-05 MJV FIX: issue#37: defaults cause problems, use system function that returns args WITHOUT DEFAULTS
-    -- COALESCE(r.routine_type, 'FUNCTION'): for aggregate functions, information_schema.routines contains NULL as routine_type value.
-    -- Issue#78 FIX: handle case-sensitive names with quote_ident() on rp.routine_name
-    SELECT 'GRANT ' || rp.privilege_type || ' ON ' || COALESCE(r.routine_type, 'FUNCTION') || ' ' || quote_ident(dest_schema) || '.' || quote_ident(rp.routine_name) || ' (' || pg_get_function_identity_arguments(p.oid) || ') TO ' || string_agg(distinct rp.grantee, ',') || ';' as func_dcl
-    FROM information_schema.routine_privileges rp, information_schema.routines r, pg_proc p, pg_namespace n
-    WHERE rp.routine_schema = quote_ident(source_schema)
-      AND rp.is_grantable = 'YES'
-      AND rp.routine_schema = r.routine_schema
-      AND rp.routine_name = r.routine_name
-      AND rp.routine_schema = n.nspname
-      AND n.oid = p.pronamespace
-      AND p.proname = r.routine_name
-    GROUP BY rp.privilege_type, r.routine_type, rp.routine_name, pg_get_function_identity_arguments(p.oid)
-  LOOP
-    BEGIN
-      cnt := cnt + 1;
-      IF bDDLOnly THEN
-        RAISE INFO '%', arec.func_dcl;
-      ELSE
-        EXECUTE arec.func_dcl;
-      END IF;
-
-    END;
-  END LOOP;
-  EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
-  RAISE NOTICE '  FUNC PRIVS cloned: %', LPAD(cnt::text, 5, ' ');
-
-  -- MV: PRIVS: tables
-  action := 'PRIVS: Tables';
-  -- regular, partitioned, and foreign tables plus view and materialized view permissions. TODO: implement foreign table defs.
-  cnt := 0;
-  FOR arec IN
-    -- SELECT 'GRANT ' || p.perm::perm_type || CASE WHEN t.relkind in ('r', 'p', 'f') THEN ' ON TABLE ' WHEN t.relkind in ('v', 'm')  THEN ' ON ' END || quote_ident(dest_schema) || '.' || t.relname::text || ' TO "' || r.rolname || '";' as tbl_ddl,
-    -- has_table_privilege(r.oid, t.oid, p.perm) AS granted, t.relkind
-    -- FROM pg_catalog.pg_class AS t CROSS JOIN pg_catalog.pg_roles AS r CROSS JOIN (VALUES (TEXT 'SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'), ('TRUNCATE'), ('REFERENCES'), ('TRIGGER')) AS p(perm)
-    -- WHERE t.relnamespace::regnamespace::name = quote_ident(source_schema)  AND t.relkind in ('r', 'p', 'f', 'v', 'm')  AND NOT r.rolsuper AND has_table_privilege(r.oid, t.oid, p.perm) order by t.relname::text, t.relkind
-    -- 2021-03-05  MJV FIX: Fixed Issue#36 for tables
-    SELECT c.relkind, 'GRANT ' || tb.privilege_type || CASE WHEN c.relkind in ('r', 'p') THEN ' ON TABLE ' WHEN c.relkind in ('v', 'm')  THEN ' ON ' END ||
-    -- Issue#78 FIX: handle case-sensitive names with quote_ident() on t.relname      
-    quote_ident(dest_schema) || '.' || quote_ident(tb.table_name) || ' TO ' || string_agg(tb.grantee, ',') || ';' as tbl_dcl
-    FROM information_schema.table_privileges tb, pg_class c, pg_namespace n
-    WHERE tb.table_schema = quote_ident(source_schema) AND tb.table_name = c.relname AND c.relkind in ('r', 'p', 'v', 'm')
-      AND c.relnamespace = n.oid AND n.nspname = quote_ident(source_schema)
-      GROUP BY c.relkind, tb.privilege_type, tb.table_schema, tb.table_name
-  LOOP
-    BEGIN
-      cnt := cnt + 1;
-      -- IF bDebug THEN RAISE NOTICE 'DEBUG: ddl=%', arec.tbl_dcl; END IF;
-      -- Issue#46. Fixed reference to invalid record name (tbl_ddl --> tbl_dcl).
-      IF arec.relkind = 'f' THEN
-        RAISE WARNING 'Foreign tables are not currently implemented, so skipping privs for them. ddl=%', arec.tbl_dcl;
-      ELSE
-          IF bDDLOnly THEN
-              RAISE INFO '%', arec.tbl_dcl;
+                RAISE WARNING 'Unhandled TYPE Privs:: type=%  privs=%  owner=%   defaclacl=%  defaclstr=%  grantor=%  grantee=% ', arec.atype, privs, arec.owner, arec.defaclacl, arec.defaclstr, grantor, grantee;
+            END IF;
           ELSE
-              EXECUTE arec.tbl_dcl;
+            RAISE WARNING 'Unhandled Privs:: type=%  privs=%  owner=%   defaclacl=%  defaclstr=%  grantor=%  grantee=% ', arec.atype, privs, arec.owner, arec.defaclacl, arec.defaclstr, grantor, grantee;
           END IF;
-    END IF;
-    END;
-  END LOOP;
-  RAISE NOTICE ' TABLE PRIVS cloned: %', LPAD(cnt::text, 5, ' ');
+        END LOOP;
+      END;
+    END LOOP;
+  
+    RAISE NOTICE '  DFLT PRIVS cloned: %', LPAD(cnt::text, 5, ' ');    
+  END IF; -- NO ACL BRANCH
 
+  -- Issue#95 bypass if No ACL specified
+  IF NOT bNoACL THEN
+    -- MV: PRIVS: schema
+    -- crunchy data extension, check_access
+    -- SELECT role_path, base_role, as_role, objtype, schemaname, objname, array_to_string(array_agg(privname),',') as privs  FROM all_access()
+    -- WHERE base_role != CURRENT_USER and objtype = 'schema' and schemaname = 'public' group by 1,2,3,4,5,6;
+
+    action := 'PRIVS: Schema';
+    cnt := 0;
+    FOR arec IN
+      SELECT 'GRANT ' || p.perm::perm_type || ' ON SCHEMA ' || quote_ident(dest_schema) || ' TO "' || r.rolname || '";' as schema_ddl
+      FROM pg_catalog.pg_namespace AS n
+      CROSS JOIN pg_catalog.pg_roles AS r
+      CROSS JOIN (VALUES ('USAGE'), ('CREATE')) AS p(perm)
+      WHERE n.nspname = quote_ident(source_schema) AND NOT r.rolsuper AND has_schema_privilege(r.oid, n.oid, p.perm)
+      ORDER BY r.rolname, p.perm::perm_type
+    LOOP
+      BEGIN
+        cnt := cnt + 1;
+        IF bDDLOnly THEN
+          RAISE INFO '%', arec.schema_ddl;
+        ELSE
+          EXECUTE arec.schema_ddl;
+        END IF;
+  
+      END;
+    END LOOP;
+    RAISE NOTICE 'SCHEMA PRIVS cloned: %', LPAD(cnt::text, 5, ' ');
+  END IF; -- NO ACL BRANCH
+
+  -- Issue#95 bypass if No ACL specified
+  IF NOT bNoACL THEN
+    -- MV: PRIVS: sequences
+    action := 'PRIVS: Sequences';
+    cnt := 0;
+    FOR arec IN
+      -- Issue#78 FIX: handle case-sensitive names with quote_ident() on t.relname
+      SELECT 'GRANT ' || p.perm::perm_type || ' ON ' || quote_ident(dest_schema) || '.' || quote_ident(t.relname::text) || ' TO "' || r.rolname || '";' as seq_ddl
+      FROM pg_catalog.pg_class AS t
+      CROSS JOIN pg_catalog.pg_roles AS r
+      CROSS JOIN (VALUES ('SELECT'), ('USAGE'), ('UPDATE')) AS p(perm)
+      WHERE t.relnamespace::regnamespace::name = quote_ident(source_schema) AND t.relkind = 'S'  AND NOT r.rolsuper AND has_sequence_privilege(r.oid, t.oid, p.perm)
+    LOOP
+      BEGIN
+        cnt := cnt + 1;
+        -- IF bDebug THEN RAISE NOTICE 'DEBUG: ddl=%', arec.seq_ddl; END IF;
+        IF bDDLOnly THEN
+          RAISE INFO '%', arec.seq_ddl;
+        ELSE
+          EXECUTE arec.seq_ddl;
+        END IF;
+      END;
+    END LOOP;
+    RAISE NOTICE '  SEQ. PRIVS cloned: %', LPAD(cnt::text, 5, ' ');
+  END IF; -- NO ACL BRANCH    
+
+  -- Issue#95 bypass if No ACL specified
+  IF NOT bNoACL THEN
+    -- MV: PRIVS: functions
+    action := 'PRIVS: Functions/Procedures';
+    cnt := 0;
+
+    -- Issue#61 FIX: use set_config for empty string
+    -- SET search_path = '';
+    SELECT set_config('search_path', '', false) into v_dummy;
+
+    -- RAISE NOTICE ' source_schema=%  dest_schema=%',source_schema, dest_schema;
+    FOR arec IN
+      -- 2021-03-05 MJV FIX: issue#35: caused exception in some functions with parameters and gave privileges to other users that should not have gotten them.
+      -- SELECT 'GRANT EXECUTE ON FUNCTION ' || quote_ident(dest_schema) || '.' || replace(regexp_replace(f.oid::regprocedure::text, '^((("[^"]*")|([^"][^.]*))\.)?', ''), source_schema, dest_schema) || ' TO "' || r.rolname || '";' as func_ddl
+      -- FROM pg_catalog.pg_proc f CROSS JOIN pg_catalog.pg_roles AS r WHERE f.pronamespace::regnamespace::name = quote_ident(source_schema) AND NOT r.rolsuper AND has_function_privilege(r.oid, f.oid, 'EXECUTE')
+      -- order by regexp_replace(f.oid::regprocedure::text, '^((("[^"]*")|([^"][^.]*))\.)?', '')
+
+      -- 2021-03-05 MJV FIX: issue#37: defaults cause problems, use system function that returns args WITHOUT DEFAULTS
+      -- COALESCE(r.routine_type, 'FUNCTION'): for aggregate functions, information_schema.routines contains NULL as routine_type value.
+      -- Issue#78 FIX: handle case-sensitive names with quote_ident() on rp.routine_name
+      SELECT 'GRANT ' || rp.privilege_type || ' ON ' || COALESCE(r.routine_type, 'FUNCTION') || ' ' || quote_ident(dest_schema) || '.' || quote_ident(rp.routine_name) || ' (' || pg_get_function_identity_arguments(p.oid) || ') TO ' || string_agg(distinct rp.grantee, ',') || ';' as func_dcl
+      FROM information_schema.routine_privileges rp, information_schema.routines r, pg_proc p, pg_namespace n
+      WHERE rp.routine_schema = quote_ident(source_schema)
+        AND rp.is_grantable = 'YES'
+        AND rp.routine_schema = r.routine_schema
+        AND rp.routine_name = r.routine_name
+        AND rp.routine_schema = n.nspname
+        AND n.oid = p.pronamespace
+        AND p.proname = r.routine_name
+      GROUP BY rp.privilege_type, r.routine_type, rp.routine_name, pg_get_function_identity_arguments(p.oid)
+    LOOP
+      BEGIN
+        cnt := cnt + 1;
+        IF bDDLOnly THEN
+          RAISE INFO '%', arec.func_dcl;
+        ELSE
+          EXECUTE arec.func_dcl;
+        END IF;
+      END;
+    END LOOP;
+    EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
+    RAISE NOTICE '  FUNC PRIVS cloned: %', LPAD(cnt::text, 5, ' ');
+  END IF; -- NO ACL BRANCH
+
+  -- Issue#95 bypass if No ACL specified
+  IF NOT bNoACL THEN
+    -- MV: PRIVS: tables
+    action := 'PRIVS: Tables';
+    -- regular, partitioned, and foreign tables plus view and materialized view permissions. TODO: implement foreign table defs.
+    cnt := 0;
+    FOR arec IN
+      -- SELECT 'GRANT ' || p.perm::perm_type || CASE WHEN t.relkind in ('r', 'p', 'f') THEN ' ON TABLE ' WHEN t.relkind in ('v', 'm')  THEN ' ON ' END || quote_ident(dest_schema) || '.' || t.relname::text || ' TO "' || r.rolname || '";' as tbl_ddl,
+      -- has_table_privilege(r.oid, t.oid, p.perm) AS granted, t.relkind
+      -- FROM pg_catalog.pg_class AS t CROSS JOIN pg_catalog.pg_roles AS r CROSS JOIN (VALUES (TEXT 'SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'), ('TRUNCATE'), ('REFERENCES'), ('TRIGGER')) AS p(perm)
+      -- WHERE t.relnamespace::regnamespace::name = quote_ident(source_schema)  AND t.relkind in ('r', 'p', 'f', 'v', 'm')  AND NOT r.rolsuper AND has_table_privilege(r.oid, t.oid, p.perm) order by t.relname::text, t.relkind
+      -- 2021-03-05  MJV FIX: Fixed Issue#36 for tables
+      SELECT c.relkind, 'GRANT ' || tb.privilege_type || CASE WHEN c.relkind in ('r', 'p') THEN ' ON TABLE ' WHEN c.relkind in ('v', 'm')  THEN ' ON ' END ||
+      -- Issue#78 FIX: handle case-sensitive names with quote_ident() on t.relname      
+      quote_ident(dest_schema) || '.' || quote_ident(tb.table_name) || ' TO ' || string_agg(tb.grantee, ',') || ';' as tbl_dcl
+      FROM information_schema.table_privileges tb, pg_class c, pg_namespace n
+      WHERE tb.table_schema = quote_ident(source_schema) AND tb.table_name = c.relname AND c.relkind in ('r', 'p', 'v', 'm')
+        AND c.relnamespace = n.oid AND n.nspname = quote_ident(source_schema)
+        GROUP BY c.relkind, tb.privilege_type, tb.table_schema, tb.table_name
+    LOOP
+      BEGIN
+        cnt := cnt + 1;
+        -- IF bDebug THEN RAISE NOTICE 'DEBUG: ddl=%', arec.tbl_dcl; END IF;
+        -- Issue#46. Fixed reference to invalid record name (tbl_ddl --> tbl_dcl).
+        IF arec.relkind = 'f' THEN
+          RAISE WARNING 'Foreign tables are not currently implemented, so skipping privs for them. ddl=%', arec.tbl_dcl;
+        ELSE
+            IF bDDLOnly THEN
+                RAISE INFO '%', arec.tbl_dcl;
+            ELSE
+                EXECUTE arec.tbl_dcl;
+              END IF;
+      END IF;
+      END;
+    END LOOP;
+    RAISE NOTICE ' TABLE PRIVS cloned: %', LPAD(cnt::text, 5, ' ');
+  END IF; -- NO ACL BRANCH
 
   -- LOOP for regular tables and populate them if specified
   -- Issue#75 moved from big table loop above to here.
