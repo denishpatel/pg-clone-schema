@@ -44,7 +44,7 @@
 -- 2022-12-04  MJV FIX: Fixed Issue#96 PG15 may not populate the collcollate and collctype columns of the pg_collation table.  Handle this.
 -- 2022-12-04  MJV FIX: Fixed Issue#97 Regression testing: invalid CASE STATEMENT syntax found.  PG13 is stricter than PG14 and up.  Remove CASE from END CASE to terminate CASE statements.
 -- 2022-12-05  MJV FIX: Fixed Issue#95 Implemented owner/ACL rules.
--- 2022-12-06  MJV ENHANCEMENT:        Ddded timings instrumentation
+-- 2022-12-06  MJV FIX: Fixed Issue#98 Materialized Views are not populated because they are created before the regular tables are populated. Defer until after tables are populated.
 
 do $$ 
 <<first_block>>
@@ -456,9 +456,12 @@ DECLARE
   arglen           integer;
   vargs            text;
   avarg            public.cloneparms;
+
+  -- issue#98
+  mvarray          text[] := '{}';  
+  mvscopied        integer := 0;
   
   t                timestamptz := clock_timestamp();
-  
   v_version        text := '1.13  December 06, 2022';
 
 BEGIN
@@ -469,7 +472,7 @@ BEGIN
   IF 'DEBUG'   = ANY ($3) THEN bDebug = True; END IF;
   IF 'VERBOSE' = ANY ($3) THEN bVerbose = True; END IF;
   
-  IF bVerbose THEN RAISE NOTICE 'START TIME:%',clock_timestamp() - t; END IF;
+  IF bVerbose THEN RAISE NOTICE 'START: %',clock_timestamp() - t; END IF;
   
   arglen := array_length($3, 1);
   IF arglen IS NULL THEN
@@ -1626,8 +1629,18 @@ BEGIN
       SELECT REPLACE(v_def, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO buffer2;
 
       IF bData THEN
-        -- EXECUTE 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || v_def || ' WITH DATA;' ;
-        EXECUTE 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || buffer2 || ' WITH DATA;' ;
+        -- issue#98 defer creation until after regular tables are populated. Also defer the ownership as well.
+        -- EXECUTE 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || buffer2 || ' WITH DATA;' ;
+        buffer3 = 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || buffer2 || ' WITH DATA;';
+        mvarray := mvarray || buffer3;
+        
+        -- issue#95 
+        IF NOT bNoOwner THEN      
+          -- buffer3 = 'ALTER MATERIALIZED VIEW ' || buffer || ' OWNER TO ' || view_owner || ';' ;
+          -- EXECUTE buffer3;
+          buffer3 = 'ALTER MATERIALIZED VIEW ' || buffer || ' OWNER TO ' || view_owner || ';' ;
+          mvarray := mvarray || buffer3;
+        END IF;
       ELSE
         IF bDDLOnly THEN
           RAISE INFO '%', 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || buffer2 || ' WITH NO DATA;' ;
@@ -1651,7 +1664,14 @@ BEGIN
         IF bDDLOnly THEN
           RAISE INFO '%', 'COMMENT ON MATERIALIZED VIEW ' || quote_ident(dest_schema) || '.' || object || ' IS ''' || adef || ''';';
         ELSE
-          EXECUTE 'COMMENT ON MATERIALIZED VIEW ' || quote_ident(dest_schema) || '.' || object || ' IS ''' || adef || ''';';
+          -- Issue#$98: also defer if copy rows is on since we defer MVIEWS in that case
+          IF bData THEN
+            buffer3 = 'COMMENT ON MATERIALIZED VIEW ' || quote_ident(dest_schema) || '.' || object || ' IS ''' || adef || ''';';
+            mvarray = mvarray || buffer3;
+          ELSE
+            EXECUTE 'COMMENT ON MATERIALIZED VIEW ' || quote_ident(dest_schema) || '.' || object || ' IS ''' || adef || ''';';
+          END IF;
+          
         END IF;
       END IF;
 
@@ -1785,6 +1805,13 @@ BEGIN
     
     -- BAD : "COMMENT ON SEQUENCE sample_clone2.CaseSensitive_ID_seq IS 'just a comment on CaseSensitive sequence';"
     -- GOOD: "COMMENT ON SEQUENCE "CaseSensitive_ID_seq" IS 'just a comment on CaseSensitive sequence';"
+    
+    -- Issue#98 For MVs we create comments when we create the MVs
+    IF substring(qry,1,28) = 'COMMENT ON MATERIALIZED VIEW' THEN
+      IF bDebug THEN RAISE NOTICE 'deferring comments on MVs'; END IF;
+      cnt = cnt - 1;
+      continue;
+    END IF;
     
     IF bDDLOnly THEN
       RAISE INFO '%', qry;
@@ -2315,9 +2342,28 @@ BEGIN
            tblscopied := tblscopied + 1;
        END IF;
     END LOOP;    
-    IF bVerbose THEN RAISE NOTICE '  END: copy rows %',clock_timestamp() - t; END IF;  
+    
+    -- Issue#98 MVs deferred until now
+    FOREACH tblelement IN ARRAY mvarray
+    LOOP 
+       EXECUTE tblelement;       
+       -- get diagnostics for MV creates or refreshes does not work, always returns 1
+       GET DIAGNOSTICS cnt = ROW_COUNT;  
+       buffer = substring(tblelement, 25);
+       cnt2 = POSITION(' AS ' IN buffer);
+       IF cnt2 > 0 THEN
+         buffer = substring(buffer, 1, cnt2);
+         SELECT RPAD(buffer, 36, ' ') INTO buffer;
+         -- IF bVerbose THEN RAISE NOTICE ' Refreshed Mat. View,   %   Rows Inserted: ? %', buffer, cnt; END IF;
+         IF bVerbose THEN RAISE NOTICE ' Refreshed Mat. View,   %   Rows Inserted: ?', buffer; END IF;
+         mvscopied := mvscopied + 1;
+       END IF;
+    END LOOP;    
+    
+    IF bVerbose THEN RAISE NOTICE 'END: copy rows %',clock_timestamp() - t; END IF;  
   END IF;
   RAISE NOTICE '      TABLES copied: %', LPAD(tblscopied::text, 5, ' ');
+  RAISE NOTICE ' MATVIEWS refreshed: %', LPAD(mvscopied::text, 5, ' ');
 
   
   -- Issue#78 forces us to defer FKeys until the end since we previously did row copies before FKeys
@@ -2359,7 +2405,7 @@ BEGIN
   END IF;
   SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
   IF bDebug THEN RAISE NOTICE 'setting search_path back to what it was: %', v_dummy; END IF;
-  IF bVerbose THEN RAISE NOTICE 'END   TIME: %',clock_timestamp() - t; END IF;
+  IF bVerbose THEN RAISE NOTICE 'END: %',clock_timestamp() - t; END IF;
 
   EXCEPTION
      WHEN others THEN
