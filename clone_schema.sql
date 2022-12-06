@@ -660,7 +660,7 @@ BEGIN
   action := 'Collations';
   cnt := 0;
   -- Issue#96 Handle differently based on PG Versions (PG15 rely on colliculocale, not collcolocate)
-  -- perhaps use this logic instead: COALESCE(c.collcollate, c.colliculocale) AS lc_collate, COALESCE(c.collctype, c.colliculocale) AS lc_type
+  -- perhaps use this logic instead: COALESCE(c.collcollate, c.colliculocale) AS lc_collate, COALESCE(c.collctype, c.colliculocale) AS lc_type  
   IF sq_server_version_num < 100000 THEN
     RAISE NOTICE ' Collation cloning is are not supported in PG versions older than v10.  Current version is %-%', sq_server_version, sq_server_version_num;
   ELSEIF sq_server_version_num > 150000 THEN 
@@ -2307,7 +2307,8 @@ BEGIN
   -- LOOP for regular tables and populate them if specified
   -- Issue#75 moved from big table loop above to here.
   IF bData THEN
-    IF bVerbose THEN RAISE NOTICE 'START: copy rows %',clock_timestamp() - t; END IF;  
+    -- IF bVerbose THEN RAISE NOTICE 'START: copy rows %',clock_timestamp() - t; END IF;  
+    IF bVerbose THEN RAISE NOTICE 'Copying rows...'; END IF;  
 
     EXECUTE 'SET search_path = ' || quote_ident(dest_schema) ;
     action := 'Copy Rows';
@@ -2361,7 +2362,8 @@ BEGIN
        END IF;
     END LOOP;    
     
-    IF bVerbose THEN RAISE NOTICE 'END: copy rows %',clock_timestamp() - t; END IF;  
+    cnt := cast(extract(epoch from (clock_timestamp() - t)) as numeric(18,3));
+    IF bVerbose THEN RAISE NOTICE 'Copy rows duration: %',cnt; END IF;  
   END IF;
   RAISE NOTICE '      TABLES copied: %', LPAD(tblscopied::text, 5, ' ');
   RAISE NOTICE ' MATVIEWS refreshed: %', LPAD(mvscopied::text, 5, ' ');
