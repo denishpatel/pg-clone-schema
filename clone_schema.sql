@@ -472,7 +472,7 @@ BEGIN
   IF 'DEBUG'   = ANY ($3) THEN bDebug = True; END IF;
   IF 'VERBOSE' = ANY ($3) THEN bVerbose = True; END IF;
   
-  IF bVerbose THEN RAISE NOTICE 'START: %',clock_timestamp() - t; END IF;
+  -- IF bVerbose THEN RAISE NOTICE 'START: %',clock_timestamp() - t; END IF;
   
   arglen := array_length($3, 1);
   IF arglen IS NULL THEN
@@ -2363,7 +2363,7 @@ BEGIN
     END LOOP;    
     
     cnt := cast(extract(epoch from (clock_timestamp() - t)) as numeric(18,3));
-    IF bVerbose THEN RAISE NOTICE 'Copy rows duration: %',cnt; END IF;  
+    IF bVerbose THEN RAISE NOTICE 'Copy rows duration: % seconds',cnt; END IF;  
   END IF;
   RAISE NOTICE '      TABLES copied: %', LPAD(tblscopied::text, 5, ' ');
   RAISE NOTICE ' MATVIEWS refreshed: %', LPAD(mvscopied::text, 5, ' ');
@@ -2408,7 +2408,8 @@ BEGIN
   END IF;
   SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
   IF bDebug THEN RAISE NOTICE 'setting search_path back to what it was: %', v_dummy; END IF;
-  IF bVerbose THEN RAISE NOTICE 'END: %',clock_timestamp() - t; END IF;
+  cnt := cast(extract(epoch from (clock_timestamp() - t)) as numeric(18,3));
+  IF bVerbose THEN RAISE NOTICE 'clone_schema duration: % seconds',cnt; END IF;  
 
   EXCEPTION
      WHEN others THEN
