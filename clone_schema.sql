@@ -660,6 +660,7 @@ BEGIN
   action := 'Collations';
   cnt := 0;
   -- Issue#96 Handle differently based on PG Versions (PG15 rely on colliculocale, not collcolocate)
+  -- perhaps use this logic instead: COALESCE(c.collcollate, c.colliculocale) AS lc_collate, COALESCE(c.collctype, c.colliculocale) AS lc_type
   IF sq_server_version_num < 100000 THEN
     RAISE NOTICE ' Collation cloning is are not supported in PG versions older than v10.  Current version is %-%', sq_server_version, sq_server_version_num;
   ELSEIF sq_server_version_num > 150000 THEN 
