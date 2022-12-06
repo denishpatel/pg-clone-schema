@@ -44,6 +44,7 @@
 -- 2022-12-04  MJV FIX: Fixed Issue#96 PG15 may not populate the collcollate and collctype columns of the pg_collation table.  Handle this.
 -- 2022-12-04  MJV FIX: Fixed Issue#97 Regression testing: invalid CASE STATEMENT syntax found.  PG13 is stricter than PG14 and up.  Remove CASE from END CASE to terminate CASE statements.
 -- 2022-12-05  MJV FIX: Fixed Issue#95 Implemented owner/ACL rules.
+-- 2022-12-06  MJV ENHANCEMENT:        Ddded timings instrumentation
 
 do $$ 
 <<first_block>>
@@ -456,7 +457,9 @@ DECLARE
   vargs            text;
   avarg            public.cloneparms;
   
-  v_version        text := '1.13  December 05, 2022';
+  t                timestamptz := clock_timestamp();
+  
+  v_version        text := '1.13  December 06, 2022';
 
 BEGIN
   -- Make sure NOTICE are shown
@@ -465,6 +468,8 @@ BEGIN
 
   IF 'DEBUG'   = ANY ($3) THEN bDebug = True; END IF;
   IF 'VERBOSE' = ANY ($3) THEN bVerbose = True; END IF;
+  
+  IF bVerbose THEN RAISE NOTICE 'START TIME:%',clock_timestamp() - t; END IF;
   
   arglen := array_length($3, 1);
   IF arglen IS NULL THEN
@@ -1251,7 +1256,6 @@ BEGIN
     END LOOP;
     
     EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
-
   END LOOP;
   RAISE NOTICE '      TABLES cloned: %', LPAD(cnt::text, 5, ' ');
 
@@ -2275,6 +2279,8 @@ BEGIN
   -- LOOP for regular tables and populate them if specified
   -- Issue#75 moved from big table loop above to here.
   IF bData THEN
+    IF bVerbose THEN RAISE NOTICE 'START: copy rows %',clock_timestamp() - t; END IF;  
+
     EXECUTE 'SET search_path = ' || quote_ident(dest_schema) ;
     action := 'Copy Rows';
     FOREACH tblelement IN ARRAY tblarray
@@ -2309,7 +2315,7 @@ BEGIN
            tblscopied := tblscopied + 1;
        END IF;
     END LOOP;    
-
+    IF bVerbose THEN RAISE NOTICE '  END: copy rows %',clock_timestamp() - t; END IF;  
   END IF;
   RAISE NOTICE '      TABLES copied: %', LPAD(tblscopied::text, 5, ' ');
 
@@ -2353,6 +2359,7 @@ BEGIN
   END IF;
   SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
   IF bDebug THEN RAISE NOTICE 'setting search_path back to what it was: %', v_dummy; END IF;
+  IF bVerbose THEN RAISE NOTICE 'END   TIME: %',clock_timestamp() - t; END IF;
 
   EXCEPTION
      WHEN others THEN
