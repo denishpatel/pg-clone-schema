@@ -45,6 +45,7 @@
 -- 2022-12-04  MJV FIX: Fixed Issue#97 Regression testing: invalid CASE STATEMENT syntax found.  PG13 is stricter than PG14 and up.  Remove CASE from END CASE to terminate CASE statements.
 -- 2022-12-05  MJV FIX: Fixed Issue#95 Implemented owner/ACL rules.
 -- 2022-12-06  MJV FIX: Fixed Issue#98 Materialized Views are not populated because they are created before the regular tables are populated. Defer until after tables are populated.
+-- 2022-12-07  MJV FIX: Fixed Issue#99 Tables and indexes should mimic the same tablespace used in the source schema.  Only indexes where doing this. Fixed now so both use the same source tablespace.
 
 do $$ 
 <<first_block>>
@@ -124,7 +125,9 @@ $$
     WHERE schemaname = in_schema
         AND tablename = in_table
         AND TABLESPACE IS NOT NULL;
-    IF v_tablespace IS NULL THEN
+    -- Issue#99 Fix: simple coding error!
+    -- IF v_tablespace IS NULL THEN
+    IF v_temp IS NULL THEN
       v_tablespace := 'TABLESPACE pg_default';
     ELSE
       v_tablespace := 'TABLESPACE ' || v_temp;
@@ -461,8 +464,11 @@ DECLARE
   mvarray          text[] := '{}';  
   mvscopied        integer := 0;
   
+  -- issue#99 tablespaces
+  tblspace         text;
+  
   t                timestamptz := clock_timestamp();
-  v_version        text := '1.13  December 06, 2022';
+  v_version        text := '1.14  December 07, 2022';
 
 BEGIN
   -- Make sure NOTICE are shown
@@ -909,7 +915,8 @@ BEGIN
   IF bDebug THEN RAISE NOTICE 'setting search_path to empty string:%', v_dummy; END IF;
   -- Fix#86 add isgenerated to column list
   -- Fix#91 add tblowner for setting the table ownership to that of the source
-  FOR tblname, relpersist, bRelispart, relknd, data_type, udt_name, ocomment, l_child, isGenerated, tblowner  IN
+  -- Fix#99 added join to pg_tablespace
+  FOR tblname, relpersist, bRelispart, relknd, data_type, udt_name, ocomment, l_child, isGenerated, tblowner, tblspace  IN
     -- 2021-03-08 MJV #39 fix: change sql to get indicator of user-defined columns to issue warnings
     -- select c.relname, c.relpersistence, c.relispartition, c.relkind
     -- FROM pg_class c, pg_namespace n where n.oid = c.relnamespace and n.nspname = quote_ident(source_schema) and c.relkind in ('r','p') and
@@ -917,7 +924,8 @@ BEGIN
     --Fix#65 add another left join to distinguish child tables by inheritance
     -- Fix#86 add is_generated to column select
     -- Fix#91 add tblowner to the select
-    SELECT DISTINCT c.relname, c.relpersistence, c.relispartition, c.relkind, co.data_type, co.udt_name, obj_description(c.oid), i.inhrelid, COALESCE(co.is_generated, ''), pg_catalog.pg_get_userbyid(c.relowner) as "Owner"
+    SELECT DISTINCT c.relname, c.relpersistence, c.relispartition, c.relkind, co.data_type, co.udt_name, obj_description(c.oid), i.inhrelid, COALESCE(co.is_generated, ''), 
+                    pg_catalog.pg_get_userbyid(c.relowner) as "Owner", CASE WHEN reltablespace = 0 THEN 'pg_default' ELSE ts.spcname END as tablespace
     FROM pg_class c
         JOIN pg_namespace n ON (n.oid = c.relnamespace
                 AND n.nspname = quote_ident(source_schema)
@@ -926,7 +934,9 @@ BEGIN
                 AND co.table_name = c.relname
                 -- AND co.data_type = 'USER-DEFINED')
                 AND (co.data_type = 'USER-DEFINED' OR co.is_generated = 'ALWAYS'))
-        LEFT JOIN pg_inherits i ON (c.oid = i.inhrelid)
+        LEFT JOIN pg_inherits i ON (c.oid = i.inhrelid) 
+        -- issue#99 added join
+        LEFT JOIN pg_tablespace ts ON (c.reltablespace = ts.oid) 
     ORDER BY c.relkind DESC, c.relname
   LOOP
     cnt := cnt + 1;
@@ -967,6 +977,13 @@ BEGIN
              -- issue#95
             IF NOT bNoOwner THEN    
               RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || tblname, tblowner;
+            END IF;
+            
+            -- issue#99 
+            IF tblspace <> 'pg_default' THEN
+              -- replace with user-defined tablespace
+              -- ALTER TABLE myschema.mytable SET TABLESPACE usrtblspc;
+              RAISE INFO 'ALTER TABLE IF EXISTS % SET TABLESPACE %;', quote_ident(dest_schema) || '.' || tblname, tblspace;          
             END IF;
           ELSE
             -- FIXED #65, #67
@@ -1011,7 +1028,14 @@ BEGIN
               buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.'  || quote_ident(tblname) || ' OWNER TO ' || tblowner;            
               EXECUTE buffer3;              
             END IF;
-            IF bDebug THEN RAISE NOTICE 'tabledef02:%', buffer3; END IF;
+            
+            -- issue#99
+            IF tblspace <> 'pg_default' THEN
+              -- replace with user-defined tablespace
+              -- ALTER TABLE myschema.mytable SET TABLESPACE usrtblspc;
+              buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' SET TABLESPACE ' || tblspace;
+              EXECUTE buffer3;
+            END IF;
 
           ELSE
             -- FIXED #65, #67
@@ -2270,7 +2294,7 @@ BEGIN
   IF NOT bNoACL THEN
     -- MV: PRIVS: tables
     action := 'PRIVS: Tables';
-    -- regular, partitioned, and foreign tables plus view and materialized view permissions. TODO: implement foreign table defs.
+    -- regular, partitioned, and foreign tables plus view and materialized view permissions. Ignored for now: implement foreign table defs.
     cnt := 0;
     FOR arec IN
       -- SELECT 'GRANT ' || p.perm::perm_type || CASE WHEN t.relkind in ('r', 'p', 'f') THEN ' ON TABLE ' WHEN t.relkind in ('v', 'm')  THEN ' ON ' END || quote_ident(dest_schema) || '.' || t.relname::text || ' TO "' || r.rolname || '";' as tbl_ddl,
