@@ -55,6 +55,9 @@ Regression Testing is done in the following order:
 * Run the **schema_object_counts.sql** queries to compare object counts and rows from the source and target schemas.
 * Repeat all of the above for all supported versions of PG.
 
+# Assumptions
+* The target schema uses the same tablespace(s) as the source schema.
+
 # Limitations
 * Only works for PG Versions 10 and up.
 * You should not clone the "public" schema.  The resulting output may not be accurate even if it finishes without any errors.
