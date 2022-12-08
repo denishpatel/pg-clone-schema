@@ -468,7 +468,7 @@ DECLARE
   tblspace         text;
   
   t                timestamptz := clock_timestamp();
-  v_version        text := '1.14  December 07, 2022';
+  v_version        text := '1.14  December 08, 2022';
 
 BEGIN
   -- Make sure NOTICE are shown
@@ -636,9 +636,9 @@ BEGIN
     RAISE NOTICE ' Only generating DDL, not actually creating anything...';
     -- issue#95
     IF bNoOwner THEN
-        RAISE NOTICE 'CREATE SCHEMA %;', quote_ident(dest_schema);    
+        RAISE INFO 'CREATE SCHEMA %;', quote_ident(dest_schema);    
     ELSE
-        RAISE NOTICE 'CREATE SCHEMA % AUTHORIZATION %;', quote_ident(dest_schema), buffer;    
+        RAISE INFO 'CREATE SCHEMA % AUTHORIZATION %;', quote_ident(dest_schema), buffer;    
     END IF;
     RAISE NOTICE 'SET search_path=%;', quote_ident(dest_schema);
   ELSE
@@ -764,7 +764,7 @@ BEGIN
   action := 'Types';
   cnt := 0;
   FOR arec IN
-    SELECT c.relkind, n.nspname AS schemaname, t.typname AS typname, t.typcategory, CASE WHEN t.typcategory = 'C' THEN
+    SELECT c.relkind, n.nspname AS schemaname, t.typname AS typname, t.typcategory, pg_catalog.pg_get_userbyid(t.typowner) AS owner, CASE WHEN t.typcategory = 'C' THEN
             'CREATE TYPE ' || quote_ident(dest_schema) || '.' || t.typname || ' AS (' || array_to_string(array_agg(a.attname || ' ' || pg_catalog.format_type(a.atttypid, a.atttypmod)
                 ORDER BY c.relname, a.attnum), ', ') || ');'
         WHEN t.typcategory = 'E' THEN
@@ -781,7 +781,7 @@ BEGIN
         AND (c.relkind IS NULL
             OR c.relkind = 'c')
         AND t.typcategory IN ('C', 'E')
-    GROUP BY 1, 2, 3, 4
+    GROUP BY 1, 2, 3, 4, 5
     ORDER BY n.nspname, t.typcategory, t.typname
 
   LOOP
@@ -791,14 +791,35 @@ BEGIN
       IF arec.typcategory = 'E' THEN
         IF bDDLOnly THEN
           RAISE INFO '%', arec.type_ddl;
+          
+          --issue#95
+          IF NOT bNoOwner THEN
+            RAISE INFO 'ALTER TYPE % OWNER TO  %;', quote_ident(dest_schema) || '.' || arec.typname, arec.owner;
+          END IF;
         ELSE
           EXECUTE arec.type_ddl;
+
+          --issue#95
+          IF NOT bNoOwner THEN
+	    EXECUTE 'ALTER TYPE ' || quote_ident(dest_schema) || '.' || arec.typname || ' OWNER TO ' || arec.owner;
+	  END IF;
+
         END IF;
       ELSIF arec.typcategory = 'C' THEN
         IF bDDLOnly THEN
           RAISE INFO '%', arec.type_ddl;
+          --issue#95
+          IF NOT bNoOwner THEN
+            RAISE INFO 'ALTER TYPE % OWNER TO  %;', quote_ident(dest_schema) || '.' || arec.typname, arec.owner;
+          END IF;
+          
         ELSE
           EXECUTE arec.type_ddl;
+          
+          --issue#95
+          IF NOT bNoOwner THEN
+	    EXECUTE 'ALTER TYPE ' || quote_ident(dest_schema) || '.' || arec.typname || ' OWNER TO ' || arec.owner;
+	  END IF;
         END IF;
       ELSE
           RAISE NOTICE ' Unhandled type:%-%', arec.typcategory, arec.typname;
