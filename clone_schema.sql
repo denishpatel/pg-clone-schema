@@ -468,6 +468,7 @@ DECLARE
   tblspace         text;
   
   t                timestamptz := clock_timestamp();
+  r                timestamptz;
   v_version        text := '1.14  December 08, 2022';
 
 BEGIN
@@ -2352,6 +2353,7 @@ BEGIN
   -- LOOP for regular tables and populate them if specified
   -- Issue#75 moved from big table loop above to here.
   IF bData THEN
+    r = clock_timestamp();
     -- IF bVerbose THEN RAISE NOTICE 'START: copy rows %',clock_timestamp() - t; END IF;  
     IF bVerbose THEN RAISE NOTICE 'Copying rows...'; END IF;  
 
@@ -2407,7 +2409,7 @@ BEGIN
        END IF;
     END LOOP;    
     
-    cnt := cast(extract(epoch from (clock_timestamp() - t)) as numeric(18,3));
+    cnt := cast(extract(epoch from (clock_timestamp() - r)) as numeric(18,3));
     IF bVerbose THEN RAISE NOTICE 'Copy rows duration: % seconds',cnt; END IF;  
   END IF;
   RAISE NOTICE '      TABLES copied: %', LPAD(tblscopied::text, 5, ' ');
