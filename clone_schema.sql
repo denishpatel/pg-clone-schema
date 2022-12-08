@@ -469,6 +469,7 @@ DECLARE
   
   t                timestamptz := clock_timestamp();
   r                timestamptz;
+  s                timestamptz;
   v_version        text := '1.14  December 08, 2022';
 
 BEGIN
@@ -2361,6 +2362,7 @@ BEGIN
     action := 'Copy Rows';
     FOREACH tblelement IN ARRAY tblarray
     LOOP 
+       s = clock_timestamp();
        EXECUTE tblelement;       
        GET DIAGNOSTICS cnt = ROW_COUNT;  
        buffer = substring(tblelement, 13);
@@ -2372,7 +2374,8 @@ BEGIN
            buffer = substring(buffer,1, cnt2);       
        END IF;
        SELECT RPAD(buffer, 35, ' ') INTO buffer;
-       IF bVerbose THEN RAISE NOTICE ' Populated cloned table, %   Rows Copied: %', buffer, cnt; END IF;
+       cnt2 := cast(extract(epoch from (clock_timestamp() - s)) as numeric(18,3));
+       IF bVerbose THEN RAISE NOTICE ' Populated cloned table, %   Rows Copied: %    seconds: %', buffer, LPAD(cnt::text, 10, ' '), LPAD(cnt2::text, 5, ' '); END IF;
        tblscopied := tblscopied + 1;
     END LOOP;
     
@@ -2380,6 +2383,7 @@ BEGIN
     -- Do same for tables with user-defined elements
     FOREACH tblelement IN ARRAY tblarray2
     LOOP 
+       s = clock_timestamp();
        EXECUTE tblelement;       
        GET DIAGNOSTICS cnt = ROW_COUNT;  
        cnt2 = POSITION(' FROM ' IN tblelement::text);
@@ -2387,7 +2391,8 @@ BEGIN
            buffer = substring(tblelement, 1, cnt2);
            buffer = substring(buffer, 6);
            SELECT RPAD(buffer, 35, ' ') INTO buffer;
-           IF bVerbose THEN RAISE NOTICE ' Populated cloned table, %   Rows Copied: %', buffer, cnt; END IF;
+           cnt2 := cast(extract(epoch from (clock_timestamp() - s)) as numeric(18,3));
+           IF bVerbose THEN RAISE NOTICE ' Populated cloned table, %   Rows Copied: %    seconds: %', buffer, LPAD(cnt::text, 10, ' '), LPAD(cnt2::text, 5, ' '); END IF;
            tblscopied := tblscopied + 1;
        END IF;
     END LOOP;    
@@ -2395,6 +2400,7 @@ BEGIN
     -- Issue#98 MVs deferred until now
     FOREACH tblelement IN ARRAY mvarray
     LOOP 
+       s = clock_timestamp();
        EXECUTE tblelement;       
        -- get diagnostics for MV creates or refreshes does not work, always returns 1
        GET DIAGNOSTICS cnt = ROW_COUNT;  
@@ -2403,8 +2409,8 @@ BEGIN
        IF cnt2 > 0 THEN
          buffer = substring(buffer, 1, cnt2);
          SELECT RPAD(buffer, 36, ' ') INTO buffer;
-         -- IF bVerbose THEN RAISE NOTICE ' Refreshed Mat. View,   %   Rows Inserted: ? %', buffer, cnt; END IF;
-         IF bVerbose THEN RAISE NOTICE ' Refreshed Mat. View,   %   Rows Inserted: ?', buffer; END IF;
+         cnt2 := cast(extract(epoch from (clock_timestamp() - s)) as numeric(18,3));
+         IF bVerbose THEN RAISE NOTICE ' Populated Mat. View,   %   Rows Inserted: ?    seconds: %', buffer, LPAD(cnt2::text, 5, ' '); END IF;
          mvscopied := mvscopied + 1;
        END IF;
     END LOOP;    
