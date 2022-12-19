@@ -62,7 +62,7 @@ Regression Testing is done in the following order:
 * Only works for PG Versions 10 and up.
 * You should not clone the "public" schema.  The resulting output may not be accurate even if it finishes without any errors.
 * Foreign Tables are not handled at the present time.  They must be done manually.
-* Functions/procedures that reference schema-qualified objects in the body will not clone successfully.  The target schema will still reference the source schema in these cases.  To use this utility at the present time, you may need to remove schema-qualified references within your functions.
+* Functions/procedures that reference schema-qualified objects in the body may not clone as expected.  The target functions/objects will still reference whatever qualifications exist in the body.  To use this utility at the present time, you may need to remove schema-qualified references within your functions.
 <br/>
 <br/>
 Sponsor:
