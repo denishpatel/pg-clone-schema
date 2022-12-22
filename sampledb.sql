@@ -73,6 +73,7 @@ GRANT mydb_update TO mydb_owner GRANTED BY postgres;
 
 -- end of global stuff
 
+CREATE EXTENSION IF NOT EXISTS citext WITH SCHEMA public;
 CREATE EXTENSION IF NOT EXISTS postgis WITH SCHEMA public;
 CREATE EXTENSION IF NOT EXISTS postgres_fdw WITH SCHEMA public;
 COMMENT ON EXTENSION postgres_fdw IS 'foreign-data wrapper for remote PostgreSQL servers';
@@ -1313,6 +1314,15 @@ INSERT INTO Students (Id, FirstName, LastName) VALUES (0002, 'Aziz', 'Ahmad');
 INSERT INTO Students (Id, FirstName, LastName) VALUES (0003, 'Zohan', 'Ahuja');
 INSERT INTO Students (Id, FirstName, LastName) VALUES (0004, 'Homer', 'Presley');
 INSERT INTO Students (Id, FirstName, LastName) VALUES (0005, 'Sally', 'Smith');
+
+-- Create table with citext:
+CREATE TABLE citextusers (nick CITEXT PRIMARY KEY, pass TEXT   NOT NULL);
+INSERT INTO citextusers VALUES ( 'larry',  sha256(random()::text::bytea) );
+INSERT INTO citextusers VALUES ( 'Tom',    sha256(random()::text::bytea) );
+INSERT INTO citextusers VALUES ( 'Damian', sha256(random()::text::bytea) );
+INSERT INTO citextusers VALUES ( 'NEAL',   sha256(random()::text::bytea) );
+INSERT INTO citextusers VALUES ( 'Bjørn',  sha256(random()::text::bytea) );
+-- SELECT * FROM citextusers WHERE nick = 'Larry';
 
                                                                                                                             
 --
