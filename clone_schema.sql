@@ -1,51 +1,52 @@
 -- Change History:
 -- 2021-03-03  MJV FIX: Fixed population of tables with rows section. "buffer" variable was not initialized correctly. Used new variable, tblname, to fix it.
--- 2021-03-03  MJV FIX: Fixed Issue#34 where user-defined types in declare section of functions caused runtime errors.
--- 2021-03-04  MJV FIX: Fixed Issue#35 where privileges for functions were not being set correctly causing the program to bomb and giving privileges to other users that should not have gotten them.
--- 2021-03-05  MJV FIX: Fixed Issue#36 Fixed table and other object permissions
--- 2021-03-05  MJV FIX: Fixed Issue#37 Fixed function grants again for case where parameters have default values.
--- 2021-03-08  MJV FIX: Fixed Issue#38 fixed issue where source schema specified for executed trigger function action
--- 2021-03-08  MJV FIX: Fixed Issue#39 Add warnings for table columns that are user-defined since the probably refer back to the source schema!  No fix for it at this time.
--- 2021-03-09  MJV FIX: Fixed Issue#40 Rewrote trigger SQL instead to simply things for all cases
--- 2021-03-19  MJV FIX: Fixed Issue#39 Added new function to generate table ddl instead of using the CREATE TABLE LIKE statement only for use cases with user-defined column datatypes.
--- 2021-04-02  MJV FIX: Fixed Issue#43 Fixed views case where view was created successfully in target schema, but referenced table was not.
--- 2021-06-30  MJV FIX: Fixed Issue#46 Invalid record reference, tbl_ddl.  Changed to tbl_dcl in PRIVS section.
--- 2021-06-30  MJV FIX: Fixed Issue#46 Invalid record reference, tbl_ddl.  Changed to tbl_dcl in PRIVS section. Thanks to dpmillerau for this fix.
--- 2021-07-21  MJV FIX: Fixed Issue#47 Fixed resetting search path to what it was before.  Thanks to dpmillerau for this fix.
--- 2022-03-01  MJV FIX: Fixed Issue#61 Fixed more search_path problems. Modified get_table_ddl() to hard code search_path to public. Using set_config() for empty string instead of trying to set empty string directly and incorrectly.
--- 2022-03-01  MJV FIX: Fixed Issue#62 Added comments for indexes only (Thanks to @guignonv).  Still need to add comments for other objects.
--- 2022-03-24  MJV FIX: Fixed Issue#63 Use last used value for sequence not the start value
--- 2022-03-24  MJV FIX: Fixed Issue#59 Implement Rules
--- 2022-03-26  MJV FIX: Fixed Issue#65 Check column availability in selecting query to use for pg_proc table.  Also do some explicit datatype mappings for certain aggregate functions.  Also fixed inheritance derived tables.
--- 2022-03-31  MJV FIX: Fixed Issue#66 Implement Security Policies for RLS
--- 2022-04-02  MJV FIX: Fixed Issue#62 Fixed all comments and reworked the way we generate index comments by @guignonv
--- 2022-04-02  MJV FIX: Fixed Issue#67 Reworked get_table_ddl() so we are not dependent on outside function, pg_get_tabledef().
--- 2022-04-02  MJV FIX: Fixed Issue#42 Fixed copying rows logic with exception of tables with user-defined datatypes in them that have to be done manually, documented in README.
--- 2022-05-01  MJV FIX: Fixed Issue#53 Applied coding style fixes, using pgFormatter as basis for SQL.
--- 2022-05-02  MJV FIX: Fixed Issue#72 Remove original schema references from materialized view definition
--- 2022-05-14  MJV FIX: Fixed Issue#73 Fix dependency order for views depending on other views. Also removed duplicate comment logic for views.
--- 2022-06-12  MJV FIX: Fixed Issue#74 Change comments ddl from source_scshema to dest_schema. Policies fix using quote_literal(d.description) instead of hard-coded ticks and escape ticks.
--- 2022-06-13  MJV FIX: Fixed Issue#75 Rows were not being copied correctly for parents.  Needed to move copy rows logic to end, after all DDL is done.
--- 2022-06-15  MJV FIX: Fixed Issue#76 RLS is not being enabled for cloned tables.  Enable it right after the policy for the table is created
--- 2022-06-16  MJV FIX: Fixed Issue#78 Fix case-sensitive object names by using quote_ident() all over the place. Also added restriction to not allow case-sensitive target schemas.
--- 2022-06-16  MJV FIX: Fixed Issue#78 Also, since we deferred row copies until the end, we must also defer foreign key constraints to the end as well. 
--- 2022-06-18  MJV FIX: Fixed Issue#79 Fix copying of rows in tables with user-defined column datatypes using COPY method.
--- 2022-06-29  MJV FIX: Fixed Issue#80 Fix copying of rows reported error due to arrays not being initialized properly.
--- 2022-07-15  MJV FIX: Fixed Issue#81 Fix COPY import format for handling NULLs correctly.
--- 2022-09-16  MJV FIX: Fixed Issue#82 Set search_path to public when creating user-defined columns in tables to handle public datatypes like PostGIS. Also fixed a bug in DDL only mode.
--- 2022-09-19  MJV FIX: Fixed Issue#83 Tables with CONSTRAINT DEFs are duplicated as CREATE INDEX statements. Removed CREATE INDEX statements if already defined as CONSTRAINTS.
--- 2022-09-27  MJV FIX: Fixed Issue#85 v13 postgres needs stricter type casting than v14
--- 2022-09-29  MJV FIX: Fixed Issue#86 v12+ handle generated columns by not trying to insert rows into them
--- 2022-09-29  MJV FIX: Fixed Issue#87 v10 requires double quotes around collation name, 11+ doesnt care
--- 2022-12-02  MJV FIX: Fixed Issue#90 Clone functions before views to avoid cloning error for views that call functions.
--- 2022-12-02  MJV FIX: Fixed Issue#91 Fix ownership of objects.  Currently it is defaulting to the one running this script. Let it be the same owner as the source schema to preserve access control.
--- 2022-12-02  MJV FIX: Fixed Issue#92 Default privileges error: Must set the role before executing the command.
--- 2022-12-03  MJV FIX: Fixed Issue#94 Make parameters variadic
--- 2022-12-04  MJV FIX: Fixed Issue#96 PG15 may not populate the collcollate and collctype columns of the pg_collation table.  Handle this.
--- 2022-12-04  MJV FIX: Fixed Issue#97 Regression testing: invalid CASE STATEMENT syntax found.  PG13 is stricter than PG14 and up.  Remove CASE from END CASE to terminate CASE statements.
--- 2022-12-05  MJV FIX: Fixed Issue#95 Implemented owner/ACL rules.
--- 2022-12-06  MJV FIX: Fixed Issue#98 Materialized Views are not populated because they are created before the regular tables are populated. Defer until after tables are populated.
--- 2022-12-07  MJV FIX: Fixed Issue#99 Tables and indexes should mimic the same tablespace used in the source schema.  Only indexes where doing this. Fixed now so both use the same source tablespace.
+-- 2021-03-03  MJV FIX: Fixed Issue#34  where user-defined types in declare section of functions caused runtime errors.
+-- 2021-03-04  MJV FIX: Fixed Issue#35  where privileges for functions were not being set correctly causing the program to bomb and giving privileges to other users that should not have gotten them.
+-- 2021-03-05  MJV FIX: Fixed Issue#36  Fixed table and other object permissions
+-- 2021-03-05  MJV FIX: Fixed Issue#37  Fixed function grants again for case where parameters have default values.
+-- 2021-03-08  MJV FIX: Fixed Issue#38  fixed issue where source schema specified for executed trigger function action
+-- 2021-03-08  MJV FIX: Fixed Issue#39  Add warnings for table columns that are user-defined since the probably refer back to the source schema!  No fix for it at this time.
+-- 2021-03-09  MJV FIX: Fixed Issue#40  Rewrote trigger SQL instead to simply things for all cases
+-- 2021-03-19  MJV FIX: Fixed Issue#39  Added new function to generate table ddl instead of using the CREATE TABLE LIKE statement only for use cases with user-defined column datatypes.
+-- 2021-04-02  MJV FIX: Fixed Issue#43  Fixed views case where view was created successfully in target schema, but referenced table was not.
+-- 2021-06-30  MJV FIX: Fixed Issue#46  Invalid record reference, tbl_ddl.  Changed to tbl_dcl in PRIVS section.
+-- 2021-06-30  MJV FIX: Fixed Issue#46  Invalid record reference, tbl_ddl.  Changed to tbl_dcl in PRIVS section. Thanks to dpmillerau for this fix.
+-- 2021-07-21  MJV FIX: Fixed Issue#47  Fixed resetting search path to what it was before.  Thanks to dpmillerau for this fix.
+-- 2022-03-01  MJV FIX: Fixed Issue#61  Fixed more search_path problems. Modified get_table_ddl() to hard code search_path to public. Using set_config() for empty string instead of trying to set empty string directly and incorrectly.
+-- 2022-03-01  MJV FIX: Fixed Issue#62  Added comments for indexes only (Thanks to @guignonv).  Still need to add comments for other objects.
+-- 2022-03-24  MJV FIX: Fixed Issue#63  Use last used value for sequence not the start value
+-- 2022-03-24  MJV FIX: Fixed Issue#59  Implement Rules
+-- 2022-03-26  MJV FIX: Fixed Issue#65  Check column availability in selecting query to use for pg_proc table.  Also do some explicit datatype mappings for certain aggregate functions.  Also fixed inheritance derived tables.
+-- 2022-03-31  MJV FIX: Fixed Issue#66  Implement Security Policies for RLS
+-- 2022-04-02  MJV FIX: Fixed Issue#62  Fixed all comments and reworked the way we generate index comments by @guignonv
+-- 2022-04-02  MJV FIX: Fixed Issue#67  Reworked get_table_ddl() so we are not dependent on outside function, pg_get_tabledef().
+-- 2022-04-02  MJV FIX: Fixed Issue#42  Fixed copying rows logic with exception of tables with user-defined datatypes in them that have to be done manually, documented in README.
+-- 2022-05-01  MJV FIX: Fixed Issue#53  Applied coding style fixes, using pgFormatter as basis for SQL.
+-- 2022-05-02  MJV FIX: Fixed Issue#72  Remove original schema references from materialized view definition
+-- 2022-05-14  MJV FIX: Fixed Issue#73  Fix dependency order for views depending on other views. Also removed duplicate comment logic for views.
+-- 2022-06-12  MJV FIX: Fixed Issue#74  Change comments ddl from source_scshema to dest_schema. Policies fix using quote_literal(d.description) instead of hard-coded ticks and escape ticks.
+-- 2022-06-13  MJV FIX: Fixed Issue#75  Rows were not being copied correctly for parents.  Needed to move copy rows logic to end, after all DDL is done.
+-- 2022-06-15  MJV FIX: Fixed Issue#76  RLS is not being enabled for cloned tables.  Enable it right after the policy for the table is created
+-- 2022-06-16  MJV FIX: Fixed Issue#78  Fix case-sensitive object names by using quote_ident() all over the place. Also added restriction to not allow case-sensitive target schemas.
+-- 2022-06-16  MJV FIX: Fixed Issue#78  Also, since we deferred row copies until the end, we must also defer foreign key constraints to the end as well. 
+-- 2022-06-18  MJV FIX: Fixed Issue#79  Fix copying of rows in tables with user-defined column datatypes using COPY method.
+-- 2022-06-29  MJV FIX: Fixed Issue#80  Fix copying of rows reported error due to arrays not being initialized properly.
+-- 2022-07-15  MJV FIX: Fixed Issue#81  Fix COPY import format for handling NULLs correctly.
+-- 2022-09-16  MJV FIX: Fixed Issue#82  Set search_path to public when creating user-defined columns in tables to handle public datatypes like PostGIS. Also fixed a bug in DDL only mode.
+-- 2022-09-19  MJV FIX: Fixed Issue#83  Tables with CONSTRAINT DEFs are duplicated as CREATE INDEX statements. Removed CREATE INDEX statements if already defined as CONSTRAINTS.
+-- 2022-09-27  MJV FIX: Fixed Issue#85  v13 postgres needs stricter type casting than v14
+-- 2022-09-29  MJV FIX: Fixed Issue#86  v12+ handle generated columns by not trying to insert rows into them
+-- 2022-09-29  MJV FIX: Fixed Issue#87  v10 requires double quotes around collation name, 11+ doesnt care
+-- 2022-12-02  MJV FIX: Fixed Issue#90  Clone functions before views to avoid cloning error for views that call functions.
+-- 2022-12-02  MJV FIX: Fixed Issue#91  Fix ownership of objects.  Currently it is defaulting to the one running this script. Let it be the same owner as the source schema to preserve access control.
+-- 2022-12-02  MJV FIX: Fixed Issue#92  Default privileges error: Must set the role before executing the command.
+-- 2022-12-03  MJV FIX: Fixed Issue#94  Make parameters variadic
+-- 2022-12-04  MJV FIX: Fixed Issue#96  PG15 may not populate the collcollate and collctype columns of the pg_collation table.  Handle this.
+-- 2022-12-04  MJV FIX: Fixed Issue#97  Regression testing: invalid CASE STATEMENT syntax found.  PG13 is stricter than PG14 and up.  Remove CASE from END CASE to terminate CASE statements.
+-- 2022-12-05  MJV FIX: Fixed Issue#95  Implemented owner/ACL rules.
+-- 2022-12-06  MJV FIX: Fixed Issue#98  Materialized Views are not populated because they are created before the regular tables are populated. Defer until after tables are populated.
+-- 2022-12-07  MJV FIX: Fixed Issue#99  Tables and indexes should mimic the same tablespace used in the source schema.  Only indexes where doing this. Fixed now so both use the same source tablespace.
+-- 2022-12-22  MJV FIX: Fixed Issue#101 Enhancement: More debugging info, exceptions print out version.
 
 do $$ 
 <<first_block>>
@@ -470,7 +471,7 @@ DECLARE
   t                timestamptz := clock_timestamp();
   r                timestamptz;
   s                timestamptz;
-  v_version        text := '1.14  December 08, 2022';
+  v_version        text := '1.15  December 22, 2022';
 
 BEGIN
   -- Make sure NOTICE are shown
@@ -2470,7 +2471,8 @@ BEGIN
          GET STACKED DIAGNOSTICS v_diag1 = MESSAGE_TEXT, v_diag2 = PG_EXCEPTION_DETAIL, v_diag3 = PG_EXCEPTION_HINT, v_diag4 = RETURNED_SQLSTATE, v_diag5 = PG_CONTEXT, v_diag6 = PG_EXCEPTION_CONTEXT;
          -- v_ret := 'line=' || v_diag6 || '. '|| v_diag4 || '. ' || v_diag1 || ' .' || v_diag2 || ' .' || v_diag3;
          v_ret := 'line=' || v_diag6 || '. '|| v_diag4 || '. ' || v_diag1;
-         RAISE EXCEPTION 'Action: %  Diagnostics: %',action, v_ret;
+         -- Issue#101: added version to exception output
+         RAISE EXCEPTION 'Version: %  Action: %  Diagnostics: %',v_version, action, v_ret;
 
          IF src_path_old = '' THEN
            -- RAISE NOTICE 'setting old search_path to empty string';
