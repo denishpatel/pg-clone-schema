@@ -63,6 +63,7 @@ Regression Testing is done in the following order:
 * You should not clone the "public" schema.  The resulting output may not be accurate even if it finishes without any errors.
 * Foreign Tables are not handled at the present time.  They must be done manually.
 * Functions/procedures that reference schema-qualified objects in the body may not clone as expected.  The target functions/objects will still reference whatever qualifications exist in the body.  To use this utility at the present time, you may need to remove schema-qualified references within your functions.
+* With PG DBaaS instances (AWS, GCP, Azure), you cannot copy data from source to target if a table has user-defined datatypes created in the source schema. A workaround is to create user-defined datatypes for the source schema in the public schema.  For instance, when you create the citext datatype through the citex extension, by default it is created in the public schema.
 <br/>
 <br/>
 Sponsor:
