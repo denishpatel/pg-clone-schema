@@ -55,15 +55,9 @@ do $$
 DECLARE
     cnt int;
 BEGIN
-  SELECT count(*) into cnt
-  FROM pg_catalog.pg_type t LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class c WHERE c.oid = t.typrelid)) 
-  AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_type el WHERE el.oid = t.typelem AND el.typarray = t.oid)
-  AND n.nspname <> 'pg_catalog' AND n.nspname <> 'information_schema' AND pg_catalog.pg_type_is_visible(t.oid)
-  AND pg_catalog.format_type(t.oid, NULL) in ('cloneparms');
-  IF cnt = 0 THEN
-    RAISE NOTICE 'Creating custom types.';
-    CREATE TYPE public.cloneparms AS ENUM ('DATA', 'NODATA','DDLONLY','NOOWNER','NOACL','VERBOSE','DEBUG','FILECOPY');
-  END IF;
+  DROP TYPE IF EXISTS public.cloneparms CASCADE;
+  CREATE TYPE public.cloneparms AS ENUM ('DATA', 'NODATA','DDLONLY','NOOWNER','NOACL','VERBOSE','DEBUG','FILECOPY');
+  -- END IF;
 end first_block $$;
 
 
