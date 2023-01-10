@@ -48,7 +48,8 @@
 -- 2022-12-07  MJV FIX: Fixed Issue#99  Tables and indexes should mimic the same tablespace used in the source schema.  Only indexes where doing this. Fixed now so both use the same source tablespace.
 -- 2022-12-22  MJV FIX: Fixed Issue#100 Fixed case for user-defined type in public schema not handled: citext. See #82 issue that missed this one.
 -- 2022-12-22  MJV FIX: Fixed Issue#101 Enhancement: More debugging info, exceptions print out version.
-
+-- 2023-01-10  MJV FIX: Fixed Issue#102 Add alternative to export/import for UDTs, use "text" as an intermediate cast.
+--                                      ex: INSERT INTO clone1.address2 (id2, id3, addr) SELECT id2::text::clone1.udt_myint, id3::text::clone1.udt_myint, addr FROM sample.address;
 do $$ 
 <<first_block>>
 DECLARE
@@ -61,13 +62,93 @@ BEGIN
   AND pg_catalog.format_type(t.oid, NULL) in ('cloneparms');
   IF cnt = 0 THEN
     RAISE NOTICE 'Creating custom types.';
-    CREATE TYPE public.cloneparms AS ENUM ('DATA', 'NODATA','DDLONLY','NOOWNER','NOACL','VERBOSE','DEBUG');
+    CREATE TYPE public.cloneparms AS ENUM ('DATA', 'NODATA','DDLONLY','NOOWNER','NOACL','VERBOSE','DEBUG','FILECOPY');
   END IF;
 end first_block $$;
 
 
--- SELECT * FROM public.get_table_ddl('sample', 'address', True);
+-- select * from public.get_insert_stmt_ddl('clone1','sample','address');
+CREATE OR REPLACE FUNCTION public.get_insert_stmt_ddl(
+  source_schema text,
+  target_schema text,
+  atable text,
+  bTextCast boolean default False
+)
+RETURNS text
+LANGUAGE plpgsql VOLATILE
+AS
+$$
+  DECLARE
+    -- the ddl we're building
+    v_insert_ddl text := '';
+    v_cols       text := '';
+    v_cols_sel   text := '';
+    v_cnt        int  := 0;
+    v_colrec     record;
+    v_schema     text;
+  BEGIN
+    FOR v_colrec IN
+      SELECT c.column_name, c.data_type, c.udt_name, c.udt_schema, c.character_maximum_length, c.is_nullable, c.column_default, c.numeric_precision, c.numeric_scale, c.is_identity, c.identity_generation, c.is_generated 
+      FROM information_schema.columns c WHERE (table_schema, table_name) = (source_schema, atable) ORDER BY ordinal_position
+    LOOP
+      IF v_colrec.udt_schema = 'public' THEN
+        v_schema = 'public';
+      ELSE
+        v_schema = target_schema;
+      END IF;
+      
+      v_cnt = v_cnt + 1;
+      IF v_colrec.is_identity = 'YES' OR v_colrec.is_generated = 'ALWAYS' THEN
+        -- skip
+        continue;
+      END IF;
 
+      IF v_colrec.data_type = 'USER-DEFINED' THEN
+        IF v_cols = '' THEN
+          v_cols     = v_colrec.column_name;
+          IF bTextCast THEN 
+            -- v_cols_sel = v_colrec.column_name || '::text::' || v_schema || '.' || v_colrec.udt_name;
+            IF v_schema = 'public' THEN
+              v_cols_sel = v_colrec.column_name || '::' || v_schema || '.' || v_colrec.udt_name;
+            ELSE
+              v_cols_sel = v_colrec.column_name || '::text::' || v_colrec.udt_name;
+            END IF;
+          ELSE
+            v_cols_sel = v_colrec.column_name || '::' || v_schema || '.' || v_colrec.udt_name;
+          END IF;
+        ELSE 
+          v_cols     = v_cols     || ', ' || v_colrec.column_name;
+          IF bTextCast THEN 
+            -- v_cols_sel = v_cols_sel || ', ' || v_colrec.column_name || '::text::' || v_schema || '.' || v_colrec.udt_name;
+            IF v_schema = 'public' THEN
+              v_cols_sel = v_cols_sel || ', ' || v_colrec.column_name || '::' || v_schema || '.' || v_colrec.udt_name;
+            ELSE
+              v_cols_sel = v_cols_sel || ', ' || v_colrec.column_name || '::text::' || v_colrec.udt_name;
+            END IF;
+          ELSE
+            v_cols_sel = v_cols_sel || ', ' || v_colrec.column_name || '::' || v_schema || '.' || v_colrec.udt_name;
+          END IF;
+        END IF;
+      ELSE
+        IF v_cols = '' THEN
+          v_cols     = v_colrec.column_name;
+          v_cols_sel = v_colrec.column_name;
+        ELSE 
+          v_cols     = v_cols     || ', ' || v_colrec.column_name;
+          v_cols_sel = v_cols_sel || ', ' || v_colrec.column_name;
+        END IF;
+      END IF;
+    END LOOP;
+
+    -- put it all together and return the insert statement
+    -- INSERT INTO clone1.address2 (id2, id3, addr) SELECT id2::text::clone1.udt_myint, id3::text::clone1.udt_myint, addr FROM sample.address;    
+    v_insert_ddl = 'INSERT INTO ' || target_schema || '.' || atable || ' (' || v_cols || ') ' || 'SELECT ' || v_cols_sel || ' FROM ' || source_schema || '.' || atable || ';';
+    RETURN v_insert_ddl;
+  END;
+$$;
+
+
+-- SELECT * FROM public.get_table_ddl('sample', 'address', True);
 CREATE OR REPLACE FUNCTION public.get_table_ddl(
   in_schema varchar,
   in_table varchar,
@@ -398,6 +479,7 @@ DECLARE
   -- issue#80 initialize arrays properly
   tblarray         text[] := '{}';
   tblarray2        text[] := '{}';
+  tblarray3        text[] := '{}';
   tblelement       text;
   grantor          text;
   grantee          text;
@@ -470,10 +552,13 @@ DECLARE
   -- issue#99 tablespaces
   tblspace         text;
   
+  -- issue#101
+  bFileCopy        boolean := False;
+  
   t                timestamptz := clock_timestamp();
   r                timestamptz;
   s                timestamptz;
-  v_version        text := '1.15  December 22, 2022';
+  v_version        text := '1.16  January 10, 2023';
 
 BEGIN
   -- Make sure NOTICE are shown
@@ -507,6 +592,9 @@ BEGIN
         bNoACL = True;
       ELSEIF avarg = 'NOOWNER' THEN
         bNoOwner = True;        
+      -- issue#101 fix
+      ELSEIF avarg = 'FILECOPY' THEN
+        bFileCopy = True;
       END IF;
     END LOOP;
     IF bData and bDDLOnly THEN 
@@ -1042,7 +1130,6 @@ BEGIN
             buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
             EXECUTE buffer3;
           END IF;
-          
         ELSE
           IF (NOT bChild OR bRelispart) THEN
             buffer3 := 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
@@ -1255,26 +1342,34 @@ BEGIN
       IF data_type = 'USER-DEFINED' OR isGenerated = 'ALWAYS' THEN
 
         -- RAISE WARNING 'Bypassing copying rows for table (%) with user-defined data types.  You must copy them manually.', tblname;
-        -- wont work --> INSERT INTO sample_clone1.address (id2, id3, addr) SELECT cast(id2 as sample_clone1.udt_myint), cast(id3 as sample_clone1.udt_myint), addr FROM sample.address;
+        -- wont work --> INSERT INTO clone1.address (id2, id3, addr) SELECT cast(id2 as clone1.udt_myint), cast(id3 as clone1.udt_myint), addr FROM sample.address;
+        -- Issue#101 --> INSERT INTO clone1.address2 (id2, id3, addr) SELECT id2::text::clone1.udt_myint, id3::text::clone1.udt_myint, addr FROM sample.address; 
 
         -- Issue#79 implementation follows        
         -- COPY sample.statuses(id, s) TO '/tmp/statuses.txt' WITH DELIMITER AS ',';
         -- COPY sample_clone1.statuses FROM '/tmp/statuses.txt' (DELIMITER ',', NULL '');
-        IF bWindows THEN
-            buffer2   := 'COPY ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' TO  ''C:\WINDOWS\TEMP\cloneschema.tmp'' WITH DELIMITER AS '','';';
-            tblarray2 := tblarray2 || buffer2;
-            -- Issue #81 reformat COPY command for upload
-            -- buffer2:= 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM  ''C:\WINDOWS\TEMP\cloneschema.tmp'' (DELIMITER '','', NULL '''');';
-            buffer2   := 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM  ''C:\WINDOWS\TEMP\cloneschema.tmp'' (DELIMITER '','', NULL ''\N'', FORMAT CSV);';
-            tblarray2 := tblarray2 || buffer2;
+        -- Issue#101 fix: use text cast to get around the problem.
+        IF bFileCopy THEN
+          IF bWindows THEN
+              buffer2   := 'COPY ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' TO  ''C:\WINDOWS\TEMP\cloneschema.tmp'' WITH DELIMITER AS '','';';
+              tblarray2 := tblarray2 || buffer2;
+              -- Issue #81 reformat COPY command for upload
+              -- buffer2:= 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM  ''C:\WINDOWS\TEMP\cloneschema.tmp'' (DELIMITER '','', NULL '''');';
+              buffer2   := 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM  ''C:\WINDOWS\TEMP\cloneschema.tmp'' (DELIMITER '','', NULL ''\N'', FORMAT CSV);';
+              tblarray2 := tblarray2 || buffer2;
+          ELSE
+              buffer2   := 'COPY ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' TO ''/tmp/cloneschema.tmp'' WITH DELIMITER AS '','';';
+              tblarray2 := tblarray2 || buffer2;
+              -- Issue #81 reformat COPY command for upload
+              -- buffer2   := 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM ''/tmp/cloneschema.tmp'' (DELIMITER '','', NULL '''');';
+              -- works--> COPY sample.timestamptbl2  FROM '/tmp/cloneschema.tmp' WITH (DELIMITER ',', NULL '\N', FORMAT CSV) ;
+              buffer2   := 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM ''/tmp/cloneschema.tmp'' (DELIMITER '','', NULL ''\N'', FORMAT CSV);';
+              tblarray2 := tblarray2 || buffer2;
+          END IF;
         ELSE
-            buffer2   := 'COPY ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' TO ''/tmp/cloneschema.tmp'' WITH DELIMITER AS '','';';
-            tblarray2 := tblarray2 || buffer2;
-            -- Issue #81 reformat COPY command for upload
-            -- buffer2   := 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM ''/tmp/cloneschema.tmp'' (DELIMITER '','', NULL '''');';
-            -- works--> COPY sample.timestamptbl2  FROM '/tmp/cloneschema.tmp' WITH (DELIMITER ',', NULL '\N', FORMAT CSV) ;
-            buffer2   := 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM ''/tmp/cloneschema.tmp'' (DELIMITER '','', NULL ''\N'', FORMAT CSV);';
-            tblarray2 := tblarray2 || buffer2;
+          -- Issue#101: assume direct copy with text cast, add to separate array
+          SELECT * INTO buffer3 FROM public.get_insert_stmt_ddl(quote_ident(source_schema), quote_ident(dest_schema), quote_ident(tblname), True);
+          tblarray3 := tblarray3 || buffer3;
         END IF;
       ELSE
         -- bypass child tables since we populate them when we populate the parents
@@ -2366,6 +2461,7 @@ BEGIN
     FOREACH tblelement IN ARRAY tblarray
     LOOP 
        s = clock_timestamp();
+       IF bDebug THEN RAISE NOTICE 'DEBUG: no UDTs %', tblelement; END IF;
        EXECUTE tblelement;       
        GET DIAGNOSTICS cnt = ROW_COUNT;  
        buffer = substring(tblelement, 13);
@@ -2383,10 +2479,11 @@ BEGIN
     END LOOP;
     
     -- Issue#79 implementation
-    -- Do same for tables with user-defined elements
+    -- Do same for tables with user-defined elements using copy to file method
     FOREACH tblelement IN ARRAY tblarray2
     LOOP 
        s = clock_timestamp();
+       IF bDebug THEN RAISE NOTICE 'DEBUG1:    UDTs %', tblelement; END IF;
        EXECUTE tblelement;       
        GET DIAGNOSTICS cnt = ROW_COUNT;  
        cnt2 = POSITION(' FROM ' IN tblelement::text);
@@ -2399,6 +2496,26 @@ BEGIN
            tblscopied := tblscopied + 1;
        END IF;
     END LOOP;    
+    
+    -- Issue#101 
+    -- Do same for tables with user-defined elements using direct method with text cast
+    FOREACH tblelement IN ARRAY tblarray3
+    LOOP 
+       s = clock_timestamp();
+       IF bDebug THEN RAISE NOTICE 'DEBUG2:    UDTs %', tblelement; END IF;
+       EXECUTE tblelement;       
+       GET DIAGNOSTICS cnt = ROW_COUNT;  
+       cnt2 = POSITION(' (' IN tblelement::text);
+       IF cnt2 > 0 THEN
+           buffer = substring(tblelement, 1, cnt2);
+           buffer = substring(buffer, 6);
+           SELECT RPAD(buffer, 35, ' ') INTO buffer;
+           cnt2 := cast(extract(epoch from (clock_timestamp() - s)) as numeric(18,3));
+           IF bVerbose THEN RAISE NOTICE ' Populated cloned table, %   Rows Copied: %    seconds: %', buffer, LPAD(cnt::text, 10, ' '), LPAD(cnt2::text, 5, ' '); END IF;
+           tblscopied := tblscopied + 1;
+       END IF;
+    END LOOP;    
+    
     
     -- Issue#98 MVs deferred until now
     FOREACH tblelement IN ARRAY mvarray
