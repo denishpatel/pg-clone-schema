@@ -1376,8 +1376,13 @@ BEGIN
         -- RAISE NOTICE 'tblname=%  bRelispart=%  relknd=%  l_child=%  bChild=%', tblname, bRelispart, relknd, l_child, bChild;
         IF NOT bRelispart AND NOT bChild THEN
           -- Issue#75: Must defer population of tables until child tables have been added to parents
+          -- Issue#101 Offer alternative of copy to/from file. Although originally intended for tables with UDTs, it is now expanded to handle all cases for performance improvement perhaps for large tables.
           buffer2 := 'INSERT INTO ' || buffer || buffer3 || ' SELECT * FROM ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ';';
-          tblarray := tblarray || buffer2;
+          IF bFileCopy THEN
+            tblarray2:= tblarray2 || buffer2;
+          ELSE
+            tblarray := tblarray || buffer2;
+          END IF;
         END IF;
       END IF;
     END IF;
