@@ -4,7 +4,8 @@
 -- psql -v ON_ERROR_STOP=1 -e -b postgres < ./sampledb.sql
 -- psql clone_testing < /var/lib/pgsql/clone_schema/clone_schema.sql
 -- psql clone_testing; select clone_schema('sample', 'sample_clone1', false, false);
---
+-- add access control after creating the clone_testing database:
+-- psql -v ON_ERROR_STOP=1 -e -b postgres < ./sampledb_access_control.sql
 
 -- drop/create clone schema database
 drop database if exists clone_testing;
@@ -24,52 +25,15 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 -- drop roles related to this database
-DROP ROLE IF EXISTS mydb_admin;
-DROP ROLE IF EXISTS mydb_app;
-DROP ROLE IF EXISTS mydb_dev;
-DROP ROLE IF EXISTS mydb_owner;
-DROP ROLE IF EXISTS mydb_read;
-DROP ROLE IF EXISTS mydb_reader;
-DROP ROLE IF EXISTS mydb_update;
-DROP ROLE IF EXISTS sysdba;
+-- DROP ROLE IF EXISTS sysdba;
 
 -- set global stuff: 
 
 -- don't worry if roles already exist, since they are cluster-wide, not just database-wide
-CREATE ROLE mydb_admin;
-ALTER ROLE mydb_admin WITH SUPERUSER INHERIT NOCREATEROLE NOCREATEDB LOGIN NOREPLICATION NOBYPASSRLS PASSWORD 'md52a9d1ad681c50b59ac5490fe0ed52331';
-CREATE ROLE mydb_app;
-ALTER ROLE mydb_app WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB LOGIN NOREPLICATION NOBYPASSRLS PASSWORD 'md5820313583c1e870894141ecdc09b21c4';
-CREATE ROLE mydb_dev;
-ALTER ROLE mydb_dev WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB LOGIN NOREPLICATION NOBYPASSRLS PASSWORD 'md573a6b2a984951530ee73faee1f7a50eb';
-CREATE ROLE mydb_owner;
-ALTER ROLE mydb_owner WITH NOSUPERUSER INHERIT CREATEROLE NOCREATEDB NOLOGIN NOREPLICATION NOBYPASSRLS;
-CREATE ROLE mydb_read;
-ALTER ROLE mydb_read WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOLOGIN NOREPLICATION NOBYPASSRLS;
-CREATE ROLE mydb_reader;
-ALTER ROLE mydb_reader WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB LOGIN NOREPLICATION NOBYPASSRLS PASSWORD 'md53f632bcce057ab249fa3808470195eff';
-CREATE ROLE mydb_update;
-ALTER ROLE mydb_update WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOLOGIN NOREPLICATION NOBYPASSRLS;
-CREATE ROLE sysdba;
-ALTER ROLE sysdba WITH SUPERUSER INHERIT CREATEROLE CREATEDB LOGIN REPLICATION NOBYPASSRLS PASSWORD 'md54f2192d28c96b5e38d4553264cb2f448';
-ALTER ROLE mydb_admin SET search_path TO 'public, pg_catalog';
-ALTER ROLE mydb_app SET search_path TO 'public, pg_catalog';
-ALTER ROLE mydb_dev SET search_path TO 'public, pg_catalog';
-ALTER ROLE mydb_read SET search_path TO 'public, pg_catalog';
-ALTER ROLE mydb_reader SET search_path TO 'public, pg_catalog';
-ALTER ROLE mydb_update SET search_path TO 'public, pg_catalog';
-
+-- CREATE ROLE sysdba;
+-- ALTER ROLE sysdba WITH SUPERUSER INHERIT CREATEROLE CREATEDB LOGIN REPLICATION NOBYPASSRLS PASSWORD 'md54f2192d28c96b5e38d4553264cb2f448';
 
 -- Role memberships
-GRANT mydb_owner TO mydb_admin GRANTED BY postgres;
-GRANT mydb_read TO mydb_app GRANTED BY mydb_owner;
-GRANT mydb_read TO mydb_dev GRANTED BY mydb_owner;
-GRANT mydb_read TO mydb_owner GRANTED BY postgres;
-GRANT mydb_read TO mydb_reader GRANTED BY mydb_owner;
-GRANT mydb_read TO mydb_update GRANTED BY mydb_owner;
-GRANT mydb_update TO mydb_app GRANTED BY mydb_owner;
-GRANT mydb_update TO mydb_dev GRANTED BY mydb_owner;
-GRANT mydb_update TO mydb_owner GRANTED BY postgres;
 
 -- end of global stuff
 
@@ -83,18 +47,12 @@ CREATE SERVER my_foreign_server FOREIGN DATA WRAPPER postgres_fdw OPTIONS (
     host 'localhost',
     port '5443'
 );
-ALTER SERVER my_foreign_server OWNER TO sysdba;
+ALTER SERVER my_foreign_server OWNER TO postgres;
 
-CREATE USER MAPPING FOR postgres SERVER my_foreign_server OPTIONS (
-    password 'sysdbapass',
-    "user" 'sysdba'
+CREATE USER MAPPING IF NOT EXISTS FOR postgres SERVER my_foreign_server OPTIONS (
+    password 'pgpass',
+    "user" 'postgres'
 );
-
-CREATE USER MAPPING FOR sysdba SERVER my_foreign_server OPTIONS (
-    password 'sysdbapass',
-    "user" 'sysdba'
-);
-
 
 --
 -- Name: sample; Type: SCHEMA; Schema: -; Owner: postgres
@@ -409,7 +367,6 @@ BEGIN
 END;
 $BODY$
 LANGUAGE  plpgsql;
-GRANT EXECUTE ON FUNCTION fnsplitstring(varchar, char) TO postgres;                                                                                                                            
                              
 CREATE PROCEDURE get_userscans(IN aschema text, IN atable text, INOUT scans INTEGER) AS
 $BODY$
@@ -420,7 +377,6 @@ RETURN;
 END;
 $BODY$
 LANGUAGE plpgsql;
-GRANT EXECUTE ON PROCEDURE get_userscans(text, text, integer) TO postgres;
 COMMENT ON PROCEDURE get_userscans(text, text, integer) IS 'my comments on get_userscans procedure';
 
 CREATE PROCEDURE get_userscans(IN aschema text, IN atable text, INOUT scans INTEGER, INOUT ok boolean) AS
@@ -433,7 +389,6 @@ RETURN;
 END;
 $BODY$
 LANGUAGE plpgsql;
-GRANT EXECUTE ON PROCEDURE get_userscans(text, text, integer, boolean) TO postgres;
 
 CREATE OR REPLACE FUNCTION aaa(IN akey integer default 0)
 RETURNS integer
@@ -447,7 +402,6 @@ BEGIN
 END;
 $BODY$
 LANGUAGE  plpgsql;
-GRANT EXECUTE ON FUNCTION aaa(IN akey integer) to PUBLIC;
 COMMENT ON FUNCTION aaa(integer) IS 'comment on my aaa(int) function';
 
 SET default_tablespace = '';
@@ -477,7 +431,8 @@ CREATE TABLE arrays (
     aarray2  text[][],
     aarray3  text[3][3],
     aarray4  integer ARRAY[4],
-    aarray5  integer ARRAY
+    aarray5  integer ARRAY,
+    aarray6  varchar(8) [] 
 );
 ALTER TABLE numerics OWNER TO postgres;
 
@@ -573,12 +528,30 @@ CREATE TABLE measurement_y2006m02 (
 CREATE TABLE measurement_y2006m03 (
     CHECK ( logdate >= DATE '2006-03-01' AND logdate < DATE '2006-04-01' )
 ) INHERITS (measurement);
-CREATE TABLE measurement_y2022mAll (
-    CHECK ( logdate >= DATE '2022-01-01' AND logdate < DATE '2022-12-31' )
+CREATE TABLE measurement_y2006mRest (
+    CHECK ( logdate >= DATE '2006-04-01' AND logdate < DATE '2022-12-31' )
 ) INHERITS (measurement);
-CREATE INDEX measurement_y2006m02_logdate_ix ON measurement_y2006m02  (logdate);
-CREATE INDEX measurement_y2006m03_logdate_ix ON measurement_y2006m03  (logdate);
-CREATE INDEX measurement_y2022mAll_ix        ON measurement_y2022mAll (logdate);
+CREATE TABLE measurement_y2007 (
+    CHECK ( logdate >= DATE '2007-01-01' AND logdate < DATE '2008-01-01' )
+) INHERITS (measurement);
+CREATE TABLE measurement_y2008_2022 (
+    CHECK ( logdate >= DATE '2008-01-01' AND logdate < DATE '2023-01-01' )
+) INHERITS (measurement);
+CREATE TABLE measurement_y2023 (
+    CHECK ( logdate >= DATE '2023-01-01' AND logdate < DATE '2024-01-01' )
+) INHERITS (measurement);
+CREATE TABLE measurement_y2024 (
+    CHECK ( logdate >= DATE '2024-01-01' AND logdate < DATE '2025-01-01' )
+) INHERITS (measurement);
+
+
+CREATE INDEX measurement_y2006m02_logdate_ix ON measurement_y2006m02   (logdate);
+CREATE INDEX measurement_y2006m03_logdate_ix ON measurement_y2006m03   (logdate);
+CREATE INDEX measurement_y2026mRest_ix       ON measurement_y2006mRest (logdate);
+CREATE INDEX measurement_y2007_ix            ON measurement_y2007      (logdate);
+CREATE INDEX measurement_y2008_2022_ix       ON measurement_y2008_2022 (logdate);
+CREATE INDEX measurement_y2023_ix            ON measurement_y2023      (logdate);
+CREATE INDEX measurement_y2024_ix            ON measurement_y2024      (logdate);
 CREATE OR REPLACE FUNCTION measurement_insert_trigger()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -586,12 +559,24 @@ BEGIN
          NEW.logdate < DATE '2006-03-01' ) THEN
         INSERT INTO measurement_y2006m02 VALUES (NEW.*);
     ELSIF ( NEW.logdate >= DATE '2006-03-01' AND
-            NEW.logdate < DATE '2006-04-01' ) THEN
+            NEW.logdate <  DATE '2006-04-01' ) THEN
         INSERT INTO measurement_y2006m03 VALUES (NEW.*);
-    ELSIF ( NEW.logdate >= DATE '2022-01-01' AND
-            NEW.logdate < DATE '2022-12-31' ) THEN
-        INSERT INTO measurement_y2022mAll VALUES (NEW.*);        
-    ELSE
+    ELSIF ( NEW.logdate >= DATE '2006-04-01' AND
+            NEW.logdate <  DATE '2007-01-01' ) THEN
+        INSERT INTO measurement_y2006mRest VALUES (NEW.*);        
+    ELSIF ( NEW.logdate >= DATE '2007-01-01' AND
+            NEW.logdate <  DATE '2008-01-01' ) THEN
+        INSERT INTO measurement_y2007 VALUES (NEW.*);        
+    ELSIF ( NEW.logdate >= DATE '2008-01-01' AND
+            NEW.logdate <  DATE '2023-01-01' ) THEN
+        INSERT INTO measurement_y2008_2022 VALUES (NEW.*);                
+    ELSIF ( NEW.logdate >= DATE '2023-01-01' AND
+            NEW.logdate <  DATE '2024-01-01' ) THEN
+        INSERT INTO measurement_y2023 VALUES (NEW.*);                
+    ELSIF ( NEW.logdate >= DATE '2024-01-01' AND
+            NEW.logdate <  DATE '2025-01-01' ) THEN
+        INSERT INTO measurement_y2024 VALUES (NEW.*);                
+    ELSE        
         RAISE EXCEPTION 'Date out of range.  Fix the measurement_insert_trigger() function!';
     END IF;
     RETURN NULL;
@@ -604,7 +589,8 @@ CREATE TRIGGER insert_measurement_trigger
     FOR EACH ROW EXECUTE PROCEDURE measurement_insert_trigger();
 
 INSERT INTO measurement SELECT 1, now(), 70, 100;
-INSERT INTO measurement SELECT 1, now(), 80, 120;
+INSERT INTO measurement SELECT 2, now() - interval '1 year', 80, 120;
+INSERT INTO measurement SELECT 3, now() - interval '10 year', 90, 125;
 
 --
 -- Name: foo_bar_baz; Type: TABLE; Schema: sample; Owner: postgres
@@ -708,7 +694,7 @@ INSERT INTO foo_bar_baz SELECT 2, 2, 2;
 INSERT INTO foo_bar_baz SELECT 3, 3, 3;
 
 --
--- Name: haha; Type: FOREIGN TABLE; Schema: sample; Owner: sysdba
+-- Name: haha; Type: FOREIGN TABLE; Schema: sample; Owner: postgres
 --
 
 CREATE FOREIGN TABLE haha (
@@ -722,7 +708,7 @@ OPTIONS (
 );
 COMMENT ON FOREIGN TABLE haha IS 'just a comment on a foreign table';
 
-ALTER FOREIGN TABLE haha OWNER TO sysdba;
+ALTER FOREIGN TABLE haha OWNER TO postgres;
 
 --
 -- Name: hoho; Type: MATERIALIZED VIEW; Schema: sample; Owner: postgres
@@ -998,195 +984,106 @@ ALTER TABLE ONLY address
 -- Name: SCHEMA sample; Type: ACL; Schema: -; Owner: postgres
 --
 
-GRANT ALL ON SCHEMA sample TO mydb_read;
-GRANT ALL ON SCHEMA sample TO pg_stat_scan_tables;
-GRANT ALL ON SCHEMA sample TO mydb_app;
-GRANT ALL ON SCHEMA sample TO mydb_dev;
-GRANT ALL ON SCHEMA sample TO mydb_owner;
-GRANT ALL ON SCHEMA sample TO mydb_reader;
-GRANT ALL ON SCHEMA sample TO mydb_update;
-GRANT ALL ON SCHEMA sample TO pg_execute_server_program;
-GRANT ALL ON SCHEMA sample TO pg_monitor;
-GRANT ALL ON SCHEMA sample TO pg_read_all_settings;
-GRANT ALL ON SCHEMA sample TO pg_read_all_stats;
-GRANT ALL ON SCHEMA sample TO pg_read_server_files;
-GRANT ALL ON SCHEMA sample TO pg_signal_backend;
-GRANT ALL ON SCHEMA sample TO pg_write_server_files;
-
 
 --
 -- Name: FUNCTION aaa(); Type: ACL; Schema: sample; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION aaa() TO mydb_update;
 
 
 --
 -- Name: FUNCTION emp_stamp(); Type: ACL; Schema: sample; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION emp_stamp() TO mydb_update;
 
 
 --
 -- Name: TABLE emp; Type: ACL; Schema: sample; Owner: postgres
 --
 
-GRANT SELECT ON TABLE emp TO mydb_read;
-GRANT ALL ON TABLE emp TO mydb_update;
 
 
 --
 -- Name: TABLE foo; Type: ACL; Schema: sample; Owner: postgres
 --
 
-GRANT SELECT ON TABLE foo TO mydb_read;
-GRANT SELECT ON TABLE foo2 TO mydb_read;
-GRANT ALL ON TABLE foo TO mydb_update;
-GRANT ALL ON TABLE foo2 TO mydb_update;
 
 
 --
 -- Name: TABLE foo_bar_baz; Type: ACL; Schema: sample; Owner: postgres
 --
 
-GRANT SELECT ON TABLE foo_bar_baz TO mydb_read;
-GRANT ALL ON TABLE foo_bar_baz TO mydb_update;
 
 
 --
 -- Name: TABLE foo_bar_baz_0; Type: ACL; Schema: sample; Owner: postgres
 --
 
-GRANT SELECT ON TABLE foo_bar_baz_0 TO mydb_read;
-GRANT ALL ON TABLE foo_bar_baz_0 TO mydb_update;
 
-GRANT SELECT ON TABLE timestamptbl TO mydb_read;
-GRANT ALL ON TABLE timestamptbl TO mydb_update;
 
 --
 -- Name: TABLE foo_bar_baz_1; Type: ACL; Schema: sample; Owner: postgres
 --
 
-GRANT SELECT ON TABLE foo_bar_baz_1 TO mydb_read;
-GRANT ALL ON TABLE foo_bar_baz_1 TO mydb_update;
 
 
 --
 -- Name: TABLE foo_bar_baz_2; Type: ACL; Schema: sample; Owner: postgres
 --
 
-GRANT SELECT ON TABLE foo_bar_baz_2 TO mydb_read;
-GRANT ALL ON TABLE foo_bar_baz_2 TO mydb_update;
 
 
 --
 -- Name: TABLE foo_bar_baz_3; Type: ACL; Schema: sample; Owner: postgres
 --
 
-GRANT SELECT ON TABLE foo_bar_baz_3 TO mydb_read;
-GRANT ALL ON TABLE foo_bar_baz_3 TO mydb_update;
 
 
 --
 -- Name: TABLE foo_bar_baz_4; Type: ACL; Schema: sample; Owner: postgres
 --
 
-GRANT SELECT ON TABLE foo_bar_baz_4 TO mydb_read;
-GRANT ALL ON TABLE foo_bar_baz_4 TO mydb_update;
 
 
 --
 -- Name: TABLE foo_bar_baz_5; Type: ACL; Schema: sample; Owner: postgres
 --
 
-GRANT SELECT ON TABLE foo_bar_baz_5 TO mydb_read;
-GRANT ALL ON TABLE foo_bar_baz_5 TO mydb_update;
 
 
 --
--- Name: TABLE haha; Type: ACL; Schema: sample; Owner: sysdba
+-- Name: TABLE haha; Type: ACL; Schema: sample; Owner: postgres
 --
 
-GRANT SELECT ON TABLE haha TO mydb_dev;
 
 
 --
 -- Name: TABLE hoho; Type: ACL; Schema: sample; Owner: postgres
 --
 
-GRANT SELECT ON TABLE hoho TO mydb_dev;
 
 
 --
 -- Name: TABLE hoho2; Type: ACL; Schema: sample; Owner: postgres
 --
 
-GRANT SELECT ON TABLE hoho2 TO mydb_dev;
 
 
 --
 -- Name: TABLE sampletable; Type: ACL; Schema: sample; Owner: postgres
 --
 
-GRANT SELECT ON TABLE sampletable TO mydb_read;
-GRANT ALL ON TABLE sampletable TO mydb_update;
 
 
 --
 -- Name: SEQUENCE seq111; Type: ACL; Schema: sample; Owner: postgres
 --
 
-GRANT SELECT,UPDATE ON SEQUENCE seq111 TO mydb_dev;
-GRANT SELECT,UPDATE ON SEQUENCE seq111 TO mydb_update;
 
 
 --
 -- Name: TABLE test; Type: ACL; Schema: sample; Owner: postgres
 --
-
-GRANT SELECT ON TABLE test TO mydb_read;
-GRANT ALL ON TABLE test TO mydb_update;
-
-
---
--- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: sample; Owner: mydb_owner
---
-ALTER DEFAULT PRIVILEGES FOR ROLE mydb_owner IN SCHEMA sample GRANT ALL ON SEQUENCES TO mydb_owner;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres   IN SCHEMA sample GRANT ALL ON SEQUENCES TO mydb_owner;
-ALTER DEFAULT PRIVILEGES FOR ROLE mydb_owner IN SCHEMA sample GRANT ALL ON SEQUENCES  TO mydb_update;                                                                                                                            
-
---
--- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: sample; Owner: mydb_owner
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE mydb_owner IN SCHEMA sample REVOKE ALL ON FUNCTIONS  FROM mydb_owner;
-ALTER DEFAULT PRIVILEGES FOR ROLE mydb_owner IN SCHEMA sample GRANT ALL ON FUNCTIONS  TO mydb_update;
-
-
---
--- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: sample; Owner: mydb_read
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE mydb_read IN SCHEMA sample REVOKE ALL ON TABLES  FROM mydb_read;
-ALTER DEFAULT PRIVILEGES FOR ROLE mydb_read IN SCHEMA sample GRANT SELECT ON TABLES  TO mydb_read;
-
-
---
--- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: sample; Owner: mydb_update
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE mydb_update IN SCHEMA sample REVOKE ALL ON TABLES  FROM mydb_update;
-ALTER DEFAULT PRIVILEGES FOR ROLE mydb_update IN SCHEMA sample GRANT INSERT,DELETE,UPDATE ON TABLES  TO mydb_update;
-
-
---
--- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: sample; Owner: mydb_owner
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE mydb_owner IN SCHEMA sample REVOKE ALL ON TABLES  FROM mydb_owner;
-ALTER DEFAULT PRIVILEGES FOR ROLE mydb_owner IN SCHEMA sample GRANT SELECT,INSERT,REFERENCES,DELETE,TRIGGER,UPDATE ON TABLES  TO mydb_update;
-
 
 -- RLS and policies. See pg_policies;  https://www.postgresql.org/docs/current/ddl-rowsecurity.html
 DROP ROLE IF EXISTS managers;
@@ -1240,24 +1137,16 @@ CREATE POLICY admin_all ON passwd TO admin USING (true) WITH CHECK (true);
 CREATE POLICY all_view ON passwd FOR SELECT USING (true);
 CREATE POLICY user_mod ON passwd FOR UPDATE USING (current_user = user_name) WITH CHECK (current_user = user_name AND shell IN ('/bin/bash','/bin/sh','/bin/dash','/bin/zsh','/bin/tcsh'));
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON passwd TO admin;
-GRANT SELECT (user_name, uid, gid, real_name, home_phone, extra_info, home_dir, shell) ON passwd TO public;
-GRANT UPDATE (pwhash, real_name, home_phone, extra_info, shell) ON passwd TO public;
 
 CREATE POLICY admin_local_only ON passwd AS RESTRICTIVE TO admin USING (pg_catalog.inet_client_addr() IS NULL);
 
-GRANT ALL ON groups TO alice;  -- alice is the administrator
-GRANT SELECT ON groups TO public;
 
-GRANT ALL ON users TO alice;
-GRANT SELECT ON users TO public;
 
 ALTER TABLE information ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY fp_s ON information FOR SELECT USING (group_id <= (SELECT group_id FROM users WHERE user_name = current_user));
 CREATE POLICY fp_u ON information FOR UPDATE USING (group_id <= (SELECT group_id FROM users WHERE user_name = current_user));
 
-GRANT ALL ON information TO public;
 
 -- -----------------------------
 -- Create case-sensitive objects
@@ -1273,14 +1162,11 @@ ALTER TABLE ONLY "CaseSensitive" ALTER COLUMN "ID" SET DEFAULT nextval('"CaseSen
 ALTER TABLE ONLY "CaseSensitive" ADD CONSTRAINT "CaseSensitive_pkey" PRIMARY KEY ("ID");
 COMMENT ON SEQUENCE "CaseSensitive_ID_seq" IS 'just a comment on CaseSensitive sequence';    
 CREATE INDEX "CaseSensitive_aValue_ix" ON "CaseSensitive" ("aValue");
-GRANT SELECT, UPDATE, DELETE ON "CaseSensitive" TO public;
-GRANT SELECT,UPDATE ON SEQUENCE "CaseSensitive_ID_seq" TO public;
 CREATE FUNCTION "CaseSensitiveFunc" (int, int)
 returns int language sql
 as $$
     select case when $1 < $2 then $2 else $1 end
 $$;
-GRANT EXECUTE ON FUNCTION "CaseSensitiveFunc" (int, int) TO postgres;                                                                                                                            
 CREATE POLICY "All_View" ON "CaseSensitive" FOR SELECT USING (true);
 CREATE COLLATION "Frenchie" (provider = icu, locale = 'fr');
 COMMENT ON COLLATION "Frenchie" IS 'my comments on "Frenchie" collation';
