@@ -1210,9 +1210,38 @@ INSERT INTO citextusers VALUES ( 'NEAL',   sha256(random()::text::bytea) );
 INSERT INTO citextusers VALUES ( 'Bjørn',  sha256(random()::text::bytea) );
 -- SELECT * FROM citextusers WHERE nick = 'Larry';
 
+-- added another set of tables for partitioning as regression testing to handle
+-- case where we have multiple, separate partitioned tables
+CREATE TABLE items (
+    item_id integer PRIMARY KEY,
+    description text NOT NULL
+) PARTITION BY hash (item_id);
+CREATE TABLE items_0 PARTITION OF items FOR VALUES WITH (modulus 3, remainder 0);
+CREATE TABLE items_1 PARTITION OF items FOR VALUES WITH (modulus 3, remainder 1);
+CREATE TABLE items_2 PARTITION OF items FOR VALUES WITH (modulus 3, remainder 2);
+
+CREATE TABLE warehouses (warehouse_id integer primary key, location text not null);
+
+CREATE TABLE stock (
+    item_id integer not null REFERENCES items,
+    warehouse_id integer not null REFERENCES warehouses,
+    amount int not null
+) partition by hash (warehouse_id);
+CREATE TABLE stock_0 PARTITION OF stock FOR VALUES WITH (modulus 5, remainder 0);
+CREATE TABLE stock_1 PARTITION OF stock FOR VALUES WITH (modulus 5, remainder 1);
+CREATE TABLE stock_2 PARTITION OF stock FOR VALUES WITH (modulus 5, remainder 2);
+CREATE TABLE stock_3 PARTITION OF stock FOR VALUES WITH (modulus 5, remainder 3);
+CREATE TABLE stock_4 PARTITION OF stock FOR VALUES WITH (modulus 5, remainder 4);
+
+CREATE INDEX ON stock (item_id);
+CREATE INDEX ON stock (warehouse_id);
+
+INSERT INTO items VALUES (1, 'item 1');
+INSERT INTO warehouses VALUES (1, 'The moon');
+INSERT INTO stock VALUES (1, 1, 10);
                                                                                                                             
 --
 -- End Sample database
 --
 
-                                                                                                                                                                                                                                                                                                                                                                                 
+                                                                                                                                                                                                                                                                                                                                                                                
