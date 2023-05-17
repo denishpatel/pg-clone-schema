@@ -1212,10 +1212,6 @@ INSERT INTO citextusers VALUES ( 'Bjørn',  sha256(random()::text::bytea) );
 
 -- added another set of tables for partitioning as regression testing to handle
 -- case where we have multiple, separate partitioned tables
-DROP TABLE items CASCADE;
-DROP TABLE warehouses CASCADE;
-DROP TABLE stock CASCADE;
-
 CREATE TABLE items (
     item_id integer PRIMARY KEY,
     description text NOT NULL
