@@ -1212,6 +1212,10 @@ INSERT INTO citextusers VALUES ( 'Bjørn',  sha256(random()::text::bytea) );
 
 -- added another set of tables for partitioning as regression testing to handle
 -- case where we have multiple, separate partitioned tables
+DROP TABLE items CASCADE;
+DROP TABLE warehouses CASCADE;
+DROP TABLE stock CASCADE;
+
 CREATE TABLE items (
     item_id integer PRIMARY KEY,
     description text NOT NULL
@@ -1239,9 +1243,38 @@ CREATE INDEX ON stock (warehouse_id);
 INSERT INTO items VALUES (1, 'item 1');
 INSERT INTO warehouses VALUES (1, 'The moon');
 INSERT INTO stock VALUES (1, 1, 10);
+
+-- create a table with multiple indexes
+CREATE TABLE films (
+    code        char(5) CONSTRAINT firstkey PRIMARY KEY,
+    title       varchar(40) NOT NULL,
+    did         integer NOT NULL,
+    date_prod   date,
+    kind        varchar(10),
+    len         interval hour to minute,
+    director    text,
+    rating      text,
+    info        text
+);
+CREATE INDEX films_title_ix ON films (title) INCLUDE (kind,rating);
+CREATE INDEX films_title_lower_ix ON films ((lower(title)));
+CREATE INDEX films_info_ix ON films (info) WITH (fillfactor = 70);
+
+-- created this table for a pg_get_tabledef() problemo
+CREATE TABLE orders (
+id serial,
+user_name varchar(255),
+user_id varchar(255),
+age int not null
+) PARTITION BY RANGE(age);
+
+create table orders_r1 partition of orders for values from (MINVALUE) to (10000);
+create table orders_r2 partition of orders for values from (10000) to (200000);
+create table orders_r3 partition of orders for values from (200000) to (500000);
+create table orders_r4 partition of orders for values from (500000) to (MAXVALUE);
                                                                                                                             
 --
 -- End Sample database
 --
 
-                                                                                                                                                                                                                                                                                                                                                                                
+                                                                                                                                                                                                                                                                                                                                                                                 
