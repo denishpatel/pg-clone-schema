@@ -1,6 +1,6 @@
 # clone_schema
 
-Works on Linux distros and all Windows versions.  It also runs on PostgreSQL in the cloud (AWS, GCP, MS Azure).
+**clone_schema** is a PostgreSQL utility that makes a copy of a source schema and copies it to another, not yet defined, schema. It works on most Linux distros and all Windows versions.  It also runs on PostgreSQL in the cloud (AWS, GCP, MS Azure).
 
 Handles following objects:
 
