@@ -52,6 +52,7 @@
 --                                      ex: INSERT INTO clone1.address2 (id2, id3, addr) SELECT id2::text::clone1.udt_myint, id3::text::clone1.udt_myint, addr FROM sample.address;
 -- 2023-05-17  MJV FIX: Fixed Issue#103 2 problems: handling multiple partitioned tables and not creating FKEYS on partitioned tables since the FKEY created on the parent already propagated down to the partitions.
 --                                      The first problem is fixed by modifying the query to work with the current table only.  The 2nd one??????
+-- 2023-07-07 EVK: Fixed problems with the parameters to FUNCTION clone_schema being (text, text, cloneparms[]) instead of (text, text, boolean, boolean) which resulted in the example grant and the drop not working correctly. Also removed some trailing whitespace. Cheers, Ellert van Koperen.
 
 do $$ 
 <<first_block>>
@@ -614,8 +615,9 @@ $$;
 
 -- Function: clone_schema(text, text, boolean, boolean, boolean)
 -- DROP FUNCTION clone_schema(text, text, boolean, boolean, boolean);
+-- DROP FUNCTION IF EXISTS public.clone_schema(text, text, boolean, boolean);
 
-DROP FUNCTION IF EXISTS public.clone_schema(text, text, boolean, boolean);
+DROP FUNCTION IF EXISTS public.clone_schema(text, text, cloneparms[]);
 CREATE OR REPLACE FUNCTION public.clone_schema(
     source_schema text,
     dest_schema text,
@@ -1263,7 +1265,7 @@ BEGIN
           -- issue#91 fix
           -- issue#95
           IF NOT bNoOwner THEN    
-            RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || tblname, tblowner;          
+            RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || tblname, tblowner;
           END IF;
         ELSE
           IF NOT bChild THEN
@@ -1278,7 +1280,7 @@ BEGIN
             IF tblspace <> 'pg_default' THEN
               -- replace with user-defined tablespace
               -- ALTER TABLE myschema.mytable SET TABLESPACE usrtblspc;
-              RAISE INFO 'ALTER TABLE IF EXISTS % SET TABLESPACE %;', quote_ident(dest_schema) || '.' || tblname, tblspace;          
+              RAISE INFO 'ALTER TABLE IF EXISTS % SET TABLESPACE %;', quote_ident(dest_schema) || '.' || tblname, tblspace;
             END IF;
           ELSE
             -- FIXED #65, #67
@@ -1319,8 +1321,8 @@ BEGIN
             -- issue#91 fix
             -- issue#95
             IF NOT bNoOwner THEN    
-              buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.'  || quote_ident(tblname) || ' OWNER TO ' || tblowner;            
-              EXECUTE buffer3;              
+              buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.'  || quote_ident(tblname) || ' OWNER TO ' || tblowner;
+              EXECUTE buffer3;
             END IF;
             
             -- issue#99
@@ -1344,7 +1346,7 @@ BEGIN
             EXECUTE buffer3;
             -- issue#91 fix
             -- issue#95
-            IF NOT bNoOwner THEN                
+            IF NOT bNoOwner THEN
               buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
               EXECUTE buffer3;
             END IF;
@@ -1371,7 +1373,7 @@ BEGIN
       IF bDDLOnly THEN
         RAISE INFO '%', qry;
         -- issue#95
-        IF NOT bNoOwner THEN                
+        IF NOT bNoOwner THEN
             RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || quote_ident(tblname), tblowner;
         END IF;
       ELSE
@@ -1398,7 +1400,7 @@ BEGIN
         
         -- issue#91 fix
         -- issue#95
-        IF NOT bNoOwner THEN                
+        IF NOT bNoOwner THEN
           buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || ' OWNER TO ' || tblowner;
           EXECUTE buffer3;
         END IF;
@@ -1426,7 +1428,7 @@ BEGIN
           END IF;
         ELSE
           EXECUTE qry;
-          IF NOT bNoOwner THEN                
+          IF NOT bNoOwner THEN
             NULL;
           END IF;
         END IF;
@@ -2289,7 +2291,7 @@ BEGIN
             
               -- Issue#92 Fix
               -- set role = cm_stage_ro_grp;
-              -- ALTER DEFAULT PRIVILEGES FOR ROLE cm_stage_ro_grp IN SCHEMA cm_stage GRANT REFERENCES, TRIGGER ON TABLES TO cm_stage_ro_grp;            
+              -- ALTER DEFAULT PRIVILEGES FOR ROLE cm_stage_ro_grp IN SCHEMA cm_stage GRANT REFERENCES, TRIGGER ON TABLES TO cm_stage_ro_grp;
               IF grantor = grantee THEN
                   -- append set role to statement
                   buffer = 'SET ROLE = ' || grantor || '; ' || buffer;
@@ -2770,4 +2772,6 @@ END;
 
 $BODY$
   LANGUAGE plpgsql VOLATILE  COST 100;
--- ALTER FUNCTION public.clone_schema(text, text, boolean, boolean, boolean) OWNER TO postgres;
+
+-- ALTER FUNCTION public.clone_schema(text, text, cloneparms[]) OWNER TO postgres;
+-- REVOKE ALL PRIVILEGES ON FUNCTION clone_schema(text, text, cloneparms[]) FROM public;
