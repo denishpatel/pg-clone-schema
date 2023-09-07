@@ -1605,13 +1605,16 @@ BEGIN
       || quote_ident(a.attname)
     INTO sq_owned
     FROM pg_class AS c
-      JOIN pg_depend AS d ON (c.relfilenode = d.objid)
-      JOIN pg_class AS dc ON (d.refobjid = dc.relfilenode)
+      JOIN pg_namespace n ON c.relnamespace = n.oid
+      JOIN pg_depend AS d ON c.relfilenode = d.objid
+      JOIN pg_class AS dc ON (
+        d.refobjid = dc.relfilenode
+        AND dc.relnamespace = n.oid
+      )
       JOIN pg_attribute AS a ON (
         a.attnum = d.refobjsubid
         AND a.attrelid = d.refobjid
       )
-      JOIN pg_namespace n ON c.relnamespace = n.oid
     WHERE n.nspname = quote_ident(source_schema)
       AND c.relkind = 'S'
       AND c.relname = object;
@@ -1633,7 +1636,7 @@ BEGIN
     END IF;
 
   END LOOP;
-  RAISE NOTICE '    SEQUENCES set:      %', LPAD(cnt::text, 2, ' ');
+  RAISE NOTICE '    SEQUENCES set:   %', LPAD(cnt::text, 5, ' ');
 
   -- Update IDENTITY sequences to the last value
   action := 'Identity updating';
@@ -1660,7 +1663,7 @@ BEGIN
       END IF;
     END IF;
   END LOOP;
-  RAISE NOTICE '   IDENTITIES set:      %', LPAD(cnt::text, 2, ' ');
+  RAISE NOTICE '   IDENTITIES set:   %', LPAD(cnt::text, 5, ' ');
 
 
 
