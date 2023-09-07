@@ -56,6 +56,7 @@
 --                                      which resulted in the example grant and the drop not working correctly. Also removed some trailing whitespace. Cheers, Ellert van Koperen.
 -- 2023-08-04  MJV FIX: Fixed Issue#105 Use the extension's schema not the table's schema.  Don't assume public schema.
 -- 2023-09-07  MJV FIX: Fixed Issue#107 Fixed via pull request#109. Increased output length of sequences and identities from 2 to 5.  Also changed SQL for gettting identities owner.
+-- 2023-09-07  MJV FIX: Fixed Issue#108:enclose double-quote roles with special characters for setting "OWNER TO"
 -- 2023-xx-xx  MJV FIX: Fixing Issue#106 Make clone_schema compatible with PG 9.6
 
 do $$ 
@@ -700,8 +701,10 @@ DECLARE
   bWindows         boolean;
   arec             RECORD;
   cnt              integer;
+  cnt1             integer;
   cnt2             integer;
   cnt3             integer;
+  cnt4             integer;
   pos              integer;
   tblscopied       integer := 0;
   l_child          integer;
@@ -755,7 +758,8 @@ DECLARE
   t                timestamptz := clock_timestamp();
   r                timestamptz;
   s                timestamptz;
-  v_version        text := '1.18  August 04, 2023';
+  lastsql          text := '';
+  v_version        text := '1.19  September 07, 2023';
 
 BEGIN
   -- Make sure NOTICE are shown
@@ -1076,8 +1080,11 @@ BEGIN
   -- MV: Create types
   action := 'Types';
   cnt := 0;
+  lastsql = '';
   FOR arec IN
-    SELECT c.relkind, n.nspname AS schemaname, t.typname AS typname, t.typcategory, pg_catalog.pg_get_userbyid(t.typowner) AS owner, CASE WHEN t.typcategory = 'C' THEN
+    -- Fixed Issue#108:enclose double-quote roles with special characters for setting "OWNER TO"
+    -- SELECT c.relkind, n.nspname AS schemaname, t.typname AS typname, t.typcategory, pg_catalog.pg_get_userbyid(t.typowner) AS owner, CASE WHEN t.typcategory = 'C' THEN
+    SELECT c.relkind, n.nspname AS schemaname, t.typname AS typname, t.typcategory, '"' || pg_catalog.pg_get_userbyid(t.typowner) || '"' AS owner, CASE WHEN t.typcategory = 'C' THEN
             'CREATE TYPE ' || quote_ident(dest_schema) || '.' || t.typname || ' AS (' || array_to_string(array_agg(a.attname || ' ' || pg_catalog.format_type(a.atttypid, a.atttypmod)
                 ORDER BY c.relname, a.attnum), ', ') || ');'
         WHEN t.typcategory = 'E' THEN
@@ -1107,6 +1114,7 @@ BEGIN
           
           --issue#95
           IF NOT bNoOwner THEN
+            -- Fixed Issue#108: double-quote roles in case they have special characters
             RAISE INFO 'ALTER TYPE % OWNER TO  %;', quote_ident(dest_schema) || '.' || arec.typname, arec.owner;
           END IF;
         ELSE
@@ -1114,25 +1122,25 @@ BEGIN
 
           --issue#95
           IF NOT bNoOwner THEN
-	    EXECUTE 'ALTER TYPE ' || quote_ident(dest_schema) || '.' || arec.typname || ' OWNER TO ' || arec.owner;
-	  END IF;
-
+              -- Fixed Issue#108: double-quote roles in case they have special characters
+	            EXECUTE 'ALTER TYPE ' || quote_ident(dest_schema) || '.' || arec.typname || ' OWNER TO ' || arec.owner;
+	        END IF;
         END IF;
       ELSIF arec.typcategory = 'C' THEN
         IF bDDLOnly THEN
           RAISE INFO '%', arec.type_ddl;
           --issue#95
           IF NOT bNoOwner THEN
+            -- Fixed Issue#108: double-quote roles in case they have special characters
             RAISE INFO 'ALTER TYPE % OWNER TO  %;', quote_ident(dest_schema) || '.' || arec.typname, arec.owner;
           END IF;
-          
         ELSE
           EXECUTE arec.type_ddl;
-          
           --issue#95
           IF NOT bNoOwner THEN
-	    EXECUTE 'ALTER TYPE ' || quote_ident(dest_schema) || '.' || arec.typname || ' OWNER TO ' || arec.owner;
-	  END IF;
+              -- Fixed Issue#108: double-quote roles in case they have special characters
+	            EXECUTE 'ALTER TYPE ' || quote_ident(dest_schema) || '.' || arec.typname || ' OWNER TO ' || arec.owner;
+	        END IF;
         END IF;
       ELSE
           RAISE NOTICE ' Unhandled type:%-%', arec.typcategory, arec.typname;
@@ -1150,8 +1158,9 @@ BEGIN
   -- fix#95  get owner as well by joining to pg_sequences
   -- fix#106 we can get owner info with pg_class, pg_user/pg_group, and information_schema.sequences, so we can avoid the hit to pg_sequences which is not available in 9.6
   FOR object, buffer IN
+    -- Fixed Issue#108:
     -- SELECT s1.sequence_name::text, s2.sequenceowner FROM information_schema.sequences s1 JOIN pg_sequences s2 ON (s1.sequence_schema = s2.schemaname AND s1.sequence_name = s2.sequencename) AND s1.sequence_schema = quote_ident(source_schema)
-    SELECT s.sequence_name::text, u.usename as owner FROM information_schema.sequences s JOIN pg_class c ON (s.sequence_name = c.relname AND s.sequence_schema = c.relnamespace::regnamespace::text) JOIN pg_user u ON (c.relowner = u.usesysid) 
+    SELECT s.sequence_name::text, '"' || u.usename || '"' as owner FROM information_schema.sequences s JOIN pg_class c ON (s.sequence_name = c.relname AND s.sequence_schema = c.relnamespace::regnamespace::text) JOIN pg_user u ON (c.relowner = u.usesysid) 
     WHERE c.relkind = 'S' AND s.sequence_schema = quote_ident(source_schema)
     UNION SELECT s.sequence_name::text, g.groname as owner FROM information_schema.sequences s JOIN pg_class c ON (s.sequence_name = c.relname AND s.sequence_schema = c.relnamespace::regnamespace::text) JOIN pg_group g ON (c.relowner = g.grosysid) 
     WHERE c.relkind = 'S' AND s.sequence_schema = quote_ident(source_schema)
@@ -1161,12 +1170,14 @@ BEGIN
       -- issue#95
       RAISE INFO '%', 'CREATE SEQUENCE ' || quote_ident(dest_schema) || '.' || quote_ident(object) || ';';
       IF NOT bNoOwner THEN    
+        -- Fixed Issue#108: double-quote roles in case they have special characters
         RAISE INFO '%', 'ALTER  SEQUENCE ' || quote_ident(dest_schema) || '.' || quote_ident(object) || ' OWNER TO ' || buffer || ';';
       END IF;
     ELSE
       EXECUTE 'CREATE SEQUENCE ' || quote_ident(dest_schema) || '.' || quote_ident(object);
       -- issue#95
       IF NOT bNoOwner THEN    
+        -- Fixed Issue#108: double-quote roles in case they have special characters
         EXECUTE 'ALTER SEQUENCE '  || quote_ident(dest_schema) || '.' || quote_ident(object) || ' OWNER TO ' || buffer;
       END IF;
     END IF;
@@ -1268,8 +1279,10 @@ BEGIN
     -- Fix#105 need a different kinda distint to avoid retrieving a table twice in the case of a table with multiple USER-DEFINED datatypes using DISTINCT ON instead of just DISTINCT
     --SELECT DISTINCT c.relname, c.relpersistence, c.relispartition, c.relkind, co.data_type, co.udt_name, co.udt_schema, obj_description(c.oid), i.inhrelid, 
     --                COALESCE(co.is_generated, ''), pg_catalog.pg_get_userbyid(c.relowner) as "Owner", CASE WHEN reltablespace = 0 THEN 'pg_default' ELSE ts.spcname END as tablespace
+    -- fixed #108 by enclosing owner in double quotes to avoid errors for bad characters like #.@...
+    -- SELECT DISTINCT ON (c.relname, c.relpersistence, c.relispartition, c.relkind, co.data_type) c.relname, c.relpersistence, c.relispartition, c.relkind, co.data_type, co.udt_name, co.udt_schema, obj_description(c.oid), i.inhrelid, 
     SELECT DISTINCT ON (c.relname, c.relpersistence, c.relispartition, c.relkind, co.data_type) c.relname, c.relpersistence, c.relispartition, c.relkind, co.data_type, co.udt_name, co.udt_schema, obj_description(c.oid), i.inhrelid, 
-                    COALESCE(co.is_generated, ''), pg_catalog.pg_get_userbyid(c.relowner) as "Owner", CASE WHEN reltablespace = 0 THEN 'pg_default' ELSE ts.spcname END as tablespace                    
+                    COALESCE(co.is_generated, ''), '"' || pg_catalog.pg_get_userbyid(c.relowner) || '"' as "Owner", CASE WHEN reltablespace = 0 THEN 'pg_default' ELSE ts.spcname END as tablespace                    
     FROM pg_class c
         JOIN pg_namespace n ON (n.oid = c.relnamespace
                 AND n.nspname = quote_ident(source_schema)
@@ -1283,6 +1296,7 @@ BEGIN
     ORDER BY c.relkind DESC, c.relname
   LOOP
     cnt := cnt + 1;
+    lastsql = '';
     IF l_child IS NULL THEN
       bChild := False;
     ELSE
@@ -1311,6 +1325,7 @@ BEGIN
           -- issue#91 fix
           -- issue#95
           IF NOT bNoOwner THEN    
+            -- Fixed Issue#108: double-quote roles in case they have special characters
             RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || tblname, tblowner;
           END IF;
         ELSE
@@ -1319,6 +1334,7 @@ BEGIN
             -- issue#91 fix
              -- issue#95
             IF NOT bNoOwner THEN    
+              -- Fixed Issue#108: double-quote roles in case they have special characters
               RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || tblname, tblowner;
             END IF;
             
@@ -1337,6 +1353,7 @@ BEGIN
             -- issue#91 fix
             -- issue#95
             IF NOT bNoOwner THEN    
+              -- Fixed Issue#108: double-quote roles in case they have special characters
               RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || tblname, tblowner;
             END IF;
           END IF;
@@ -1356,7 +1373,9 @@ BEGIN
           -- issue#91 fix
           -- issue#95
           IF NOT bNoOwner THEN    
+            -- Fixed Issue#108: double-quote roles in case they have special characters
             buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
+            lastsql = buffer3;
             EXECUTE buffer3;
           END IF;
         ELSE
@@ -1367,7 +1386,9 @@ BEGIN
             -- issue#91 fix
             -- issue#95
             IF NOT bNoOwner THEN    
+              -- Fixed Issue#108: double-quote roles in case they have special characters
               buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.'  || quote_ident(tblname) || ' OWNER TO ' || tblowner;
+              lastsql = buffer3;
               EXECUTE buffer3;
             END IF;
             
@@ -1393,7 +1414,9 @@ BEGIN
             -- issue#91 fix
             -- issue#95
             IF NOT bNoOwner THEN
+              -- Fixed Issue#108: double-quote roles in case they have special characters
               buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
+              lastsql = buffer3;
               EXECUTE buffer3;
             END IF;
 
@@ -1420,6 +1443,7 @@ BEGIN
         RAISE INFO '%', qry;
         -- issue#95
         IF NOT bNoOwner THEN
+            -- Fixed Issue#108: double-quote roles in case they have special characters
             RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || quote_ident(tblname), tblowner;
         END IF;
       ELSE
@@ -1447,7 +1471,9 @@ BEGIN
         -- issue#91 fix
         -- issue#95
         IF NOT bNoOwner THEN
+          -- Fixed Issue#108: double-quote roles in case they have special characters
           buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || ' OWNER TO ' || tblowner;
+          lastsql = buffer3;
           EXECUTE buffer3;
         END IF;
         
@@ -1520,6 +1546,7 @@ BEGIN
       END IF;
     END LOOP;
 
+    lastsql = '';
     IF bData THEN
       -- Insert records from source table
 
@@ -1539,7 +1566,7 @@ BEGIN
       
       -- Issue#86 fix:
       -- IF data_type = 'USER-DEFINED' THEN
-      IF bDebug THEN RAISE NOTICE 'DEBUG: includerecs branch  table=%  data_type=%  isgenerated=%', tblname, data_type, isGenerated; END IF;
+      IF bDebug THEN RAISE NOTICE 'DEBUG: includerecs branch  table=%  data_type=%  isgenerated=%  buffer3=%', tblname, data_type, isGenerated, buffer3; END IF;
       IF data_type = 'USER-DEFINED' OR isGenerated = 'ALWAYS' THEN
 
         -- RAISE WARNING 'Bypassing copying rows for table (%) with user-defined data types.  You must copy them manually.', tblname;
@@ -1579,8 +1606,9 @@ BEGIN
           -- Issue#75: Must defer population of tables until child tables have been added to parents
           -- Issue#101 Offer alternative of copy to/from file. Although originally intended for tables with UDTs, it is now expanded to handle all cases for performance improvement perhaps for large tables.
           -- Issue#106 buffer3 shouldnt be in the mix
-          -- buffer2 := 'INSERT INTO ' || buffer || buffer3 || ' SELECT * FROM ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ';';
-          buffer2 := 'INSERT INTO ' || buffer || ' SELECT * FROM ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ';';
+          -- revisited:  buffer3 should be in play for PG versions that handle IDENTITIES
+          buffer2 := 'INSERT INTO ' || buffer || buffer3 || ' SELECT * FROM ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ';';
+          -- buffer2 := 'INSERT INTO ' || buffer || ' SELECT * FROM ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ';';
           IF bDebug THEN RAISE NOTICE 'DEBUG: buffer2=%',buffer2; END IF;
           IF bFileCopy THEN
             tblarray2:= tblarray2 || buffer2;
@@ -1616,7 +1644,7 @@ BEGIN
     EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
   END LOOP;
   ELSE 
-      -- Handle 9.6 versions 90600
+  -- Handle 9.6 versions 90600
   FOR tblname, relpersist, relknd, data_type, udt_name, udt_schema, ocomment, l_child, isGenerated, tblowner, tblspace  IN
     -- 2021-03-08 MJV #39 fix: change sql to get indicator of user-defined columns to issue warnings
     -- select c.relname, c.relpersistence, c.relispartition, c.relkind
@@ -1626,10 +1654,13 @@ BEGIN
     -- Fix#86 add is_generated to column select
     -- Fix#91 add tblowner to the select
     -- Fix#105 need a different kinda distint to avoid retrieving a table twice in the case of a table with multiple USER-DEFINED datatypes using DISTINCT ON instead of just DISTINCT
+    -- Fixed Issue#108: double quote roles to avoid problems with special characters in OWNER TO statements
     --SELECT DISTINCT c.relname, c.relpersistence, c.relispartition, c.relkind, co.data_type, co.udt_name, co.udt_schema, obj_description(c.oid), i.inhrelid, 
     --                COALESCE(co.is_generated, ''), pg_catalog.pg_get_userbyid(c.relowner) as "Owner", CASE WHEN reltablespace = 0 THEN 'pg_default' ELSE ts.spcname END as tablespace
+    -- SELECT DISTINCT ON (c.relname, c.relpersistence, c.relkind, co.data_type) c.relname, c.relpersistence, c.relkind, co.data_type, co.udt_name, co.udt_schema, obj_description(c.oid), i.inhrelid, 
+    --                 COALESCE(co.is_generated, ''), pg_catalog.pg_get_userbyid(c.relowner) as "Owner", CASE WHEN reltablespace = 0 THEN 'pg_default' ELSE ts.spcname END as tablespace                    
     SELECT DISTINCT ON (c.relname, c.relpersistence, c.relkind, co.data_type) c.relname, c.relpersistence, c.relkind, co.data_type, co.udt_name, co.udt_schema, obj_description(c.oid), i.inhrelid, 
-                    COALESCE(co.is_generated, ''), pg_catalog.pg_get_userbyid(c.relowner) as "Owner", CASE WHEN reltablespace = 0 THEN 'pg_default' ELSE ts.spcname END as tablespace                    
+                    COALESCE(co.is_generated, ''), '"' || pg_catalog.pg_get_userbyid(c.relowner) || '"' as "Owner", CASE WHEN reltablespace = 0 THEN 'pg_default' ELSE ts.spcname END as tablespace                    
     FROM pg_class c
         JOIN pg_namespace n ON (n.oid = c.relnamespace
                 AND n.nspname = quote_ident(source_schema)
@@ -1671,6 +1702,7 @@ BEGIN
           -- issue#91 fix
           -- issue#95
           IF NOT bNoOwner THEN    
+            -- Fixed Issue#108: double-quote roles in case they have special characters
             RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || tblname, tblowner;
           END IF;
         ELSE
@@ -1679,6 +1711,7 @@ BEGIN
             -- issue#91 fix
              -- issue#95
             IF NOT bNoOwner THEN    
+              -- Fixed Issue#108: double-quote roles in case they have special characters
               RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || tblname, tblowner;
             END IF;
             
@@ -1697,6 +1730,7 @@ BEGIN
             -- issue#91 fix
             -- issue#95
             IF NOT bNoOwner THEN    
+              -- Fixed Issue#108: double-quote roles in case they have special characters
               RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || tblname, tblowner;
             END IF;
           END IF;
@@ -1716,7 +1750,9 @@ BEGIN
           -- issue#91 fix
           -- issue#95
           IF NOT bNoOwner THEN    
+            -- Fixed Issue#108: double-quote roles in case they have special characters
             buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
+            lastsql = buffer3;
             EXECUTE buffer3;
           END IF;
         ELSE
@@ -1727,7 +1763,9 @@ BEGIN
             -- issue#91 fix
             -- issue#95
             IF NOT bNoOwner THEN    
+              -- Fixed Issue#108: double-quote roles in case they have special characters
               buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.'  || quote_ident(tblname) || ' OWNER TO ' || tblowner;
+              lastsql = buffer3;
               EXECUTE buffer3;
             END IF;
             
@@ -1753,7 +1791,9 @@ BEGIN
             -- issue#91 fix
             -- issue#95
             IF NOT bNoOwner THEN
+              -- Fixed Issue#108: double-quote roles in case they have special characters
               buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
+              lastsql = buffer3;
               EXECUTE buffer3;
             END IF;
 
@@ -1780,6 +1820,7 @@ BEGIN
         RAISE INFO '%', qry;
         -- issue#95
         IF NOT bNoOwner THEN
+            -- Fixed Issue#108: double-quote roles in case they have special characters
             RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || quote_ident(tblname), tblowner;
         END IF;
       ELSE
@@ -1807,6 +1848,7 @@ BEGIN
         -- issue#91 fix
         -- issue#95
         IF NOT bNoOwner THEN
+          -- Fixed Issue#108: double-quote roles in case they have special characters
           buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || ' OWNER TO ' || tblowner;
           EXECUTE buffer3;
         END IF;
@@ -1854,6 +1896,7 @@ BEGIN
         AND regexp_replace(old.indexdef, E'.*USING','') = regexp_replace(new.indexdef, E'.*USING','')
         ORDER BY old.indexdef, new.indexdef
     LOOP
+      lastsql = '';
       IF bDDLOnly THEN
         RAISE INFO '%', 'ALTER INDEX ' || quote_ident(dest_schema) || '.'  || quote_ident(ix_new_name) || ' RENAME TO ' || quote_ident(ix_old_name) || ';';
       ELSE
@@ -2082,7 +2125,7 @@ BEGIN
       FOR func_oid, func_owner, func_name, func_args, func_argno, buffer3 IN 
           SELECT p.oid, pg_catalog.pg_get_userbyid(p.proowner), p.proname, oidvectortypes(p.proargtypes), p.pronargs,
           CASE WHEN prokind = 'p' THEN 'PROCEDURE' WHEN prokind = 'f' THEN 'FUNCTION' ELSE '' END 
-          FROM pg_proc p WHERE p.pronamespace = src_oid AND p.prokind != 'a'
+          FROM pg_proc p WHERE p.pronamespace = src_oid AND p.prokind != 'a'          
       LOOP
         cnt := cnt + 1;
         SELECT pg_get_functiondef(func_oid)
@@ -2095,9 +2138,11 @@ BEGIN
           -- issue#95 
           IF NOT bNoOwner THEN
             IF func_argno = 0 THEN
-                RAISE INFO 'ALTER % %() OWNER TO %', buffer3, quote_ident(dest_schema) || '.' || quote_ident(func_name), func_owner || ';';
+                -- Fixed Issue#108: double-quote roles in case they have special characters
+                RAISE INFO 'ALTER % %() OWNER TO %', buffer3, quote_ident(dest_schema) || '.' || quote_ident(func_name), '"' || func_owner || '";';
             ELSE
-                RAISE INFO 'ALTER % % OWNER TO %', buffer3, quote_ident(dest_schema) || '.' || quote_ident(func_name) || '(' || func_args || ')', func_owner || ';';
+                -- Fixed Issue#108: double-quote roles in case they have special characters
+                RAISE INFO 'ALTER % % OWNER TO %', buffer3, quote_ident(dest_schema) || '.' || quote_ident(func_name) || '(' || func_args || ')', '"' || func_owner || '";';
             END IF;
           END IF;
         ELSE
@@ -2108,9 +2153,11 @@ BEGIN
           -- issue#95 
           IF NOT bNoOwner THEN
             IF func_argno = 0 THEN
-                dest_qry = 'ALTER ' || buffer3 || ' ' || quote_ident(dest_schema) || '.' || quote_ident(func_name) || '() OWNER TO ' || func_owner || ';';
+                -- Fixed Issue#108: double-quote roles in case they have special characters
+                dest_qry = 'ALTER ' || buffer3 || ' ' || quote_ident(dest_schema) || '.' || quote_ident(func_name) || '() OWNER TO ' || '"' || func_owner || '";';
             ELSE
-                dest_qry = 'ALTER ' || buffer3 || ' ' || quote_ident(dest_schema) || '.' || quote_ident(func_name) || '(' || func_args || ') OWNER TO ' || func_owner || ';';
+                -- Fixed Issue#108: double-quote roles in case they have special characters
+                dest_qry = 'ALTER ' || buffer3 || ' ' || quote_ident(dest_schema) || '.' || quote_ident(func_name) || '(' || func_args || ') OWNER TO ' || '"' || func_owner || '";';
             END IF;
           END IF;
           EXECUTE dest_qry;
@@ -2313,7 +2360,9 @@ BEGIN
       -- Issue#91 Fix
       -- issue#95 
       IF NOT bNoOwner THEN
-        RAISE INFO 'ALTER TABLE % OWNER TO %', buffer3, view_owner || ';';
+        -- Fixed Issue#108: double-quote roles in case they have special characters
+        -- RAISE INFO 'ALTER TABLE % OWNER TO %', buffer3, view_owner || ';';
+        RAISE INFO 'ALTER TABLE % OWNER TO %', buffer3, '"' ||view_owner || '";';
       END IF;        
     ELSE
       -- EXECUTE 'CREATE OR REPLACE VIEW ' || buffer || ' AS ' || v_def;
@@ -2322,7 +2371,8 @@ BEGIN
       -- Issue#91 Fix
       -- issue#95 
       IF NOT bNoOwner THEN      
-        v_def = 'ALTER TABLE ' || buffer3 || ' OWNER TO ' || view_owner || ';';
+        -- Fixed Issue#108: double-quote roles in case they have special characters
+        v_def = 'ALTER TABLE ' || buffer3 || ' OWNER TO ' || '"' || view_owner || '";';
         EXECUTE v_def;
       END IF;
     END IF;
@@ -2334,7 +2384,7 @@ BEGIN
   cnt := 0;
   -- Issue#91 get view_owner
   FOR object, view_owner, v_def IN
-      SELECT matviewname::text, matviewowner::text, replace(definition,';','') FROM pg_catalog.pg_matviews WHERE schemaname = quote_ident(source_schema)
+      SELECT matviewname::text, '"' || matviewowner::text || '"', replace(definition,';','') FROM pg_catalog.pg_matviews WHERE schemaname = quote_ident(source_schema)
   LOOP
       cnt := cnt + 1;
       -- Issue#78 FIX: handle case-sensitive names with quote_ident() on target schema and object
@@ -2353,6 +2403,7 @@ BEGIN
         IF NOT bNoOwner THEN      
           -- buffer3 = 'ALTER MATERIALIZED VIEW ' || buffer || ' OWNER TO ' || view_owner || ';' ;
           -- EXECUTE buffer3;
+          -- Fixed Issue#108: double-quote roles in case they have special characters
           buffer3 = 'ALTER MATERIALIZED VIEW ' || buffer || ' OWNER TO ' || view_owner || ';' ;
           mvarray := mvarray || buffer3;
         END IF;
@@ -2362,6 +2413,7 @@ BEGIN
           -- Issue#91
           -- issue#95 
           IF NOT bNoOwner THEN      
+            -- Fixed Issue#108: double-quote roles in case they have special characters
             RAISE INFO '%', 'ALTER MATERIALIZED VIEW ' || buffer || ' OWNER TO ' || view_owner || ';' ;
           END IF;
         ELSE
@@ -2369,6 +2421,7 @@ BEGIN
           -- Issue#91
           -- issue#95 
           IF NOT bNoOwner THEN      
+            -- Fixed Issue#108: double-quote roles in case they have special characters
             buffer3 = 'ALTER MATERIALIZED VIEW ' || buffer || ' OWNER TO ' || view_owner || ';' ;
             EXECUTE buffer3;
           END IF;
@@ -3026,7 +3079,9 @@ BEGIN
       -- 2021-03-05  MJV FIX: Fixed Issue#36 for tables
       SELECT c.relkind, 'GRANT ' || tb.privilege_type || CASE WHEN c.relkind in ('r', 'p') THEN ' ON TABLE ' WHEN c.relkind in ('v', 'm')  THEN ' ON ' END ||
       -- Issue#78 FIX: handle case-sensitive names with quote_ident() on t.relname      
-      quote_ident(dest_schema) || '.' || quote_ident(tb.table_name) || ' TO ' || string_agg(tb.grantee, ',') || ';' as tbl_dcl
+      -- Issue#108 FIX: enclose double-quote grantees with special characters
+      -- quote_ident(dest_schema) || '.' || quote_ident(tb.table_name) || ' TO ' || string_agg(tb.grantee, ',') || ';' as tbl_dcl
+      quote_ident(dest_schema) || '.' || quote_ident(tb.table_name) || ' TO ' || string_agg('"' || tb.grantee || '"', ',') || ';' as tbl_dcl
       FROM information_schema.table_privileges tb, pg_class c, pg_namespace n
       WHERE tb.table_schema = quote_ident(source_schema) AND tb.table_name = c.relname AND c.relkind in ('r', 'p', 'v', 'm')
         AND c.relnamespace = n.oid AND n.nspname = quote_ident(source_schema)
@@ -3075,7 +3130,7 @@ BEGIN
        END IF;
        SELECT RPAD(buffer, 35, ' ') INTO buffer;
        cnt2 := cast(extract(epoch from (clock_timestamp() - s)) as numeric(18,3));
-       IF bVerbose THEN RAISE NOTICE ' Populated cloned table, %   Rows Copied: %    seconds: %', buffer, LPAD(cnt::text, 10, ' '), LPAD(cnt2::text, 5, ' '); END IF;
+       IF bVerbose THEN RAISE NOTICE 'Populated cloned table, %   Rows Copied: %    seconds: %', buffer, LPAD(cnt::text, 10, ' '), LPAD(cnt2::text, 5, ' '); END IF;
        tblscopied := tblscopied + 1;
     END LOOP;
     
@@ -3087,15 +3142,47 @@ BEGIN
        IF bDebug THEN RAISE NOTICE 'DEBUG2: UDTs %', tblelement; END IF;
        EXECUTE tblelement;       
        GET DIAGNOSTICS cnt = ROW_COUNT;  
-       cnt2 = POSITION(' FROM ' IN tblelement::text);
-       IF cnt2 > 0 THEN
-           buffer = substring(tblelement, 1, cnt2);
-           buffer = substring(buffer, 6);
-           SELECT RPAD(buffer, 35, ' ') INTO buffer;
-           cnt2 := cast(extract(epoch from (clock_timestamp() - s)) as numeric(18,3));
-           IF bVerbose THEN RAISE NOTICE ' Populated cloned table, %   Rows Copied: %    seconds: %', buffer, LPAD(cnt::text, 10, ' '), LPAD(cnt2::text, 5, ' '); END IF;
-           tblscopied := tblscopied + 1;
+       
+       -- STATEMENT LOOKS LIKE THIS:
+       -- INSERT INTO sample11.warehouses SELECT * FROM sample.warehouses;
+       -- INSERT INTO sample11.person OVERRIDING SYSTEM VALUE SELECT * FROM sample.person;  
+       -- COPY sample.address TO '/tmp/cloneschema.tmp' WITH DELIMITER AS ',';\
+       buffer = TRIM(tblelement::text);
+       -- RAISE NOTICE 'element=%', buffer;
+       cnt1 = POSITION('INSERT INTO' IN buffer);
+       cnt2 = POSITION('COPY ' IN buffer);
+       IF cnt1 > 0 THEN
+           buffer = substring(buffer, 12);
+       ELSIF cnt2 > 0 THEN
+           buffer = substring(buffer, 5);
+       ELSE
+           RAISE EXCEPTION 'Programming Error for parsing tblarray2.';
        END IF;
+
+       -- RAISE NOTICE 'buffer1=%', buffer;
+       cnt1 = POSITION(' OVERRIDING ' IN buffer);
+       cnt2 = POSITION('SELECT * FROM ' IN buffer);
+       cnt3 = POSITION(' FROM ' IN buffer);
+       cnt4 = POSITION(' TO ' IN buffer);
+       IF cnt1 > 0 THEN
+           buffer = substring(buffer, 1, cnt1-2);
+       ELSIF cnt2 > 0 THEN
+           buffer = substring(buffer, 1, cnt2-2);
+       ELSIF cnt3 > 0 THEN
+           buffer = substring(buffer, 1, cnt3-1);           
+       ELSIF cnt4 > 0 THEN
+           -- skip the COPY TO statements
+           continue;
+       ELSE
+           RAISE EXCEPTION 'Programming Error for parsing tblarray2.';
+       END IF;
+       -- RAISE NOTICE 'buffer2=%', buffer;
+       
+       SELECT RPAD(buffer, 35, ' ') INTO buffer;
+       -- RAISE NOTICE 'buffer3=%', buffer;
+       cnt2 := cast(extract(epoch from (clock_timestamp() - s)) as numeric(18,3));
+       IF bVerbose THEN RAISE NOTICE 'Populated cloned table, %   Rows Copied: %    seconds: %', buffer, LPAD(cnt::text, 10, ' '), LPAD(cnt2::text, 5, ' '); END IF;
+       tblscopied := tblscopied + 1;
     END LOOP;    
     
     -- Issue#101 
@@ -3112,7 +3199,7 @@ BEGIN
            buffer = substring(buffer, 6);
            SELECT RPAD(buffer, 35, ' ') INTO buffer;
            cnt2 := cast(extract(epoch from (clock_timestamp() - s)) as numeric(18,3));
-           IF bVerbose THEN RAISE NOTICE ' Populated cloned table, %   Rows Copied: %    seconds: %', buffer, LPAD(cnt::text, 10, ' '), LPAD(cnt2::text, 5, ' '); END IF;
+           IF bVerbose THEN RAISE NOTICE 'Populated cloned table, %   Rows Copied: %    seconds: %', buffer, LPAD(cnt::text, 10, ' '), LPAD(cnt2::text, 5, ' '); END IF;
            tblscopied := tblscopied + 1;
        END IF;
     END LOOP;    
@@ -3130,7 +3217,7 @@ BEGIN
          buffer = substring(buffer, 1, cnt2);
          SELECT RPAD(buffer, 36, ' ') INTO buffer;
          cnt2 := cast(extract(epoch from (clock_timestamp() - s)) as numeric(18,3));
-         IF bVerbose THEN RAISE NOTICE ' Populated Mat. View,   %   Rows Inserted:        ?    seconds: %', buffer, LPAD(cnt2::text, 5, ' '); END IF;
+         IF bVerbose THEN RAISE NOTICE 'Populated Mat. View,    %  Rows Inserted:        ?    seconds: %', buffer, LPAD(cnt2::text, 5, ' '); END IF;
          mvscopied := mvscopied + 1;
        END IF;
     END LOOP;    
@@ -3201,7 +3288,11 @@ BEGIN
              -- Issue#105 Help user to fix the problem.
              buffer2 = 'It appears you have a USER-DEFINED column type mismatch.  Try running clone_schema with the FILECOPY option. ';
          END IF;
-         buffer = v_ret || E'\n'|| buffer2;
+         IF lastsql <> '' THEN
+             buffer = v_ret || E'\n'|| buffer2 || E'\n'|| lastsql;
+         ELSE
+             buffer = v_ret || E'\n'|| buffer2;
+         END IF;
          RAISE EXCEPTION 'Version: %  Action: %  Diagnostics: %',v_version, action, buffer;
 
          IF src_path_old = '' THEN
