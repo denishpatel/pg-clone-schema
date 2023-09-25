@@ -27,7 +27,7 @@ SET row_security = off;
 -- drop roles related to this database
 -- DROP ROLE IF EXISTS sysdba;
 
--- set global stuff: 
+-- set global stuff:
 
 -- don't worry if roles already exist, since they are cluster-wide, not just database-wide
 -- CREATE ROLE sysdba;
@@ -280,13 +280,13 @@ DECLARE
 ownerid  integer;
 myint    udt_myint;
 BEGIN
-    SELECT U.oid into ownerid FROM pg_roles AS U JOIN pg_database AS D ON (D.datdba = U.oid) WHERE D.datname = current_database();	   
+    SELECT U.oid into ownerid FROM pg_roles AS U JOIN pg_database AS D ON (D.datdba = U.oid) WHERE D.datname = current_database();
     RETURN ownerid;
 END;
 $BODY$
 LANGUAGE  plpgsql;
-                                                                             
-                                                                              
+
+
 CREATE FUNCTION aaa() RETURNS void
     LANGUAGE plpgsql
     AS $_$
@@ -363,11 +363,11 @@ BEGIN
         var_start := (var_end + 1)::INT;
         var_end := aws_sqlserver_ext.STRPOS3(par_delimiter, par_string, var_start);
     END LOOP;
-    RETURN QUERY (SELECT * FROM fnsplitstring$tmptbl);    
+    RETURN QUERY (SELECT * FROM fnsplitstring$tmptbl);
 END;
 $BODY$
 LANGUAGE  plpgsql;
-                             
+
 CREATE PROCEDURE get_userscans(IN aschema text, IN atable text, INOUT scans INTEGER) AS
 $BODY$
 BEGIN
@@ -432,7 +432,7 @@ CREATE TABLE arrays (
     aarray3  text[3][3],
     aarray4  integer ARRAY[4],
     aarray5  integer ARRAY,
-    aarray6  varchar(8) [] 
+    aarray6  varchar(8) []
 );
 ALTER TABLE numerics OWNER TO postgres;
 
@@ -507,7 +507,11 @@ CREATE TABLE foo2 (
 ALTER TABLE foo OWNER TO postgres;
 ALTER TABLE foo2 OWNER TO postgres;
 
-CREATE RULE "_RETURN" AS ON SELECT TO foo DO INSTEAD SELECT * FROM foo2;
+-- PG 16 throws error for following rule creation
+-- CREATE RULE "_RETURN" AS ON SELECT TO foo DO INSTEAD SELECT * FROM foo2;
+-- ERROR:  relation "foo" cannot have ON SELECT rules
+-- DETAIL:  This operation is not supported for tables.
+
 CREATE RULE notify_me AS ON UPDATE TO foo DO ALSO NOTIFY foo;
 
 INSERT INTO foo  (foo_id, foo_name) VALUES(1,'haha');
@@ -563,20 +567,20 @@ BEGIN
         INSERT INTO measurement_y2006m03 VALUES (NEW.*);
     ELSIF ( NEW.logdate >= DATE '2006-04-01' AND
             NEW.logdate <  DATE '2007-01-01' ) THEN
-        INSERT INTO measurement_y2006mRest VALUES (NEW.*);        
+        INSERT INTO measurement_y2006mRest VALUES (NEW.*);
     ELSIF ( NEW.logdate >= DATE '2007-01-01' AND
             NEW.logdate <  DATE '2008-01-01' ) THEN
-        INSERT INTO measurement_y2007 VALUES (NEW.*);        
+        INSERT INTO measurement_y2007 VALUES (NEW.*);
     ELSIF ( NEW.logdate >= DATE '2008-01-01' AND
             NEW.logdate <  DATE '2023-01-01' ) THEN
-        INSERT INTO measurement_y2008_2022 VALUES (NEW.*);                
+        INSERT INTO measurement_y2008_2022 VALUES (NEW.*);
     ELSIF ( NEW.logdate >= DATE '2023-01-01' AND
             NEW.logdate <  DATE '2024-01-01' ) THEN
-        INSERT INTO measurement_y2023 VALUES (NEW.*);                
+        INSERT INTO measurement_y2023 VALUES (NEW.*);
     ELSIF ( NEW.logdate >= DATE '2024-01-01' AND
             NEW.logdate <  DATE '2025-01-01' ) THEN
-        INSERT INTO measurement_y2024 VALUES (NEW.*);                
-    ELSE        
+        INSERT INTO measurement_y2024 VALUES (NEW.*);
+    ELSE
         RAISE EXCEPTION 'Date out of range.  Fix the measurement_insert_trigger() function!';
     END IF;
     RETURN NULL;
@@ -721,7 +725,7 @@ CREATE MATERIALIZED VIEW hoho AS
 ALTER TABLE hoho OWNER TO postgres;
 COMMENT ON MATERIALIZED VIEW hoho IS 'just a comment on the hoho materialized view';
 
-CREATE MATERIALIZED VIEW mv_foo_bar_baz AS 
+CREATE MATERIALIZED VIEW mv_foo_bar_baz AS
  SELECT count(*) as count
    FROM foo_bar_baz;
 ALTER TABLE mv_foo_bar_baz OWNER TO postgres;
@@ -739,7 +743,7 @@ ALTER TABLE hoho2 OWNER TO postgres;
 -- CREATE VIEW hoho3 AS
 --  SELECT count(*) as count
 --    FROM hoho2;
--- ALTER TABLE hoho3 OWNER TO postgres;   
+-- ALTER TABLE hoho3 OWNER TO postgres;
 
 --
 -- Name: person; Type: TABLE; Schema: sample; Owner: postgres
@@ -784,7 +788,7 @@ CREATE SEQUENCE seq111
     NO MINVALUE
     NO MAXVALUE
     CACHE 1;
-COMMENT ON SEQUENCE seq111 IS 'just a comment on seq111 sequence';    
+COMMENT ON SEQUENCE seq111 IS 'just a comment on seq111 sequence';
 
 
 ALTER TABLE seq111 OWNER TO postgres;
@@ -890,8 +894,8 @@ CREATE INDEX idx_x ON sampletable USING btree (x);
 COMMENT ON INDEX idx_x IS 'just another btree index';
 
 
-CREATE TABLE tablewithindexes(akey int, anum int, avalue text, 
-                              CONSTRAINT pk_akey_anum PRIMARY KEY (akey,anum), 
+CREATE TABLE tablewithindexes(akey int, anum int, avalue text,
+                              CONSTRAINT pk_akey_anum PRIMARY KEY (akey,anum),
                               CONSTRAINT uix_akey_anum UNIQUE (akey,anum));
 
 CREATE TABLE t_site (
@@ -1156,11 +1160,11 @@ ALTER TABLE "CaseSensitive" OWNER TO postgres;
 CREATE VIEW "CaseSensitiveView" AS SELECT * FROM "CaseSensitive";
 CREATE SEQUENCE "CaseSensitive_ID_seq" START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1;
 ALTER TABLE "CaseSensitive_ID_seq" OWNER TO postgres;
-COMMENT ON TABLE "CaseSensitive" IS 'just a comment on the CaseSensitive table';    
+COMMENT ON TABLE "CaseSensitive" IS 'just a comment on the CaseSensitive table';
 ALTER SEQUENCE "CaseSensitive_ID_seq" OWNED BY "CaseSensitive"."ID";
 ALTER TABLE ONLY "CaseSensitive" ALTER COLUMN "ID" SET DEFAULT nextval('"CaseSensitive_ID_seq"'::regclass);
 ALTER TABLE ONLY "CaseSensitive" ADD CONSTRAINT "CaseSensitive_pkey" PRIMARY KEY ("ID");
-COMMENT ON SEQUENCE "CaseSensitive_ID_seq" IS 'just a comment on CaseSensitive sequence';    
+COMMENT ON SEQUENCE "CaseSensitive_ID_seq" IS 'just a comment on CaseSensitive sequence';
 CREATE INDEX "CaseSensitive_aValue_ix" ON "CaseSensitive" ("aValue");
 CREATE FUNCTION "CaseSensitiveFunc" (int, int)
 returns int language sql
@@ -1187,14 +1191,14 @@ INSERT INTO geometries VALUES
   ('Collection', 'GEOMETRYCOLLECTION(POINT(2 0),POLYGON((0 0, 1 0, 1 1, 0 1, 0 0)))');
 
 -- SELECT name, ST_AsText(geom) FROM geometries;
- 
+
 
 CREATE TABLE Students (
   Id INTEGER PRIMARY KEY,
   FirstName VARCHAR(50),
   LastName VARCHAR(50),
   FullName VARCHAR(101) GENERATED ALWAYS AS (FirstName || ' ' || LastName) STORED
-); 
+);
 INSERT INTO Students (Id, FirstName, LastName) VALUES (0001, 'Lucy', 'Green');
 INSERT INTO Students (Id, FirstName, LastName) VALUES (0002, 'Aziz', 'Ahmad');
 INSERT INTO Students (Id, FirstName, LastName) VALUES (0003, 'Zohan', 'Ahuja');
@@ -1268,9 +1272,7 @@ create table orders_r1 partition of orders for values from (MINVALUE) to (10000)
 create table orders_r2 partition of orders for values from (10000) to (200000);
 create table orders_r3 partition of orders for values from (200000) to (500000);
 create table orders_r4 partition of orders for values from (500000) to (MAXVALUE);
-                                                                                                                            
+
 --
 -- End Sample database
 --
-
-                                                                                                                                                                                                                                                                                                                                                                                 
