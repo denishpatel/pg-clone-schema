@@ -432,7 +432,9 @@ CREATE TABLE arrays (
     aarray3  text[3][3],
     aarray4  integer ARRAY[4],
     aarray5  integer ARRAY,
-    aarray6  varchar(8) []
+    aarray6  varchar(8) [],
+    email public.citext,
+    aarray7 character varying(200)[] NOT NULL
 );
 ALTER TABLE numerics OWNER TO postgres;
 
@@ -1272,13 +1274,6 @@ create table orders_r1 partition of orders for values from (MINVALUE) to (10000)
 create table orders_r2 partition of orders for values from (10000) to (200000);
 create table orders_r3 partition of orders for values from (200000) to (500000);
 create table orders_r4 partition of orders for values from (500000) to (MAXVALUE);
-
-CREATE TABLE arrays (
-    id integer NOT NULL,
-    email public.citext,
-    verified_emails character varying(254)[] NOT NULL
-);
-
 
 --
 -- End Sample database
