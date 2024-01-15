@@ -1273,6 +1273,13 @@ create table orders_r2 partition of orders for values from (10000) to (200000);
 create table orders_r3 partition of orders for values from (200000) to (500000);
 create table orders_r4 partition of orders for values from (500000) to (MAXVALUE);
 
+CREATE TABLE arrays (
+    id integer NOT NULL,
+    email public.citext,
+    verified_emails character varying(254)[] NOT NULL
+);
+
+
 --
 -- End Sample database
 --
