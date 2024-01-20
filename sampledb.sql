@@ -605,7 +605,8 @@ INSERT INTO measurement SELECT 3, now() - interval '10 year', 90, 125;
 CREATE TABLE foo_bar_baz (
     foo_id integer NOT NULL,
     bar_id integer NOT NULL,
-    baz integer NOT NULL
+    baz integer NOT NULL,
+    akey text not null DEFAULT 'my default value'
 )
 PARTITION BY RANGE (foo_id);
 
@@ -620,7 +621,8 @@ COMMENT ON TABLE foo_bar_baz IS 'just a comment on a partitioned table';
 CREATE TABLE foo_bar_baz_0 (
     foo_id integer NOT NULL,
     bar_id integer NOT NULL,
-    baz integer NOT NULL
+    baz integer NOT NULL,
+    akey text not null DEFAULT 'my default value'
 );
 ALTER TABLE ONLY foo_bar_baz ATTACH PARTITION foo_bar_baz_0 FOR VALUES FROM (0) TO (1);
 
@@ -634,7 +636,8 @@ ALTER TABLE foo_bar_baz_0 OWNER TO postgres;
 CREATE TABLE foo_bar_baz_1 (
     foo_id integer NOT NULL,
     bar_id integer NOT NULL,
-    baz integer NOT NULL
+    baz integer NOT NULL,
+    akey text not null DEFAULT 'my default value'
 );
 ALTER TABLE ONLY foo_bar_baz ATTACH PARTITION foo_bar_baz_1 FOR VALUES FROM (1) TO (2);
 
@@ -648,7 +651,8 @@ ALTER TABLE foo_bar_baz_1 OWNER TO postgres;
 CREATE TABLE foo_bar_baz_2 (
     foo_id integer NOT NULL,
     bar_id integer NOT NULL,
-    baz integer NOT NULL
+    baz integer NOT NULL,
+    akey text not null DEFAULT 'my default value'
 );
 ALTER TABLE ONLY foo_bar_baz ATTACH PARTITION foo_bar_baz_2 FOR VALUES FROM (2) TO (3);
 
@@ -662,7 +666,8 @@ ALTER TABLE foo_bar_baz_2 OWNER TO postgres;
 CREATE TABLE foo_bar_baz_3 (
     foo_id integer NOT NULL,
     bar_id integer NOT NULL,
-    baz integer NOT NULL
+    baz integer NOT NULL,
+    akey text not null DEFAULT 'my default value'
 );
 ALTER TABLE ONLY foo_bar_baz ATTACH PARTITION foo_bar_baz_3 FOR VALUES FROM (3) TO (4);
 
@@ -676,7 +681,8 @@ ALTER TABLE foo_bar_baz_3 OWNER TO postgres;
 CREATE TABLE foo_bar_baz_4 (
     foo_id integer NOT NULL,
     bar_id integer NOT NULL,
-    baz integer NOT NULL
+    baz integer NOT NULL,
+    akey text not null DEFAULT 'my default value'
 );
 ALTER TABLE ONLY foo_bar_baz ATTACH PARTITION foo_bar_baz_4 FOR VALUES FROM (4) TO (5);
 
@@ -690,7 +696,8 @@ ALTER TABLE foo_bar_baz_4 OWNER TO postgres;
 CREATE TABLE foo_bar_baz_5 (
     foo_id integer NOT NULL,
     bar_id integer NOT NULL,
-    baz integer NOT NULL
+    baz integer NOT NULL,
+    akey text not null DEFAULT 'my default value'
 );
 ALTER TABLE ONLY foo_bar_baz ATTACH PARTITION foo_bar_baz_5 FOR VALUES FROM (5) TO (6);
 ALTER TABLE foo_bar_baz_5 OWNER TO postgres;
