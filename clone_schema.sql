@@ -57,7 +57,7 @@
 -- 2023-08-04  MJV FIX: Fixed Issue#105 Use the extension's schema not the table's schema.  Don't assume public schema.
 -- 2023-09-07  MJV FIX: Fixed Issue#107 Fixed via pull request#109. Increased output length of sequences and identities from 2 to 5.  Also changed SQL for gettting identities owner.
 -- 2023-09-07  MJV FIX: Fixed Issue#108:enclose double-quote roles with special characters for setting "OWNER TO"
--- 2024-01-15  MJV FIX: Fixed Issue#114: varchar arrays cause problems use pg_col_def func() from pg_get_tabledef to fixe the problem
+-- 2024-01-15	 MJV FIX: Fixed Issue#114: varchar arrays cause problems use pg_col_def func() from pg_get_tabledef to fixe the problem
 -- 2024-xx-xx  MJV FIX: Fixing Issue#106 Make clone_schema compatible with PG 9.6
 
 do $$ 
@@ -2554,6 +2554,7 @@ BEGIN
       IF bDDLOnly THEN
         RAISE INFO '%', arec.definition;
       ELSE
+        IF bDebug THEN RAISE NOTICE 'DEBUG: policiesA - %', arec.definition; END IF;
         EXECUTE arec.definition;
       END IF;
     
@@ -2564,6 +2565,7 @@ BEGIN
         IF bDDLOnly THEN
           RAISE INFO '%', buffer;
         ELSE
+          IF bDebug THEN RAISE NOTICE 'DEBUG: policiesB - %', arec.definition; END IF;
           EXECUTE buffer;
         END IF;
       END IF;
