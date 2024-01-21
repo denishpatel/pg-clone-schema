@@ -58,7 +58,7 @@
 -- 2023-09-07  MJV FIX: Fixed Issue#107 Fixed via pull request#109. Increased output length of sequences and identities from 2 to 5.  Also changed SQL for gettting identities owner.
 -- 2023-09-07  MJV FIX: Fixed Issue#108:enclose double-quote roles with special characters for setting "OWNER TO"
 -- 2024-01-15	 MJV FIX: Fixed Issue#114: varchar arrays cause problems use pg_col_def func() from pg_get_tabledef to fixe the problem
--- 2024-xx-xx  MJV FIX: Fixing Issue#106 Make clone_schema compatible with PG 9.6
+-- 2024-01-21  MJV ENH: Add more debug info when sql excecution errors (lastsql variable)
 
 do $$ 
 <<first_block>>
@@ -780,7 +780,7 @@ DECLARE
   r                timestamptz;
   s                timestamptz;
   lastsql          text := '';
-  v_version        text := '1.20  January 15, 2024';
+  v_version        text := '1.20  January 21, 2024';
 
 BEGIN
   -- Make sure NOTICE are shown
@@ -2555,7 +2555,9 @@ BEGIN
         RAISE INFO '%', arec.definition;
       ELSE
         IF bDebug THEN RAISE NOTICE 'DEBUG: policiesA - %', arec.definition; END IF;
+        lastsql = arec.definition;
         EXECUTE arec.definition;
+        lastsql = '';
       END IF;
     
       -- Issue#76: Enable row security if indicated
@@ -2566,7 +2568,9 @@ BEGIN
           RAISE INFO '%', buffer;
         ELSE
           IF bDebug THEN RAISE NOTICE 'DEBUG: policiesB - %', arec.definition; END IF;
+          lastsql = arec.definition;
           EXECUTE buffer;
+          lastsql = '';
         END IF;
       END IF;
     END LOOP;
