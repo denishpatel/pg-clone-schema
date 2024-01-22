@@ -59,6 +59,7 @@
 -- 2023-09-07  MJV FIX: Fixed Issue#108:enclose double-quote roles with special characters for setting "OWNER TO"
 -- 2024-01-15	 MJV FIX: Fixed Issue#114: varchar arrays cause problems use pg_col_def func() from pg_get_tabledef to fixe the problem
 -- 2024-01-21  MJV ENH: Add more debug info when sql excecution errors (lastsql variable)
+-- 2024-01-22  MJV FIX: Fixed Issue#113: quote_ident() the policy name
 
 do $$ 
 <<first_block>>
@@ -780,7 +781,7 @@ DECLARE
   r                timestamptz;
   s                timestamptz;
   lastsql          text := '';
-  v_version        text := '1.20  January 21, 2024';
+  v_version        text := '1.20  January 22, 2024';
 
 BEGIN
   -- Make sure NOTICE are shown
@@ -2543,7 +2544,9 @@ BEGIN
   IF sq_server_version_num > 90624 THEN
     FOR arec IN
       -- Issue#78 FIX: handle case-sensitive names with quote_ident() on policy, tablename
-      SELECT schemaname as schemaname, tablename as tablename, 'CREATE POLICY ' || policyname || ' ON ' || quote_ident(dest_schema) || '.' || quote_ident(tablename) || ' AS ' || permissive || ' FOR ' || cmd || ' TO '
+      -- Issue#113 FIX: quote_ident() the policy name
+      -- SELECT schemaname as schemaname, tablename as tablename, 'CREATE POLICY ' || policyname || ' ON ' || quote_ident(dest_schema) || '.' || quote_ident(tablename) || ' AS ' || permissive || ' FOR ' || cmd || ' TO '
+      SELECT schemaname as schemaname, tablename as tablename, 'CREATE POLICY ' || quote_ident(policyname) || ' ON ' || quote_ident(dest_schema) || '.' || quote_ident(tablename) || ' AS ' || permissive || ' FOR ' || cmd || ' TO '
       ||  array_to_string(roles, ',', '*') || ' USING (' || regexp_replace(qual, E'[\\n\\r]+', ' ', 'g' ) || ')'
       || CASE WHEN with_check IS NOT NULL THEN ' WITH CHECK (' ELSE '' END || coalesce(with_check, '') || CASE WHEN with_check IS NOT NULL THEN ');' ELSE ';' END as definition
       FROM pg_policies
@@ -2578,7 +2581,9 @@ BEGIN
     -- handle 9.6 versions
     FOR arec IN
       -- Issue#78 FIX: handle case-sensitive names with quote_ident() on policy, tablename
-      SELECT schemaname as schemaname, tablename as tablename, 'CREATE POLICY ' || policyname || ' ON ' || quote_ident(dest_schema) || '.' || quote_ident(tablename) || ' FOR ' || cmd || ' TO '
+      -- Issue#113 FIX: quote_ident() the policy name
+      -- SELECT schemaname as schemaname, tablename as tablename, 'CREATE POLICY ' || policyname || ' ON ' || quote_ident(dest_schema) || '.' || quote_ident(tablename) || ' FOR ' || cmd || ' TO '
+      SELECT schemaname as schemaname, tablename as tablename, 'CREATE POLICY ' || quote_ident(policyname) || ' ON ' || quote_ident(dest_schema) || '.' || quote_ident(tablename) || ' FOR ' || cmd || ' TO '
       ||  array_to_string(roles, ',', '*') || ' USING (' || regexp_replace(qual, E'[\\n\\r]+', ' ', 'g' ) || ')'
       || CASE WHEN with_check IS NOT NULL THEN ' WITH CHECK (' ELSE '' END || coalesce(with_check, '') || CASE WHEN with_check IS NOT NULL THEN ');' ELSE ';' END as definition
       FROM pg_policies
