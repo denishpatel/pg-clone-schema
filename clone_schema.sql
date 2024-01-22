@@ -2594,7 +2594,9 @@ BEGIN
       IF bDDLOnly THEN
         RAISE INFO '%', arec.definition;
       ELSE
+        lastsql = arec.definition;
         EXECUTE arec.definition;
+        lastsql = '';
       END IF;
     
       -- Issue#76: Enable row security if indicated
