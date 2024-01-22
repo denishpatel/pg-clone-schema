@@ -2543,7 +2543,7 @@ BEGIN
   IF sq_server_version_num > 90624 THEN
     FOR arec IN
       -- Issue#78 FIX: handle case-sensitive names with quote_ident() on policy, tablename
-      SELECT schemaname as schemaname, tablename as tablename, 'CREATE POLICY ' || policyname || ' ON ' || quote_ident(dest_schema) || '.' || quote_ident(tablename) || ' AS ' || permissive || ' FOR ' || cmd || ' TO '
+      SELECT schemaname as schemaname, tablename as tablename, 'CREATE POLICY ' || quote_ident(policyname) || ' ON ' || quote_ident(dest_schema) || '.' || quote_ident(tablename) || ' AS ' || permissive || ' FOR ' || cmd || ' TO '
       ||  array_to_string(roles, ',', '*') || ' USING (' || regexp_replace(qual, E'[\\n\\r]+', ' ', 'g' ) || ')'
       || CASE WHEN with_check IS NOT NULL THEN ' WITH CHECK (' ELSE '' END || coalesce(with_check, '') || CASE WHEN with_check IS NOT NULL THEN ');' ELSE ';' END as definition
       FROM pg_policies
