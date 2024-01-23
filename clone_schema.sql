@@ -60,7 +60,7 @@
 -- 2024-01-15	 MJV FIX: Fixed Issue#114: varchar arrays cause problems use pg_col_def func() from pg_get_tabledef to fixe the problem
 -- 2024-01-21  MJV ENH: Add more debug info when sql excecution errors (lastsql variable)
 -- 2024-01-22  MJV FIX: Fixed Issue#113: quote_ident() the policy name
--- 2024-01-23  MJV FIX: Fixed Issue#111: defer triggers til after we populate the tables, just like we did with FKeys (Issue#78).
+-- 2024-01-23  MJV FIX: Fixed Issue#111: defer triggers til after we populate the tables, just like we did with FKeys (Issue#78). See example with emp table and emp_stamp trigger that updates inserted row.
 
 do $$ 
 <<first_block>>
