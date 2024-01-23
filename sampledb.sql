@@ -723,16 +723,10 @@ COMMENT ON FOREIGN TABLE haha IS 'just a comment on a foreign table';
 
 ALTER FOREIGN TABLE haha OWNER TO postgres;
 
---
--- Name: hoho; Type: MATERIALIZED VIEW; Schema: sample; Owner: postgres
---
-
-CREATE MATERIALIZED VIEW hoho AS
- SELECT count(*) AS count
-   FROM pg_stat_activity
-  WITH NO DATA;
-ALTER TABLE hoho OWNER TO postgres;
-COMMENT ON MATERIALIZED VIEW hoho IS 'just a comment on the hoho materialized view';
+CREATE MATERIALIZED VIEW activity AS SELECT pid, datname, state, query FROM pg_stat_activity where state in ('active','idle in transaction')  WITH NO DATA;
+ALTER TABLE activity OWNER TO postgres;
+COMMENT ON MATERIALIZED VIEW activity IS 'just a comment on the activity materialized view';
+CREATE INDEX activity_pid_idx ON activity USING btree (pid);
 
 CREATE MATERIALIZED VIEW mv_foo_bar_baz AS
  SELECT count(*) as count
