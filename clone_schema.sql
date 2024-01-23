@@ -60,6 +60,7 @@
 -- 2024-01-15	 MJV FIX: Fixed Issue#114: varchar arrays cause problems use pg_col_def func() from pg_get_tabledef to fixe the problem
 -- 2024-01-21  MJV ENH: Add more debug info when sql excecution errors (lastsql variable)
 -- 2024-01-22  MJV FIX: Fixed Issue#113: quote_ident() the policy name
+-- 2024-01-23  MJV FIX: Fixed Issue#111: defer triggers til after we populate the tables, just like we did with FKeys (Issue#78).
 
 do $$ 
 <<first_block>>
@@ -781,7 +782,7 @@ DECLARE
   r                timestamptz;
   s                timestamptz;
   lastsql          text := '';
-  v_version        text := '1.20  January 22, 2024';
+  v_version        text := '1.21  January 23, 2024';
 
 BEGIN
   -- Make sure NOTICE are shown
@@ -2480,41 +2481,10 @@ BEGIN
 
   -- Issue 90 Move create functions to before views
   
+  
+  -- Issue#111: forces us to defer triggers til after we populate the tables, just like we did with FKeys (Issue#78).
   -- MV: Create Triggers
-
-  -- MJV FIX: #38
-  -- EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
-
-  -- Issue#61 FIX: use set_config for empty string
-  -- SET search_path = '';
   SELECT set_config('search_path', '', false) into v_dummy;
-
-  action := 'Triggers';
-  cnt := 0;
-  FOR arec IN
-    -- 2021-03-09 MJV FIX: #40 fixed sql to get the def using pg_get_triggerdef() sql
-    SELECT n.nspname, c.relname, t.tgname, p.proname, REPLACE(pg_get_triggerdef(t.oid), quote_ident(source_schema), quote_ident(dest_schema)) || ';' AS trig_ddl
-    FROM pg_trigger t, pg_class c, pg_namespace n, pg_proc p
-    WHERE n.nspname = quote_ident(source_schema)
-      AND n.oid = c.relnamespace
-      AND c.relkind in ('r','p')
-      AND n.oid = p.pronamespace
-      AND c.oid = t.tgrelid
-      AND p.oid = t.tgfoid
-      ORDER BY c.relname, t.tgname
-  LOOP
-    BEGIN
-      cnt := cnt + 1;
-      IF bDDLOnly THEN
-        RAISE INFO '%', arec.trig_ddl;
-      ELSE
-        EXECUTE arec.trig_ddl;
-      END IF;
-
-    END;
-  END LOOP;
-  RAISE NOTICE '    TRIGGERS cloned: %', LPAD(cnt::text, 5, ' ');
-
 
   -- MV: Create Rules
   -- Fixes Issue#59 Implement Rules
@@ -3296,6 +3266,35 @@ BEGIN
   END LOOP;
   EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
   RAISE NOTICE '       FKEYS cloned: %', LPAD(cnt::text, 5, ' ');
+
+  -- Issue#111: forces us to defer triggers til after we populate the tables, just like we did with FKeys (Issue#78).
+  SELECT set_config('search_path', '', false) into v_dummy;
+
+  action := 'Triggers';
+  cnt := 0;
+  FOR arec IN
+    -- 2021-03-09 MJV FIX: #40 fixed sql to get the def using pg_get_triggerdef() sql
+    SELECT n.nspname, c.relname, t.tgname, p.proname, REPLACE(pg_get_triggerdef(t.oid), quote_ident(source_schema), quote_ident(dest_schema)) || ';' AS trig_ddl
+    FROM pg_trigger t, pg_class c, pg_namespace n, pg_proc p
+    WHERE n.nspname = quote_ident(source_schema)
+      AND n.oid = c.relnamespace
+      AND c.relkind in ('r','p')
+      AND n.oid = p.pronamespace
+      AND c.oid = t.tgrelid
+      AND p.oid = t.tgfoid
+      ORDER BY c.relname, t.tgname
+  LOOP
+    BEGIN
+      cnt := cnt + 1;
+      IF bDDLOnly THEN
+        RAISE INFO '%', arec.trig_ddl;
+      ELSE
+        EXECUTE arec.trig_ddl;
+      END IF;
+
+    END;
+  END LOOP;
+  RAISE NOTICE '    TRIGGERS cloned: %', LPAD(cnt::text, 5, ' ');
 
 
   IF src_path_old = '' OR src_path_old = '""' THEN
