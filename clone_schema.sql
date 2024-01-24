@@ -62,6 +62,7 @@
 -- 2024-01-22  MJV FIX: Fixed Issue#113: quote_ident() the policy name
 -- 2024-01-23  MJV FIX: Fixed Issue#111: defer triggers til after we populate the tables, just like we did with FKeys (Issue#78). See example with emp table and emp_stamp trigger that updates inserted row.
 -- 2024-01-24  MJV FIX: Fixed Issue#116: defer creation of materialized view indexes until after we create the deferred materialized views via issue#98.
+-- 2024-01-24  MJV FIX: Fixed Issue#117: Fix getting table privs SQL: string_agg wasn't working and no need to double-quote the grantee, that was only intended for owner DDL (Issue#108)
 
 do $$ 
 <<first_block>>
@@ -783,7 +784,7 @@ DECLARE
   r                timestamptz;
   s                timestamptz;
   lastsql          text := '';
-  v_version        text := '1.22  January 24, 2024';
+  v_version        text := '1.23 January 24, 2024';
 
 BEGIN
   -- Make sure NOTICE are shown
@@ -3179,20 +3180,16 @@ BEGIN
     -- regular, partitioned, and foreign tables plus view and materialized view permissions. Ignored for now: implement foreign table defs.
     cnt := 0;
     FOR arec IN
-      -- SELECT 'GRANT ' || p.perm::perm_type || CASE WHEN t.relkind in ('r', 'p', 'f') THEN ' ON TABLE ' WHEN t.relkind in ('v', 'm')  THEN ' ON ' END || quote_ident(dest_schema) || '.' || t.relname::text || ' TO "' || r.rolname || '";' as tbl_ddl,
-      -- has_table_privilege(r.oid, t.oid, p.perm) AS granted, t.relkind
-      -- FROM pg_catalog.pg_class AS t CROSS JOIN pg_catalog.pg_roles AS r CROSS JOIN (VALUES (TEXT 'SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'), ('TRUNCATE'), ('REFERENCES'), ('TRIGGER')) AS p(perm)
-      -- WHERE t.relnamespace::regnamespace::name = quote_ident(source_schema)  AND t.relkind in ('r', 'p', 'f', 'v', 'm')  AND NOT r.rolsuper AND has_table_privilege(r.oid, t.oid, p.perm) order by t.relname::text, t.relkind
       -- 2021-03-05  MJV FIX: Fixed Issue#36 for tables
-      SELECT c.relkind, 'GRANT ' || tb.privilege_type || CASE WHEN c.relkind in ('r', 'p') THEN ' ON TABLE ' WHEN c.relkind in ('v', 'm')  THEN ' ON ' END ||
       -- Issue#78 FIX: handle case-sensitive names with quote_ident() on t.relname      
-      -- Issue#108 FIX: enclose double-quote grantees with special characters
-      -- quote_ident(dest_schema) || '.' || quote_ident(tb.table_name) || ' TO ' || string_agg(tb.grantee, ',') || ';' as tbl_dcl
-      quote_ident(dest_schema) || '.' || quote_ident(tb.table_name) || ' TO ' || string_agg('"' || tb.grantee || '"', ',') || ';' as tbl_dcl
+      -- 2024-01-24  MJV FIX: Issue#117    
+      SELECT c.relkind, 'GRANT ' || tb.privilege_type || CASE WHEN c.relkind in ('r', 'p') THEN ' ON TABLE ' WHEN c.relkind in ('v', 'm')  THEN ' ON ' END ||
+      quote_ident(dest_schema) || '.' || quote_ident(tb.table_name) || ' TO ' || string_agg(tb.grantee, ',') || ';' as tbl_dcl
       FROM information_schema.table_privileges tb, pg_class c, pg_namespace n
       WHERE tb.table_schema = quote_ident(source_schema) AND tb.table_name = c.relname AND c.relkind in ('r', 'p', 'v', 'm')
         AND c.relnamespace = n.oid AND n.nspname = quote_ident(source_schema)
-        GROUP BY c.relkind, tb.privilege_type, tb.table_schema, tb.table_name
+        GROUP BY c.relkind, tb.privilege_type, tb.table_schema, tb.table_name 
+        ORDER BY tb.table_name, tb.privilege_type
     LOOP
       BEGIN
         cnt := cnt + 1;
