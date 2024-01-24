@@ -1,4 +1,4 @@
--- Change History:
+-- Change History: 
 -- 2021-03-03  MJV FIX: Fixed population of tables with rows section. "buffer" variable was not initialized correctly. Used new variable, tblname, to fix it.
 -- 2021-03-03  MJV FIX: Fixed Issue#34  where user-defined types in declare section of functions caused runtime errors.
 -- 2021-03-04  MJV FIX: Fixed Issue#35  where privileges for functions were not being set correctly causing the program to bomb and giving privileges to other users that should not have gotten them.
@@ -61,6 +61,7 @@
 -- 2024-01-21  MJV ENH: Add more debug info when sql excecution errors (lastsql variable)
 -- 2024-01-22  MJV FIX: Fixed Issue#113: quote_ident() the policy name
 -- 2024-01-23  MJV FIX: Fixed Issue#111: defer triggers til after we populate the tables, just like we did with FKeys (Issue#78). See example with emp table and emp_stamp trigger that updates inserted row.
+-- 2024-01-24  MJV FIX: Fixed Issue#116: defer creation of materialized view indexes until after we create the deferred materialized views via issue#98.
 
 do $$ 
 <<first_block>>
@@ -782,7 +783,7 @@ DECLARE
   r                timestamptz;
   s                timestamptz;
   lastsql          text := '';
-  v_version        text := '1.21  January 23, 2024';
+  v_version        text := '1.22  January 24, 2024';
 
 BEGIN
   -- Make sure NOTICE are shown
@@ -1005,7 +1006,9 @@ BEGIN
         IF bDDLOnly THEN
           RAISE INFO '%', arec.coll_ddl;
         ELSE
+          lastsql = arec.coll_ddl;
           EXECUTE arec.coll_ddl;
+          lastsql = '';
         END IF;
       END;
     END LOOP;
@@ -1026,7 +1029,9 @@ BEGIN
         IF bDDLOnly THEN
           RAISE INFO '%', arec.coll_ddl;
         ELSE
+          lastsql = arec.coll_ddl;
           EXECUTE arec.coll_ddl;
+          lastsql = '';
         END IF;
       END;
     END LOOP;
@@ -1047,7 +1052,9 @@ BEGIN
         IF bDDLOnly THEN
           RAISE INFO '%', arec.coll_ddl;
         ELSE
+          lastsql = arec.coll_ddl;
           EXECUTE arec.coll_ddl;
+          lastsql = '';
         END IF;
       END;
     END LOOP;
@@ -1094,7 +1101,9 @@ BEGIN
       IF bDDLOnly THEN
         RAISE INFO '%', arec.dom_ddl;
       ELSE
+        lastsql = arec.dom_ddl;
         EXECUTE arec.dom_ddl;
+        lastsql = '';
       END IF;
     END;
   END LOOP;
@@ -1141,7 +1150,9 @@ BEGIN
             RAISE INFO 'ALTER TYPE % OWNER TO  %;', quote_ident(dest_schema) || '.' || arec.typname, arec.owner;
           END IF;
         ELSE
+          lastsql = arec.type_ddl;
           EXECUTE arec.type_ddl;
+          lastsql = '';
 
           --issue#95
           IF NOT bNoOwner THEN
@@ -1158,7 +1169,9 @@ BEGIN
             RAISE INFO 'ALTER TYPE % OWNER TO  %;', quote_ident(dest_schema) || '.' || arec.typname, arec.owner;
           END IF;
         ELSE
+          lastsql = arec.type_ddl;
           EXECUTE arec.type_ddl;
+          lastsql = '';
           --issue#95
           IF NOT bNoOwner THEN
               -- Fixed Issue#108: double-quote roles in case they have special characters
@@ -1253,7 +1266,9 @@ BEGIN
     IF bDDLOnly THEN
       RAISE INFO '%', qry;
     ELSE
+      lastsql = qry;
       EXECUTE qry;
+      lastsql = '';
     END IF;
 
     buffer := quote_ident(dest_schema) || '.' || quote_ident(object);
@@ -1392,7 +1407,9 @@ BEGIN
           --      so just make search path = public to handle extension types that should reside in public schema
           v_dummy = 'public';
           SELECT set_config('search_path', v_dummy, false) into v_dummy;
+          lastsql = buffer3;
           EXECUTE buffer3;
+          lastsql = '';
           -- issue#91 fix
           -- issue#95
           IF NOT bNoOwner THEN    
@@ -1400,12 +1417,15 @@ BEGIN
             buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
             lastsql = buffer3;
             EXECUTE buffer3;
+            lastsql = '';
           END IF;
         ELSE
           IF (NOT bChild OR bRelispart) THEN
             buffer3 := 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
             IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef02:%', buffer3; END IF;
+            lastsql = buffer3;
             EXECUTE buffer3;
+            lastsql = '';
             -- issue#91 fix
             -- issue#95
             IF NOT bNoOwner THEN    
@@ -1413,6 +1433,7 @@ BEGIN
               buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.'  || quote_ident(tblname) || ' OWNER TO ' || tblowner;
               lastsql = buffer3;
               EXECUTE buffer3;
+              lastsql = '';
             END IF;
             
             -- issue#99
@@ -1420,7 +1441,9 @@ BEGIN
               -- replace with user-defined tablespace
               -- ALTER TABLE myschema.mytable SET TABLESPACE usrtblspc;
               buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' SET TABLESPACE ' || tblspace;
+              lastsql = buffer3;
               EXECUTE buffer3;
+              lastsql = '';
             END IF;
 
           ELSE
@@ -1433,7 +1456,9 @@ BEGIN
             -- NOTICE:  merging column "city_id" with inherited definition
             set client_min_messages = 'WARNING';
             IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef03:%', buffer3; END IF;
+            lastsql = buffer3;
             EXECUTE buffer3;
+            lastsql = '';
             -- issue#91 fix
             -- issue#95
             IF NOT bNoOwner THEN
@@ -1441,6 +1466,7 @@ BEGIN
               buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
               lastsql = buffer3;
               EXECUTE buffer3;
+              lastsql = '';
             END IF;
 
             -- reset it back, only get these for inheritance-based tables
@@ -1482,7 +1508,9 @@ BEGIN
           IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to %', v_dummy; END IF;
         END IF;
         IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef04:%', qry; END IF;
+        lastsql = qry;
         EXECUTE qry;
+        lastsql = '';
         
         -- Issue#103
         -- Set search path back to what it was
@@ -1498,6 +1526,7 @@ BEGIN
           buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || ' OWNER TO ' || tblowner;
           lastsql = buffer3;
           EXECUTE buffer3;
+          lastsql = '';
         END IF;
         
       END IF;
@@ -1522,7 +1551,9 @@ BEGIN
             NULL;
           END IF;
         ELSE
+          lastsql = qry;
           EXECUTE qry;
+          lastsql = '';
           IF NOT bNoOwner THEN
             NULL;
           END IF;
@@ -1660,7 +1691,9 @@ BEGIN
         -- May need to come back and revisit this since previous sql will not return anything since no schema as created!
         RAISE INFO '%', buffer2;
       ELSE
+        lastsql = buffer2;
         EXECUTE buffer2;
+        lastsql = '';
       END IF;
     END LOOP;
     
@@ -1769,7 +1802,9 @@ BEGIN
           --      so just make search path = public to handle extension types that should reside in public schema
           v_dummy = 'public';
           SELECT set_config('search_path', v_dummy, false) into v_dummy;
+          lastsql = buffer3;
           EXECUTE buffer3;
+          lastsql = '';
           -- issue#91 fix
           -- issue#95
           IF NOT bNoOwner THEN    
@@ -1777,12 +1812,15 @@ BEGIN
             buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
             lastsql = buffer3;
             EXECUTE buffer3;
+            lastsql = '';
           END IF;
         ELSE
           IF (NOT bChild) THEN
             buffer3 := 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
             IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef02:%', buffer3; END IF;
+            lastsql = buffer3;
             EXECUTE buffer3;
+            lastsql = '';
             -- issue#91 fix
             -- issue#95
             IF NOT bNoOwner THEN    
@@ -1790,6 +1828,7 @@ BEGIN
               buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.'  || quote_ident(tblname) || ' OWNER TO ' || tblowner;
               lastsql = buffer3;
               EXECUTE buffer3;
+              lastsql = '';
             END IF;
             
             -- issue#99
@@ -1797,7 +1836,9 @@ BEGIN
               -- replace with user-defined tablespace
               -- ALTER TABLE myschema.mytable SET TABLESPACE usrtblspc;
               buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' SET TABLESPACE ' || tblspace;
+              lastsql = buffer3;
               EXECUTE buffer3;
+              lastsql = '';
             END IF;
 
           ELSE
@@ -1810,7 +1851,9 @@ BEGIN
             -- NOTICE:  merging column "city_id" with inherited definition
             set client_min_messages = 'WARNING';
             IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef03:%', buffer3; END IF;
+            lastsql = buffer3;
             EXECUTE buffer3;
+            lastsql = '';
             -- issue#91 fix
             -- issue#95
             IF NOT bNoOwner THEN
@@ -1818,6 +1861,7 @@ BEGIN
               buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
               lastsql = buffer3;
               EXECUTE buffer3;
+              lastsql = '';
             END IF;
 
             -- reset it back, only get these for inheritance-based tables
@@ -1859,7 +1903,9 @@ BEGIN
           IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to %', v_dummy; END IF;
         END IF;
         IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef04:%', qry; END IF;
+        lastsql = qry;
         EXECUTE qry;
+        lastsql = '';
         
         -- Issue#103
         -- Set search path back to what it was
@@ -1898,7 +1944,9 @@ BEGIN
             NULL;
           END IF;
         ELSE
+          lastsql = qry;
           EXECUTE qry;
+          lastsql = '';
           IF NOT bNoOwner THEN
             NULL;
           END IF;
@@ -2024,7 +2072,9 @@ BEGIN
         -- May need to come back and revisit this since previous sql will not return anything since no schema as created!
         RAISE INFO '%', buffer2;
       ELSE
+        lastsql = buffer2;
         EXECUTE buffer2;
+        lastsql = '';
       END IF;
     END LOOP;
     
@@ -2086,7 +2136,9 @@ BEGIN
         RAISE NOTICE 'DEBUG: %',qry;
         RAISE INFO '%', qry;
       ELSE
+        lastsql = qry;
         EXECUTE qry;
+        lastsql = '';
       END IF;
 
     END IF;
@@ -2170,7 +2222,9 @@ BEGIN
           END IF;
         ELSE
           IF bDebug THEN RAISE NOTICE 'DEBUG: %', dest_qry; END IF;
+          lastsql = dest_qry;
           EXECUTE dest_qry;
+          lastsql = '';
 
           -- Issue#91 Fix
           -- issue#95 
@@ -2183,7 +2237,9 @@ BEGIN
                 dest_qry = 'ALTER ' || buffer3 || ' ' || quote_ident(dest_schema) || '.' || quote_ident(func_name) || '(' || func_args || ') OWNER TO ' || '"' || func_owner || '";';
             END IF;
           END IF;
+          lastsql = dest_qry;
           EXECUTE dest_qry;
+          lastsql = '';
         END IF;
       END LOOP;
     ELSE
@@ -2197,7 +2253,9 @@ BEGIN
         IF bDDLOnly THEN
           RAISE INFO '%;', dest_qry;
         ELSE
+          lastsql = dest_qry;
           EXECUTE dest_qry;
+          lastsql = '';
         END IF;
       END LOOP;
     END IF;
@@ -2247,7 +2305,9 @@ BEGIN
         IF bDDLOnly THEN
           RAISE INFO '%;', dest_qry;
         ELSE
+          lastsql = dest_qry;
           EXECUTE dest_qry;
+          lastsql = '';
         END IF;
   
       END LOOP;
@@ -2292,7 +2352,9 @@ BEGIN
         IF bDDLOnly THEN
           RAISE INFO '%;', dest_qry;
         ELSE
+          lastsql = dest_qry;
           EXECUTE dest_qry;
+          lastsql = '';
         END IF;
   
       END LOOP;
@@ -2389,14 +2451,18 @@ BEGIN
       END IF;        
     ELSE
       -- EXECUTE 'CREATE OR REPLACE VIEW ' || buffer || ' AS ' || v_def;
+      lastsql = v_def;
       EXECUTE v_def;
+      lastsql = '';
       -- Issue#73: commented out comment logic for views since we do it elsewhere now.
       -- Issue#91 Fix
       -- issue#95 
       IF NOT bNoOwner THEN      
         -- Fixed Issue#108: double-quote roles in case they have special characters
         v_def = 'ALTER TABLE ' || buffer3 || ' OWNER TO ' || '"' || view_owner || '";';
+        lastsql = v_def;
         EXECUTE v_def;
+        lastsql = '';
       END IF;
     END IF;
   END LOOP;
@@ -2446,7 +2512,9 @@ BEGIN
           IF NOT bNoOwner THEN      
             -- Fixed Issue#108: double-quote roles in case they have special characters
             buffer3 = 'ALTER MATERIALIZED VIEW ' || buffer || ' OWNER TO ' || view_owner || ';' ;
+            lastsql = buffer3;
             EXECUTE buffer3;
+            lastsql = '';
           END IF;
         END IF;
       END IF;
@@ -2472,8 +2540,15 @@ BEGIN
         IF bDDLOnly THEN
           RAISE INFO '%', adef || ';';
         ELSE
-          EXECUTE adef || ';';
-        END IF;
+          IF bData THEN
+              -- #issue#116 defer materialized view index creations as well
+              mvarray = mvarray || adef;  
+          ELSE
+              lastsql = adef; 
+              EXECUTE adef || ';';
+              lastsql = '';
+          END IF;        
+        END IF;        
       END LOOP;
 
   END LOOP;
@@ -2484,7 +2559,7 @@ BEGIN
   
   -- Issue#111: forces us to defer triggers til after we populate the tables, just like we did with FKeys (Issue#78).
   -- MV: Create Triggers
-  SELECT set_config('search_path', '', false) into v_dummy;
+    SELECT set_config('search_path', '', false) into v_dummy;
 
   -- MV: Create Rules
   -- Fixes Issue#59 Implement Rules
@@ -2500,7 +2575,9 @@ BEGIN
     IF bDDLOnly THEN
       RAISE INFO '%', buffer;
     ELSE
+      lastsql = buffer;
       EXECUTE buffer;
+      lastsql = '';
     END IF;
   END LOOP;
   RAISE NOTICE '    RULES    cloned: %', LPAD(cnt::text, 5, ' ');
@@ -2576,7 +2653,9 @@ BEGIN
         IF bDDLOnly THEN
           RAISE INFO '%', buffer;
         ELSE
+          lastsql = buffer;
           EXECUTE buffer;
+          lastsql = '';
         END IF;
       END IF;
     END LOOP;  
@@ -2620,7 +2699,9 @@ BEGIN
     IF bDDLOnly THEN
       RAISE INFO '%', qry;
     ELSE
+      lastsql = qry;
       EXECUTE qry;
+      lastsql = '';
     END IF;
   END LOOP;
   RAISE NOTICE ' COMMENTS(1) cloned: %', LPAD(cnt::text, 5, ' ');
@@ -2685,7 +2766,9 @@ BEGIN
     IF bDDLOnly THEN
       RAISE INFO '%', qry;
     ELSE
+      lastsql = qry;
       EXECUTE qry;
+      lastsql = '';
     END IF;
   END LOOP;
   ELSE -- must be v 10 or less
@@ -2748,7 +2831,9 @@ BEGIN
     IF bDDLOnly THEN
       RAISE INFO '%', qry;
     ELSE
+      lastsql = qry;
       EXECUTE qry;
+      lastsql = '';
     END IF;
   END LOOP;
   END IF;
@@ -2800,7 +2885,9 @@ BEGIN
               IF bDDLOnly THEN
                 RAISE INFO '%', buffer;
               ELSE
+                lastsql = buffer;
                 EXECUTE buffer;
+                lastsql = '';
               END IF;
               -- Issue#92 Fix:
               EXECUTE 'SET ROLE = ' || calleruser;
@@ -2819,7 +2906,9 @@ BEGIN
                 IF bDDLOnly THEN
                   RAISE INFO '%', buffer;
                 ELSE
+                  lastsql = buffer;
                   EXECUTE buffer;
+                  lastsql = '';
                 END IF;
                 -- Issue#92 Fix:
                 EXECUTE 'SET ROLE = ' || calleruser;
@@ -2855,7 +2944,9 @@ BEGIN
                 IF bDDLOnly THEN
                   RAISE INFO '%', buffer;
                 ELSE
+                  lastsql = buffer;
                   EXECUTE buffer;
+                  lastsql = '';
                 END IF;
                 select current_user into buffer;
                 -- Issue#92 Fix:
@@ -2914,7 +3005,9 @@ BEGIN
               IF bDDLOnly THEN
                 RAISE INFO '%', buffer;
               ELSE
+                lastsql = buffer;
                 EXECUTE buffer;
+                lastsql = '';
               END IF;
               select current_user into buffer;
               -- Issue#92 Fix:
@@ -2934,7 +3027,9 @@ BEGIN
                 IF bDDLOnly THEN
                   RAISE INFO '%', buffer;
                 ELSE
+                  lastsql = buffer;
                   EXECUTE buffer;
+                  lastsql = '';
                 END IF;
                 -- Issue#92 Fix:
                 EXECUTE 'SET ROLE = ' || calleruser;
@@ -2951,7 +3046,9 @@ BEGIN
                 IF bDDLOnly THEN
                   RAISE INFO '%', buffer;
                 ELSE
+                  lastsql = buffer;
                   EXECUTE buffer;
+                  lastsql = '';
                 END IF;
                 -- Issue#92 Fix:
                 EXECUTE 'SET ROLE = ' || calleruser;
@@ -2991,7 +3088,9 @@ BEGIN
         IF bDDLOnly THEN
           RAISE INFO '%', arec.schema_ddl;
         ELSE
+          lastsql = arec.schema_ddl;
           EXECUTE arec.schema_ddl;
+          lastsql = '';
         END IF;
   
       END;
@@ -3018,7 +3117,9 @@ BEGIN
         IF bDDLOnly THEN
           RAISE INFO '%', arec.seq_ddl;
         ELSE
+          lastsql = arec.seq_ddl;
           EXECUTE arec.seq_ddl;
+          lastsql = '';
         END IF;
       END;
     END LOOP;
@@ -3061,7 +3162,9 @@ BEGIN
         IF bDDLOnly THEN
           RAISE INFO '%', arec.func_dcl;
         ELSE
+          lastsql = arec.func_dcl;
           EXECUTE arec.func_dcl;
+          lastsql = '';
         END IF;
       END;
     END LOOP;
@@ -3101,7 +3204,9 @@ BEGIN
             IF bDDLOnly THEN
                 RAISE INFO '%', arec.tbl_dcl;
             ELSE
+                lastsql = arec.tbl_dcl;
                 EXECUTE arec.tbl_dcl;
+                lastsql = '';
               END IF;
       END IF;
       END;
@@ -3122,7 +3227,9 @@ BEGIN
     LOOP 
        s = clock_timestamp();
        IF bDebug THEN RAISE NOTICE 'DEBUG1: no UDTs %', tblelement; END IF;
+       lastsql = tblelement;
        EXECUTE tblelement;       
+       lastsql = '';
        GET DIAGNOSTICS cnt = ROW_COUNT;  
        buffer = substring(tblelement, 13);
        SELECT POSITION(' OVERRIDING SYSTEM VALUE SELECT ' IN buffer) INTO cnt2; 
@@ -3144,7 +3251,9 @@ BEGIN
     LOOP 
        s = clock_timestamp();
        IF bDebug THEN RAISE NOTICE 'DEBUG2: UDTs %', tblelement; END IF;
+       lastsql = tblelement;
        EXECUTE tblelement;       
+       lastsql = '';
        GET DIAGNOSTICS cnt = ROW_COUNT;  
        
        -- STATEMENT LOOKS LIKE THIS:
@@ -3195,7 +3304,9 @@ BEGIN
     LOOP 
        s = clock_timestamp();
        IF bDebug THEN RAISE NOTICE 'DEBUG3: UDTs %', tblelement; END IF;
+       lastsql = tblelement;
        EXECUTE tblelement;       
+       lastsql = '';
        GET DIAGNOSTICS cnt = ROW_COUNT;  
        cnt2 = POSITION(' (' IN tblelement::text);
        IF cnt2 > 0 THEN
@@ -3212,7 +3323,9 @@ BEGIN
     FOREACH tblelement IN ARRAY mvarray
     LOOP 
        s = clock_timestamp();
+       lastsql = tblelement;
        EXECUTE tblelement;       
+       lastsql = '';
        -- get diagnostics for MV creates or refreshes does not work, always returns 1
        GET DIAGNOSTICS cnt = ROW_COUNT;  
        buffer = substring(tblelement, 25);
@@ -3261,7 +3374,9 @@ BEGIN
       RAISE INFO '%', qry;
     ELSE
       IF bDebug THEN RAISE NOTICE 'DEBUG: adding FKEY constraint: %', qry; END IF;
+      lastsql = qry;
       EXECUTE qry;
+      lastsql = '';
     END IF;
   END LOOP;
   EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
@@ -3289,7 +3404,9 @@ BEGIN
       IF bDDLOnly THEN
         RAISE INFO '%', arec.trig_ddl;
       ELSE
+        lastsql = arec.trig_ddl;
         EXECUTE arec.trig_ddl;
+        lastsql = '';
       END IF;
 
     END;
