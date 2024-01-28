@@ -59,10 +59,10 @@
 -- 2023-09-07  MJV FIX: Fixed Issue#108:enclose double-quote roles with special characters for setting "OWNER TO"
 -- 2024-01-15	 MJV FIX: Fixed Issue#114: varchar arrays cause problems use pg_col_def func() from pg_get_tabledef to fixe the problem
 -- 2024-01-21  MJV ENH: Add more debug info when sql excecution errors (lastsql variable)
--- 2024-01-22  MJV FIX: Fixed Issue#113: quote_ident() the policy name
+-- 2024-01-22  MJV FIX: Fixed Issue#113: quote_ident() the policy name, and also do not use "qual" column when policy is an INSERT command since it is always null.
 -- 2024-01-23  MJV FIX: Fixed Issue#111: defer triggers til after we populate the tables, just like we did with FKeys (Issue#78). See example with emp table and emp_stamp trigger that updates inserted row.
 -- 2024-01-24  MJV FIX: Fixed Issue#116: defer creation of materialized view indexes until after we create the deferred materialized views via issue#98.
--- 2024-01-24  MJV FIX: Fixed Issue#117: Fix getting table privs SQL: string_agg wasn't working and no need to double-quote the grantee, that was only intended for owner DDL (Issue#108)
+-- 2024-01-28  MJV FIX: Fixed Issue#117: Fix getting table privs SQL: string_agg wasn't working and no need to double-quote the grantee, that was only intended for owner DDL (Issue#108)
 
 do $$ 
 <<first_block>>
@@ -784,7 +784,7 @@ DECLARE
   r                timestamptz;
   s                timestamptz;
   lastsql          text := '';
-  v_version        text := '1.23 January 24, 2024';
+  v_version        text := '1.24 January 28, 2024';
 
 BEGIN
   -- Make sure NOTICE are shown
@@ -2592,14 +2592,15 @@ BEGIN
   IF sq_server_version_num > 90624 THEN
     FOR arec IN
       -- Issue#78 FIX: handle case-sensitive names with quote_ident() on policy, tablename
-      -- Issue#113 FIX: quote_ident() the policy name
-      -- SELECT schemaname as schemaname, tablename as tablename, 'CREATE POLICY ' || policyname || ' ON ' || quote_ident(dest_schema) || '.' || quote_ident(tablename) || ' AS ' || permissive || ' FOR ' || cmd || ' TO '
+      -- Issue#113 FIX: quote_ident() the policy name and handle case where qual is null (INSERT policies)
+      -- SELECT schemaname as schemaname, tablename as tablename, 'CREATE POLICY ' || quote_ident(policyname) || ' ON ' || quote_ident(dest_schema) || '.' || quote_ident(tablename) || ' AS ' || permissive || ' FOR ' || cmd || ' TO '
+      -- ||  array_to_string(roles, ',', '*') || ' USING (' || regexp_replace(qual, E'[\\n\\r]+', ' ', 'g' ) || ')'
+      -- || CASE WHEN with_check IS NOT NULL THEN ' WITH CHECK (' ELSE '' END || coalesce(with_check, '') || CASE WHEN with_check IS NOT NULL THEN ');' ELSE ';' END as definition
+      -- FROM pg_policies WHERE schemaname = quote_ident(source_schema) ORDER BY policyname
       SELECT schemaname as schemaname, tablename as tablename, 'CREATE POLICY ' || quote_ident(policyname) || ' ON ' || quote_ident(dest_schema) || '.' || quote_ident(tablename) || ' AS ' || permissive || ' FOR ' || cmd || ' TO '
-      ||  array_to_string(roles, ',', '*') || ' USING (' || regexp_replace(qual, E'[\\n\\r]+', ' ', 'g' ) || ')'
+      ||  array_to_string(roles, ',', '*') || CASE WHEN qual is NULL THEN ' ' ELSE ' USING (' || regexp_replace(qual, E'[\\n\\r]+', ' ', 'g' )  || ')' END 
       || CASE WHEN with_check IS NOT NULL THEN ' WITH CHECK (' ELSE '' END || coalesce(with_check, '') || CASE WHEN with_check IS NOT NULL THEN ');' ELSE ';' END as definition
-      FROM pg_policies
-      WHERE schemaname = quote_ident(source_schema)
-      ORDER BY policyname
+      FROM pg_policies WHERE schemaname = quote_ident(source_schema) ORDER BY policyname
     LOOP
       cnt := cnt + 1;
       IF bDDLOnly THEN
@@ -2629,14 +2630,15 @@ BEGIN
     -- handle 9.6 versions
     FOR arec IN
       -- Issue#78 FIX: handle case-sensitive names with quote_ident() on policy, tablename
-      -- Issue#113 FIX: quote_ident() the policy name
+      -- Issue#113 FIX: quote_ident() the policy name and handle case where qual is null (INSERT policies)
       -- SELECT schemaname as schemaname, tablename as tablename, 'CREATE POLICY ' || policyname || ' ON ' || quote_ident(dest_schema) || '.' || quote_ident(tablename) || ' FOR ' || cmd || ' TO '
+      -- ||  array_to_string(roles, ',', '*') || ' USING (' || regexp_replace(qual, E'[\\n\\r]+', ' ', 'g' ) || ')'
+      -- || CASE WHEN with_check IS NOT NULL THEN ' WITH CHECK (' ELSE '' END || coalesce(with_check, '') || CASE WHEN with_check IS NOT NULL THEN ');' ELSE ';' END as definition
+      -- FROM pg_policies WHERE schemaname = quote_ident(source_schema) ORDER BY policyname
       SELECT schemaname as schemaname, tablename as tablename, 'CREATE POLICY ' || quote_ident(policyname) || ' ON ' || quote_ident(dest_schema) || '.' || quote_ident(tablename) || ' FOR ' || cmd || ' TO '
-      ||  array_to_string(roles, ',', '*') || ' USING (' || regexp_replace(qual, E'[\\n\\r]+', ' ', 'g' ) || ')'
+      ||  array_to_string(roles, ',', '*') || CASE WHEN qual is NULL THEN ' ' ELSE ' USING (' || regexp_replace(qual, E'[\\n\\r]+', ' ', 'g' )  || ')' END 
       || CASE WHEN with_check IS NOT NULL THEN ' WITH CHECK (' ELSE '' END || coalesce(with_check, '') || CASE WHEN with_check IS NOT NULL THEN ');' ELSE ';' END as definition
-      FROM pg_policies
-      WHERE schemaname = quote_ident(source_schema)
-      ORDER BY policyname
+      FROM pg_policies WHERE schemaname = quote_ident(source_schema) ORDER BY policyname
     LOOP
       cnt := cnt + 1;
       IF bDDLOnly THEN
