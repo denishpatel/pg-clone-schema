@@ -2593,9 +2593,10 @@ BEGIN
     FOR arec IN
       -- Issue#78 FIX: handle case-sensitive names with quote_ident() on policy, tablename
       -- Issue#113 FIX: quote_ident() the policy name
+      -- Issue#113 FIX: make sure qual is not NULL
       -- SELECT schemaname as schemaname, tablename as tablename, 'CREATE POLICY ' || policyname || ' ON ' || quote_ident(dest_schema) || '.' || quote_ident(tablename) || ' AS ' || permissive || ' FOR ' || cmd || ' TO '
       SELECT schemaname as schemaname, tablename as tablename, 'CREATE POLICY ' || quote_ident(policyname) || ' ON ' || quote_ident(dest_schema) || '.' || quote_ident(tablename) || ' AS ' || permissive || ' FOR ' || cmd || ' TO '
-      ||  array_to_string(roles, ',', '*') || ' USING (' || regexp_replace(qual, E'[\\n\\r]+', ' ', 'g' ) || ')'
+      ||  array_to_string(roles, ',', '*') || CASE WHEN qual IS NOT NULL THEN ' USING (' || regexp_replace(qual, E'[\\n\\r]+', ' ', 'g' ) || ')' ELSE '' END
       || CASE WHEN with_check IS NOT NULL THEN ' WITH CHECK (' ELSE '' END || coalesce(with_check, '') || CASE WHEN with_check IS NOT NULL THEN ');' ELSE ';' END as definition
       FROM pg_policies
       WHERE schemaname = quote_ident(source_schema)
