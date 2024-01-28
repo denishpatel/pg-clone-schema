@@ -1276,6 +1276,13 @@ create table orders_r2 partition of orders for values from (10000) to (200000);
 create table orders_r3 partition of orders for values from (200000) to (500000);
 create table orders_r4 partition of orders for values from (500000) to (MAXVALUE);
 
+CREATE TABLE shoelace_data (sl_name text, sl_avail integer);
+CREATE TABLE shoelace_log (sl_name    text, sl_avail   integer, log_who    text, log_when   timestamp);
+CREATE RULE log_shoelace AS ON UPDATE TO shoelace_data
+    WHERE NEW.sl_avail <> OLD.sl_avail
+    DO INSERT INTO shoelace_log VALUES (NEW.sl_name, NEW.sl_avail, current_user, current_timestamp);
+CREATE POLICY "Api can insert" on shoelace_data for insert to postgres  with check (true);
+
 --
 -- End Sample database
 --
