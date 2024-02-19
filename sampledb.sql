@@ -1,7 +1,7 @@
 --
 -- Sample database used for clone_schema() testing
 -- psql -b postgres < ./sampledb.sql
--- psql -v ON_ERROR_STOP=1 -e -b postgres < ./sampledb.sql
+-- psql -v ON_ERROR_STOP=1 -e -b postgres <  ~/clone_schema/sampledb.sql
 -- psql clone_testing < /var/lib/pgsql/clone_schema/clone_schema.sql
 -- psql clone_testing; select clone_schema('sample', 'sample_clone1', false, false);
 -- add access control after creating the clone_testing database:
@@ -1282,6 +1282,18 @@ CREATE RULE log_shoelace AS ON UPDATE TO shoelace_data
     WHERE NEW.sl_avail <> OLD.sl_avail
     DO INSERT INTO shoelace_log VALUES (NEW.sl_name, NEW.sl_avail, current_user, current_timestamp);
 CREATE POLICY "Api can insert" on shoelace_data for insert to postgres  with check (true);
+
+CREATE TABLE vectors1 (
+		id uuid NOT NULL,
+		email citext NOT NULL,
+		searchable tsvector GENERATED ALWAYS AS (to_tsvector('simple', coalesce(translate(email, '@.-',  ' '), ''))) STORED
+	);
+CREATE TABLE vectors2 (
+    id uuid NOT NULL,
+    email public.citext NOT NULL,
+    searchable tsvector GENERATED ALWAYS AS (to_tsvector('simple'::regconfig, COALESCE(public.translate(email, '@.-'::public.citext, ' '::text), ''::text))) STORED,
+    searchable2 tsvector DEFAULT to_tsvector('simple'::regconfig, ''::text)
+);
 
 --
 -- End Sample database
