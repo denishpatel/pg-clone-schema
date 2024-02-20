@@ -58,6 +58,7 @@ Regression Testing is done in the following order:
 # Assumptions
 * Testing and validation is done only through the Community version of PostgreSQL.
 * The target schema uses the same tablespace(s) as the source schema.
+* Dependent on an integrated function, pg_get_tabledef(), copied from another project, https://github.com/MichaelDBA/pg_get_tabledef.
 
 # Limitations
 * Only works for PG Versions 10 and up.
