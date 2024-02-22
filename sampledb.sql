@@ -469,11 +469,11 @@ ALTER TABLE address ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
 );
 
 CREATE TYPE status AS ENUM ('Notconfirmed','Coming', 'Notcoming', 'Maycome');
-CREATE TABLE statuses (id serial, s status default 'Notconfirmed');
+CREATE TABLE statuses (id serial PRIMARY KEY, s status default 'Notconfirmed');
 COMMENT ON TABLE statuses IS 'This table is where I keep status info.';
 INSERT INTO statuses Select 1, 'Coming';
-INSERT INTO statuses Select 1, 'Notcoming';
-INSERT INTO statuses Select 1, 'Maycome';
+INSERT INTO statuses Select 2, 'Notcoming';
+INSERT INTO statuses Select 3, 'Maycome';
 
 --
 -- Name: emp; Type: TABLE; Schema: sample; Owner: postgres
@@ -1304,7 +1304,8 @@ CREATE TABLE sample.vectors3 (
     searchable2 tsvector NOT NULL DEFAULT to_tsvector('simple'::regconfig, ''::text),
     CONSTRAINT email2_check CHECK (LENGTH(email2) > 5)
 );
-
+INSERT INTO sample.vectors3 (email1, email2, email3) VALUES ('aa@aaa.com','bb@bbb.com','cc@ccc.com');
+INSERT INTO sample.vectors3 (email1, email2, email3) VALUES ('aa@aaaaa.com','bb@bbbbb.com','cc@ccccc.com');
 
 --
 -- End Sample database
