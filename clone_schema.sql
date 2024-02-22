@@ -1469,8 +1469,8 @@ BEGIN
 		    IF bDebug THEN RAISE NOTICE 'DEBUG: Not generating sequence owner for object=%',object; END IF;
 		ELSE
 		    v_seqowner := REPLACE(v_seqowner, quote_ident(source_schema), quote_ident(dest_schema));
-		    buffer = 'ALTER SEQUENCE ' || quote_ident(dest_schema) || '.' || object || ' OWNED BY ' || v_seqowner || ';';
-		    IF bDebug THEN RAISE NOTICE 'DEBUG: object=%  Sequence owner=%  buffer=%',object, v_seqowner, buffer; END IF;
+		    buffer = 'ALTER SEQUENCE ' || quote_ident(dest_schema) || '.' || quote_ident(object) || ' OWNED BY ' || v_seqowner || ';';
+		    IF bDebug THEN RAISE NOTICE 'DEBUG: object=%  Sequence owner=%  buffer=%',quote_ident(object), v_seqowner, buffer; END IF;
 		    -- Need to defer until after tables are created
 		    tblarray4 := tblarray4 || buffer;
 		    -- EXECUTE buffer;
