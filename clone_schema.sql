@@ -67,7 +67,8 @@
 --                                       We get it from another gihub project owned by the primary coder of this project, Michael Vitale (https://github.com/MichaelDBA/pg_get_tabledef).
 -- 2024-02-22  MJV FIX: Fixed Issue#120: Set sequence owner to column to tie it to the table with the sequence.
 -- 2024-02-22  MJV FIX: Fixed Issue#124: Cloning a cloned schema will cause identity column mismatches that could cause subsequent foreign key defs to fail. Use OVERRIDING SYSTEM VALUE.
--- 2024-02-22  MJV FIX: Fixed Issue#122: Do not create explicit sequence when it is implied via serial definition.
+-- 2024-02-23  MJV FIX: Fixed Issue#123: Do not assign anything to system roles.
+-- 2024-02-22  MJV FIX: Fixed Issue#122: TODO ---> Do not create explicit sequence when it is implied via serial definition.
 
 do $$ 
 <<first_block>>
@@ -1231,6 +1232,7 @@ BEGIN
 
   -- MV: Create Collations
   action := 'Collations';
+  IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
   cnt := 0;
   -- Issue#96 Handle differently based on PG Versions (PG15 rely on colliculocale, not collcolocate)
   -- perhaps use this logic instead: COALESCE(c.collcollate, c.colliculocale) AS lc_collate, COALESCE(c.collctype, c.colliculocale) AS lc_type  
@@ -1308,6 +1310,7 @@ BEGIN
 
   -- MV: Create Domains
   action := 'Domains';
+  IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
   cnt := 0;
   FOR arec IN
     SELECT n.nspname AS "Schema", t.typname AS "Name", pg_catalog.format_type(t.typbasetype, t.typtypmod) AS "Type", (
@@ -1356,6 +1359,7 @@ BEGIN
 
   -- MV: Create types
   action := 'Types';
+  IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
   cnt := 0;
   lastsql = '';
   FOR arec IN
@@ -1432,7 +1436,7 @@ BEGIN
 
   -- Create sequences
   action := 'Sequences';
-  
+  IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
   cnt := 0;
   -- fix#63  get from pg_sequences not information_schema
   -- fix#63  take 2: get it from information_schema.sequences since we need to treat IDENTITY columns differently.
@@ -1564,6 +1568,7 @@ BEGIN
 
   -- Create tables including partitioned ones (parent/children) and unlogged ones.  Order by is critical since child partition range logic is dependent on it.
   action := 'Tables';
+  IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
   SELECT setting INTO v_dummy FROM pg_settings WHERE name='search_path';
   IF bDebug THEN RAISE NOTICE 'DEBUG: search_path=%', v_dummy; END IF;
   
@@ -2388,6 +2393,7 @@ BEGIN
 
   -- Assigning sequences to table columns.
   action := 'Sequences assigning';
+  IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
   cnt := 0;
   FOR object IN
     SELECT sequence_name::text
@@ -2447,6 +2453,7 @@ BEGIN
   -- Update IDENTITY sequences to the last value, bypass 9.6 versions
   IF sq_server_version_num > 90624 THEN
       action := 'Identity updating';
+      IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
       cnt := 0;
       FOR object, sq_last_value IN
         SELECT sequencename::text, COALESCE(last_value, -999) from pg_sequences where schemaname = quote_ident(source_schema)
@@ -2480,12 +2487,13 @@ BEGIN
   -- Issue#78 forces us to defer FKeys until the end since we previously did row copies before FKeys
   --  add FK constraint
   -- action := 'FK Constraints';
-
+  IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
   -- Issue#62: Add comments on indexes, and then removed them from here and reworked later below.
 
   -- Issue 90: moved functions to here, before views or MVs that might use them
   -- Create functions
     action := 'Functions';
+    IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
     cnt := 0;
     -- MJV FIX per issue# 34
     -- SET search_path = '';
@@ -2661,6 +2669,7 @@ BEGIN
   
   -- Create views
   action := 'Views';
+  IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
 
   -- Issue#61 FIX: use set_config for empty string
   -- MJV FIX #43: also had to reset search_path from source schema to empty.
@@ -2768,6 +2777,7 @@ BEGIN
 
   -- Create Materialized views
   action := 'Mat. Views';
+  IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
   cnt := 0;
   -- Issue#91 get view_owner
   FOR object, view_owner, v_def IN
@@ -2862,6 +2872,7 @@ BEGIN
   -- MV: Create Rules
   -- Fixes Issue#59 Implement Rules
   action := 'Rules';
+  IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
   cnt := 0;
   FOR arec IN
     SELECT regexp_replace(definition, E'[\\n\\r]+', ' ', 'g' ) as definition
@@ -2884,6 +2895,7 @@ BEGIN
   -- MV: Create Policies
   -- Fixes Issue#66 Implement Security policies for RLS
   action := 'Policies';
+  IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
   cnt := 0;
   -- #106 Handle 9.6 which doesn't have "permissive"
   IF sq_server_version_num > 90624 THEN
@@ -2965,6 +2977,7 @@ BEGIN
 
   -- MJV Fixed #62 for comments (PASS 1)
   action := 'Comments1';
+  IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
   cnt := 0;
   FOR qry IN
     -- Issue#74 Fix: Change schema from source to target. Also, do not include comments on foreign tables since we do not clone foreign tables at this time.
@@ -3008,6 +3021,7 @@ BEGIN
 
   -- MJV Fixed #62 for comments (PASS 2)
   action := 'Comments2';
+  IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
   cnt2 := 0;
   IF is_prokind THEN
   FOR qry IN
@@ -3147,6 +3161,7 @@ BEGIN
     -- ---------------------
     EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
     action := 'PRIVS: Defaults';
+    IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
     cnt := 0;
     FOR arec IN
       SELECT pg_catalog.pg_get_userbyid(d.defaclrole) AS "owner", n.nspname AS schema,
@@ -3368,19 +3383,21 @@ BEGIN
 
   -- Issue#95 bypass if No ACL specified
   IF NOT bNoACL THEN
-    -- MV: PRIVS: schema
     -- crunchy data extension, check_access
     -- SELECT role_path, base_role, as_role, objtype, schemaname, objname, array_to_string(array_agg(privname),',') as privs  FROM all_access()
     -- WHERE base_role != CURRENT_USER and objtype = 'schema' and schemaname = 'public' group by 1,2,3,4,5,6;
 
     action := 'PRIVS: Schema';
+    IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
     cnt := 0;
     FOR arec IN
       SELECT 'GRANT ' || p.perm::perm_type || ' ON SCHEMA ' || quote_ident(dest_schema) || ' TO "' || r.rolname || '";' as schema_ddl
       FROM pg_catalog.pg_namespace AS n
       CROSS JOIN pg_catalog.pg_roles AS r
       CROSS JOIN (VALUES ('USAGE'), ('CREATE')) AS p(perm)
-      WHERE n.nspname = quote_ident(source_schema) AND NOT r.rolsuper AND has_schema_privilege(r.oid, n.oid, p.perm)
+      WHERE n.nspname = quote_ident(source_schema) AND NOT r.rolsuper AND has_schema_privilege(r.oid, n.oid, p.perm) AND
+      --Issue#123: do not assign to system roles
+      r.rolname NOT IN ('pg_read_all_data','pg_write_all_data') 
       ORDER BY r.rolname, p.perm::perm_type
     LOOP
       BEGIN
@@ -3402,6 +3419,7 @@ BEGIN
   IF NOT bNoACL THEN
     -- MV: PRIVS: sequences
     action := 'PRIVS: Sequences';
+    IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
     cnt := 0;
     FOR arec IN
       -- Issue#78 FIX: handle case-sensitive names with quote_ident() on t.relname
@@ -3409,7 +3427,9 @@ BEGIN
       FROM pg_catalog.pg_class AS t
       CROSS JOIN pg_catalog.pg_roles AS r
       CROSS JOIN (VALUES ('SELECT'), ('USAGE'), ('UPDATE')) AS p(perm)
-      WHERE t.relnamespace::regnamespace::name = quote_ident(source_schema) AND t.relkind = 'S'  AND NOT r.rolsuper AND has_sequence_privilege(r.oid, t.oid, p.perm)
+      WHERE t.relnamespace::regnamespace::name = quote_ident(source_schema) AND t.relkind = 'S'  AND NOT r.rolsuper AND has_sequence_privilege(r.oid, t.oid, p.perm) AND
+      --Issue#123: do not assign to system roles
+      r.rolname NOT IN ('pg_read_all_data','pg_write_all_data') 
     LOOP
       BEGIN
         cnt := cnt + 1;
@@ -3430,6 +3450,7 @@ BEGIN
   IF NOT bNoACL THEN
     -- MV: PRIVS: functions
     action := 'PRIVS: Functions/Procedures';
+    IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
     cnt := 0;
 
     -- Issue#61 FIX: use set_config for empty string
@@ -3476,6 +3497,7 @@ BEGIN
   IF NOT bNoACL THEN
     -- MV: PRIVS: tables
     action := 'PRIVS: Tables';
+    IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
     -- regular, partitioned, and foreign tables plus view and materialized view permissions. Ignored for now: implement foreign table defs.
     cnt := 0;
     FOR arec IN
@@ -3519,6 +3541,7 @@ BEGIN
 
     EXECUTE 'SET search_path = ' || quote_ident(dest_schema) ;
     action := 'Copy Rows';
+    IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
     FOREACH tblelement IN ARRAY tblarray
     LOOP 
        s = clock_timestamp();
@@ -3663,6 +3686,7 @@ BEGIN
   -- Issue#78 forces us to defer FKeys until the end since we previously did row copies before FKeys
   --  add FK constraint
   action := 'FK Constraints';
+  IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
   cnt := 0;
 
   -- Issue#61 FIX: use set_config for empty string
@@ -3700,6 +3724,7 @@ BEGIN
   SELECT set_config('search_path', '', false) into v_dummy;
 
   action := 'Triggers';
+  IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
   cnt := 0;
   FOR arec IN
     -- 2021-03-09 MJV FIX: #40 fixed sql to get the def using pg_get_triggerdef() sql
