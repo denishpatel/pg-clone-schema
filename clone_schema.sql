@@ -68,6 +68,7 @@
 -- 2024-02-22  MJV FIX: Fixed Issue#120: Set sequence owner to column to tie it to the table with the sequence.
 -- 2024-02-22  MJV FIX: Fixed Issue#124: Cloning a cloned schema will cause identity column mismatches that could cause subsequent foreign key defs to fail. Use OVERRIDING SYSTEM VALUE.
 -- 2024-02-23  MJV FIX: Fixed Issue#123: Do not assign anything to system roles.
+-- 2024-03-04  MJV FIX: Fixed Issue#125: Fix case where multiple tablespace defs are output, the second one after index creations. Also, set debug to called funcs, like pg_get_tabledef(), if set for clone_schema. 
 -- 2024-02-22  MJV FIX: Fixed Issue#122: TODO ---> Do not create explicit sequence when it is implied via serial definition.
 
 do $$ 
@@ -1057,7 +1058,7 @@ DECLARE
   s                timestamptz;
   lastsql          text := '';
   lasttbl          text := '';
-  v_version        text := '2.0 February 20, 2024';
+  v_version        text := '2.1 March 04, 2024';
 
 BEGIN
   -- Make sure NOTICE are shown
@@ -1671,7 +1672,7 @@ BEGIN
           -- FIXED #65, #67
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
           -- FIX: #121 Use pg_get_tabledef instead
-          SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, false, 'FKEYS_NONE');          
+          SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');          
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
           RAISE INFO '%', buffer3;
           -- issue#91 fix
@@ -1701,7 +1702,7 @@ BEGIN
             -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
             -- FIX: #121 Use pg_get_tabledef instead
             -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
-            SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, false, 'FKEYS_NONE');                      
+            SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
             RAISE INFO '%', buffer3;
             -- issue#91 fix
@@ -1719,7 +1720,7 @@ BEGIN
           -- FIX: #121 Use pg_get_tabledef instead
           -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
           -- SELECT * INTO buffer3 FROM public.get_table_ddl_complex(source_schema, dest_schema, tblname, sq_server_version_num);     
-          SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, false, 'FKEYS_NONE');                      
+          SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
           IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef01a:%', buffer3; END IF;
           -- #82: Table def should be fully qualified with target schema, 
@@ -1770,7 +1771,7 @@ BEGIN
             -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
             -- FIX: #121 Use pg_get_tabledef instead
             -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
-            SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, false, 'FKEYS_NONE');                      
+            SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
             -- set client_min_messages higher to avoid messages like this:
             -- NOTICE:  merging column "city_id" with inherited definition
@@ -2076,7 +2077,7 @@ BEGIN
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
           -- FIX: #121 Use pg_get_tabledef instead
           -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
-          SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, false, 'FKEYS_NONE');                      
+          SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
           RAISE INFO '%', buffer3;
           -- issue#91 fix
@@ -2106,7 +2107,7 @@ BEGIN
             -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
             -- FIX: #121 Use pg_get_tabledef instead
             -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
-            SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, false, 'FKEYS_NONE');                      
+            SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
             RAISE INFO '%', buffer3;
             -- issue#91 fix
@@ -2123,7 +2124,7 @@ BEGIN
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
           -- FIX: #121 Use pg_get_tabledef instead
           -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
-          SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, false, 'FKEYS_NONE');                      
+          SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
           IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef01b:%', buffer3; END IF;
           -- #82: Table def should be fully qualified with target schema, 
@@ -2175,7 +2176,7 @@ BEGIN
            
             -- FIX: #121 Use pg_get_tabledef instead
             -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
-            SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, false, 'FKEYS_NONE');                      
+            SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
             -- set client_min_messages higher to avoid messages like this:
             -- NOTICE:  merging column "city_id" with inherited definition
@@ -2209,7 +2210,7 @@ BEGIN
       
       -- FIX: #121 Use pg_get_tabledef instead
       -- SELECT * INTO qry FROM public.get_table_ddl_complex(source_schema, dest_schema, tblname, sq_server_version_num);
-      SELECT * INTO qry FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, false, 'FKEYS_NONE');                      
+      SELECT * INTO qry FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
       qry := REPLACE(qry, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
       
       IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef04 - %', buffer; END IF;
