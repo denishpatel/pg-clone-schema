@@ -117,8 +117,9 @@ $$
         v_schema = v_colrec.udt_schema;
         v_name = format('%s.%s', v_colrec.udt_schema, v_colrec.udt_name);
       ELSE
+        -- cast to text first because we cant cast directly from source to target type
         v_schema = target_schema;
-        v_name = format('%s', v_colrec.udt_name);
+        v_name = format('text::%s', v_colrec.udt_name);
       END IF;
 
       v_cnt = v_cnt + 1;

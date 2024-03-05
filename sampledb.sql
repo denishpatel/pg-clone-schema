@@ -6,11 +6,14 @@
 -- psql clone_testing; select clone_schema('sample', 'sample_clone1', false, false);
 -- add access control after creating the clone_testing database:
 -- psql -v ON_ERROR_STOP=1 -e -b postgres < ./sampledb_access_control.sql
+-- psql -v ON_ERROR_STOP=1 -f sampledb.sql -c "select clone_schema('sample', 'sample_clone1', 'DATA')"
 
 -- drop/create clone schema database
 drop database if exists clone_testing;
 create database clone_testing;
 \connect clone_testing;
+\i clone_schema.sql
+
 COMMENT ON DATABASE clone_testing IS 'just a comment on my sample database';
 
 SET statement_timeout = 0;
@@ -37,6 +40,7 @@ SET row_security = off;
 
 -- end of global stuff
 
+CREATE EXTENSION IF NOT EXISTS ltree WITH SCHEMA public;
 CREATE EXTENSION IF NOT EXISTS citext WITH SCHEMA public;
 CREATE EXTENSION IF NOT EXISTS postgis WITH SCHEMA public;
 CREATE EXTENSION IF NOT EXISTS postgres_fdw WITH SCHEMA public;
