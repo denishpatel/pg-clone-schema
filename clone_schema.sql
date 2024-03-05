@@ -69,6 +69,7 @@
 -- 2024-02-22  MJV FIX: Fixed Issue#124: Cloning a cloned schema will cause identity column mismatches that could cause subsequent foreign key defs to fail. Use OVERRIDING SYSTEM VALUE.
 -- 2024-02-23  MJV FIX: Fixed Issue#123: Do not assign anything to system roles.
 -- 2024-03-05  MJV FIX: Fixed Issue#125: Fix case where tablespace def occurs after the WHERE clause of a partial index creation.  It must occur BEFORE the WHERE clause. Corresponds to pg_get_tabledef issue#25.
+-- 2024-03-05  MJV FIX: Fixed Issue#126: Fix search path to pick up public stuff as well as source schema stuff --> search_path = '<source schema>','public'
 -- 2024-??-??  MJV FIX: Fixed Issue#122: TODO ---> Do not create explicit sequence when it is implied via serial definition.
 
 do $$ 
@@ -339,8 +340,8 @@ $$
 	  bVerbose boolean := False;
 	  v_cnt1   integer;
 	  v_cnt2   integer;
-	  v_src_path_old text := '';
-	  v_src_path_new text := '';
+	  search_path_old text := '';
+	  search_path_new text := '';
 	  v_partial    boolean;
 	  v_pos        integer;
 
@@ -382,7 +383,7 @@ $$
         -- select array_to_string($4, ',', '***') INTO vargs;
         IF bVerbose THEN RAISE NOTICE 'arguments=%', $4; END IF;
         FOREACH avarg IN ARRAY $4 LOOP
-            IF bVerbose THEN RAISE INFO 'arg=%', avarg; END IF;
+            IF bVerbose THEN RAISE NOTICE 'arg=%', avarg; END IF;
             IF avarg = 'FKEYS_INTERNAL' OR avarg = 'FKEYS_EXTERNAL' OR avarg = 'FKEYS_NONE' THEN
                 fkcnt = fkcnt + 1;
                 fktype = avarg;
@@ -417,15 +418,15 @@ $$
     WHERE c.relkind in ('r','p') AND c.relname = in_table AND n.nspname = in_schema;
 
    -- set search_path = public before we do anything to force explicit schema qualification but dont forget to set it back before exiting...
-    SELECT setting INTO v_src_path_old FROM pg_settings WHERE name = 'search_path';
+    SELECT setting INTO search_path_old FROM pg_settings WHERE name = 'search_path';
 
-    SELECT REPLACE(REPLACE(setting, '"$user"', '$user'), '$user', '"$user"') INTO v_src_path_old
+    SELECT REPLACE(REPLACE(setting, '"$user"', '$user'), '$user', '"$user"') INTO search_path_old
     FROM pg_settings
     WHERE name = 'search_path';
-    -- RAISE INFO 'DEBUG tableddl: saving old search_path: ***%***', v_src_path_old;
+    -- RAISE NOTICE 'DEBUG tableddl: saving old search_path: ***%***', search_path_old;
     EXECUTE 'SET search_path = "public"';
-    SELECT setting INTO v_src_path_new FROM pg_settings WHERE name = 'search_path';
-    -- RAISE INFO 'DEBUG tableddl: using new search path=***%***', v_src_path_new;
+    SELECT setting INTO search_path_new FROM pg_settings WHERE name = 'search_path';
+    -- RAISE NOTICE 'DEBUG tableddl: using new search path=***%***', search_path_new;
     
     -- throw an error if table was not found
     IF (v_table_oid IS NULL) THEN
@@ -517,7 +518,7 @@ $$
         -- Jump to constraints and index section to add the check constraints and indexes and perhaps FKeys
       END IF;
     END IF;
-	  IF bVerbose THEN RAISE INFO '(1)tabledef so far: %', v_table_ddl; END IF;
+	  IF bVerbose THEN RAISE NOTICE '(1)tabledef so far: %', v_table_ddl; END IF;
 
     IF NOT bPartition THEN
       -- see if this is unlogged or temporary table
@@ -544,14 +545,14 @@ $$
         v_table_ddl := 'CREATE ' || v_temp || ' TABLE ' || in_schema || '.' || in_table || ' (' || E'\n';
       END IF;
     END IF;
-    -- RAISE INFO 'DEBUG2: tabledef so far: %', v_table_ddl;    
+    -- RAISE NOTICE 'DEBUG2: tabledef so far: %', v_table_ddl;    
     -- define all of the columns in the table unless we are in progress creating an inheritance-based child table
     IF NOT bPartition THEN
       FOR v_colrec IN
         SELECT c.column_name, c.data_type, c.udt_name, c.udt_schema, c.character_maximum_length, c.is_nullable, c.column_default, c.numeric_precision, c.numeric_scale, c.is_identity, c.identity_generation, c.is_generated, c.generation_expression        
         FROM information_schema.columns c WHERE (table_schema, table_name) = (in_schema, in_table) ORDER BY ordinal_position
       LOOP
-         IF bVerbose THEN RAISE INFO '(col loop) name=%  type=%  udt_name=%  default=%  is_generated=%  gen_expr=%', v_colrec.column_name, v_colrec.data_type, v_colrec.udt_name, v_colrec.column_default, v_colrec.is_generated, v_colrec.generation_expression; END IF;  
+         IF bVerbose THEN RAISE NOTICE '(col loop) name=%  type=%  udt_name=%  default=%  is_generated=%  gen_expr=%', v_colrec.column_name, v_colrec.data_type, v_colrec.udt_name, v_colrec.column_default, v_colrec.is_generated, v_colrec.generation_expression; END IF;  
          
          -- v17 fix: handle case-sensitive for pg_get_serial_sequence that requires SQL Identifier handling
          -- SELECT CASE WHEN pg_get_serial_sequence(v_qualified, v_colrec.column_name) IS NOT NULL THEN True ELSE False END into bSerial;
@@ -624,7 +625,7 @@ $$
 
          -- Handle defaults
          IF v_colrec.column_default IS NOT null AND NOT bSerial THEN 
-             -- RAISE INFO 'Setting default for column, %', v_colrec.column_name;
+             -- RAISE NOTICE 'Setting default for column, %', v_colrec.column_name;
              v_temp = v_temp || (' DEFAULT ' || v_colrec.column_default);
          END IF;
          v_temp = v_temp || ',' || E'\n';
@@ -634,7 +635,7 @@ $$
 
       END LOOP;
     END IF;
-    IF bVerbose THEN RAISE INFO '(2)tabledef so far: %', v_table_ddl; END IF;
+    IF bVerbose THEN RAISE NOTICE '(2)tabledef so far: %', v_table_ddl; END IF;
         
     -- define all the constraints: conparentid does not exist pre PGv11
     IF v_pgversion < 110000 THEN
@@ -698,7 +699,7 @@ $$
               || v_constraint_def
               || ',' || E'\n';            
         END IF;
-        if bVerbose THEN RAISE INFO 'DEBUG4: constraint name=% constraint_def=%', v_constraint_name,v_constraint_def; END IF;
+        if bVerbose THEN RAISE NOTICE 'DEBUG4: constraint name=% constraint_def=%', v_constraint_name,v_constraint_def; END IF;
         constraintarr := constraintarr || v_constraintrec.constraint_name:: text;
   
       END LOOP;
@@ -769,7 +770,7 @@ $$
               || v_constraint_def
               || ',' || E'\n';            
         END IF;
-        if bVerbose THEN RAISE INFO 'DEBUG4: constraint name=% constraint_def=%', v_constraint_name,v_constraint_def; END IF;
+        if bVerbose THEN RAISE NOTICE 'DEBUG4: constraint name=% constraint_def=%', v_constraint_name,v_constraint_def; END IF;
         constraintarr := constraintarr || v_constraintrec.constraint_name:: text;
   
        END LOOP;
@@ -781,12 +782,12 @@ $$
     IF v_temp = ',' THEN
         v_table_ddl = substr(v_table_ddl, 0, length(v_table_ddl) - 1) || E'\n';
     END IF;
-    IF bVerbose THEN RAISE INFO '(3)tabledef so far: %', trim(v_table_ddl); END IF;
+    IF bVerbose THEN RAISE NOTICE '(3)tabledef so far: %', trim(v_table_ddl); END IF;
 
     -- ---------------------------------------------------------------------------
     -- at this point we have everything up to the last table-enclosing parenthesis
     -- ---------------------------------------------------------------------------
-    IF bVerbose THEN RAISE INFO '(4)tabledef so far: %', v_table_ddl; END IF;
+    IF bVerbose THEN RAISE NOTICE '(4)tabledef so far: %', v_table_ddl; END IF;
 
     -- See if this is an inheritance-based child table and finish up the table create.
     IF bPartition and bInheritance THEN
@@ -814,7 +815,7 @@ $$
       END IF;  
     END IF;
 
-    IF bVerbose THEN RAISE INFO '(5)tabledef so far: %', v_table_ddl; END IF;
+    IF bVerbose THEN RAISE NOTICE '(5)tabledef so far: %', v_table_ddl; END IF;
     
     -- Add closing paren for regular tables
     -- IF NOT bPartition THEN
@@ -832,19 +833,19 @@ $$
 	         v_table_ddl := v_table_ddl || v_fkey_defs || E'\n';    
     END IF;
    
-    IF bVerbose THEN RAISE INFO '(6)tabledef so far: %', v_table_ddl; END IF;
+    IF bVerbose THEN RAISE NOTICE '(6)tabledef so far: %', v_table_ddl; END IF;
    
     -- create indexes
     FOR v_indexrec IN
       SELECT indexdef, COALESCE(tablespace, 'pg_default') as tablespace, indexname FROM pg_indexes WHERE (schemaname, tablename) = (in_schema, in_table)
     LOOP
-      -- RAISE INFO 'DEBUG6: indexname=%  indexdef=%', v_indexrec.indexname, v_indexrec.indexdef;             
+      -- RAISE NOTICE 'DEBUG6: indexname=%  indexdef=%', v_indexrec.indexname, v_indexrec.indexdef;             
       -- loop through constraints and skip ones already defined
       bSkip = False;
       FOREACH constraintelement IN ARRAY constraintarr
       LOOP 
          IF constraintelement = v_indexrec.indexname THEN
-             -- RAISE INFO 'DEBUG7: skipping index, %', v_indexrec.indexname;
+             -- RAISE NOTICE 'DEBUG7: skipping index, %', v_indexrec.indexname;
              bSkip = True;
              EXIT;
          END IF;
@@ -853,7 +854,7 @@ $$
       
       -- Add IF NOT EXISTS clause so partition index additions will not be created if declarative partition in effect and index already created on parent
       v_indexrec.indexdef := REPLACE(v_indexrec.indexdef, 'CREATE INDEX', 'CREATE INDEX IF NOT EXISTS');
-      -- RAISE INFO 'DEBUG8: adding index, %', v_indexrec.indexname;
+      -- RAISE NOTICE 'DEBUG8: adding index, %', v_indexrec.indexname;
       
       -- NOTE:  cannot specify default tablespace for partitioned relations
       IF v_partition_key IS NOT NULL AND v_partition_key <> '' THEN
@@ -876,7 +877,7 @@ $$
       END IF;
       
     END LOOP;
-    IF bVerbose THEN RAISE INFO '(7)tabledef so far: %', v_table_ddl; END IF;
+    IF bVerbose THEN RAISE NOTICE '(7)tabledef so far: %', v_table_ddl; END IF;
 
     -- Issue#20: added logic for table and column comments
     IF  cmtcnt > 0 THEN 
@@ -887,11 +888,11 @@ $$
 	   	    FROM pg_class c JOIN pg_namespace n ON (n.oid = c.relnamespace) LEFT JOIN pg_description d ON (c.oid = d.objoid) LEFT JOIN pg_attribute a ON (c.oid = a.attrelid AND a.attnum > 0 and a.attnum = d.objsubid)
 	   	    WHERE d.description IS NOT NULL AND n.nspname = in_schema AND c.relname = in_table ORDER BY 2 desc, ddl
         LOOP
-            --RAISE INFO 'comments:%', v_rec.ddl;
+            --RAISE NOTICE 'comments:%', v_rec.ddl;
             v_table_ddl = v_table_ddl || v_rec.ddl || E'\n';
         END LOOP;   
     END IF;
-    IF bVerbose THEN RAISE INFO '(8)tabledef so far: %', v_table_ddl; END IF;
+    IF bVerbose THEN RAISE NOTICE '(8)tabledef so far: %', v_table_ddl; END IF;
 	
     IF trigtype = 'INCLUDE_TRIGGERS' THEN
 	    -- Issue#14: handle multiple triggers for a table
@@ -901,20 +902,20 @@ $$
       LOOP
           v_table_ddl := v_table_ddl || v_trigrec.triggerdef;
           v_table_ddl := v_table_ddl || E'\n';          
-          IF bVerbose THEN RAISE INFO 'triggerdef = %', v_trigrec.triggerdef; END IF;
+          IF bVerbose THEN RAISE NOTICE 'triggerdef = %', v_trigrec.triggerdef; END IF;
       END LOOP;       	    
     END IF;
   
-    IF bVerbose THEN RAISE INFO '(9)tabledef so far: %', v_table_ddl; END IF;
+    IF bVerbose THEN RAISE NOTICE '(9)tabledef so far: %', v_table_ddl; END IF;
     -- add empty line
     v_table_ddl := v_table_ddl || E'\n';
-    IF bVerbose THEN RAISE INFO '(10)tabledef so far: %', v_table_ddl; END IF;
+    IF bVerbose THEN RAISE NOTICE '(10)tabledef so far: %', v_table_ddl; END IF;
     
     -- reset search_path back to what it was
-    IF v_src_path_old = '' THEN
+    IF search_path_old = '' THEN
       SELECT set_config('search_path', '', false) into v_temp;
     ELSE
-      EXECUTE 'SET search_path = ' || v_src_path_old;
+      EXECUTE 'SET search_path = ' || search_path_old;
     END IF;
 
     RETURN v_table_ddl;
@@ -982,8 +983,8 @@ DECLARE
   dest_qry         text;
   v_def            text;
   part_range       text;
-  src_path_old     text;
-  src_path_new     text;
+  v_src_path_old   text;
+  v_src_path_new   text;
   aclstr           text;
   -- issue#80 initialize arrays properly
   tblarray         text[] := '{}';
@@ -1075,7 +1076,7 @@ DECLARE
   s                timestamptz;
   lastsql          text := '';
   lasttbl          text := '';
-  v_version        text := '2.1 March 04, 2024';
+  v_version        text := '2.2 March 05, 2024';
 
 BEGIN
   -- Make sure NOTICE are shown
@@ -1189,14 +1190,14 @@ BEGIN
   SELECT setting INTO v_dummy FROM pg_settings WHERE name='search_path';
   IF bDebug THEN RAISE NOTICE 'DEBUG: search_path=%', v_dummy; END IF;
   
-  SELECT REPLACE(REPLACE(setting, '"$user"', '$user'), '$user', '"$user"') INTO src_path_old
+  SELECT REPLACE(REPLACE(setting, '"$user"', '$user'), '$user', '"$user"') INTO v_src_path_old
   FROM pg_settings WHERE name = 'search_path';
 
-  IF bDebug THEN RAISE NOTICE 'DEBUG: src_path_old=%', src_path_old; END IF;
+  IF bDebug THEN RAISE NOTICE 'DEBUG: v_src_path_old=%', v_src_path_old; END IF;
 
   EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
-  SELECT setting INTO src_path_new FROM pg_settings WHERE name='search_path';
-  IF bDebug THEN RAISE NOTICE 'DEBUG: new search_path=%', src_path_new; END IF;
+  SELECT setting INTO v_src_path_new FROM pg_settings WHERE name='search_path';
+  IF bDebug THEN RAISE NOTICE 'DEBUG: new search_path=%', v_src_path_new; END IF;
 
   -- Validate required types exist.  If not, create them.
   SELECT a.objtypecnt, b.permtypecnt INTO cnt, cnt2
@@ -1743,6 +1744,7 @@ BEGIN
           -- #82: Table def should be fully qualified with target schema, 
           --      so just make search path = public to handle extension types that should reside in public schema
           v_dummy = 'public';
+          IF bDebug THEN RAISE NOTICE 'DEBUG: setting search_path to public:%', v_dummy; END IF;
           SELECT set_config('search_path', v_dummy, false) into v_dummy;
           lastsql = buffer3;
           EXECUTE buffer3;
@@ -1836,7 +1838,7 @@ BEGIN
         END IF;
       ELSE
         -- Issue#103: we need to always set search_path priority to target schema when we execute DDL
-        IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef04 context: old search path=%  new search path=% current search path=%', src_path_old, src_path_new, v_dummy; END IF;
+        IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef04 context: old search path=%  new search path=% current search path=%', v_src_path_old, v_src_path_new, v_dummy; END IF;
         SELECT setting INTO spath_tmp FROM pg_settings WHERE name = 'search_path';   
         IF spath_tmp <> dest_schema THEN
           -- change it to target schema and don't forget to change it back after we execute the DDL
@@ -1854,6 +1856,7 @@ BEGIN
         -- Issue#103
         -- Set search path back to what it was
         spath = 'SET search_path = "' || spath_tmp || '"';
+        IF bDebug THEN RAISE NOTICE 'DEBUG: setting search_path back to:%', spath_tmp; END IF;
         EXECUTE spath;
         SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';   
         IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed back to %', v_dummy; END IF;
@@ -2017,6 +2020,7 @@ BEGIN
     -- Issue#61 FIX: use set_config for empty string
     -- SET search_path = '';
     SELECT set_config('search_path', '', false) into v_dummy;
+    IF bDebug THEN RAISE NOTICE 'DEBUG: setting search_path to empty string:%', v_dummy; END IF;
 
     FOR column_, default_ IN
       SELECT column_name::text,
@@ -2039,6 +2043,7 @@ BEGIN
     END LOOP;
     
     EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
+    IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed back to source schema:%', quote_ident(source_schema); END IF;
   END LOOP;
   ELSE 
   -- Handle 9.6 versions 90600
@@ -2148,6 +2153,7 @@ BEGIN
           --      so just make search path = public to handle extension types that should reside in public schema
           v_dummy = 'public';
           SELECT set_config('search_path', v_dummy, false) into v_dummy;
+          IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to public:%', v_dummy; END IF;          
           lastsql = buffer3;
           EXECUTE buffer3;
           lastsql = '';
@@ -2241,7 +2247,7 @@ BEGIN
         END IF;
       ELSE
         -- Issue#103: we need to always set search_path priority to target schema when we execute DDL
-        IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef04 context: old search path=%  new search path=% current search path=%', src_path_old, src_path_new, v_dummy; END IF;
+        IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef04 context: old search path=%  new search path=% current search path=%', v_src_path_old, v_src_path_new, v_dummy; END IF;
         SELECT setting INTO spath_tmp FROM pg_settings WHERE name = 'search_path';   
         IF spath_tmp <> dest_schema THEN
           -- change it to target schema and don't forget to change it back after we execute the DDL
@@ -2259,6 +2265,7 @@ BEGIN
         -- Issue#103
         -- Set search path back to what it was
         spath = 'SET search_path = "' || spath_tmp || '"';
+        IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed back to:%', spath_tmp; END IF;
         EXECUTE spath;
         SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';   
         IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed back to %', v_dummy; END IF;
@@ -2406,6 +2413,7 @@ BEGIN
     -- Issue#61 FIX: use set_config for empty string
     -- SET search_path = '';
     SELECT set_config('search_path', '', false) into v_dummy;
+    IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to empty string:%', v_dummy; END IF;
 
     FOR column_, default_ IN
       SELECT column_name::text,
@@ -2428,6 +2436,7 @@ BEGIN
     END LOOP;
     
     EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
+    IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed back to source schema:%', quote_ident(source_schema); END IF;
   END LOOP;      
   END IF;
   -- end of 90600 branch
@@ -2435,7 +2444,7 @@ BEGIN
   RAISE NOTICE '      TABLES cloned: %', LPAD(cnt::text, 5, ' ');
 
   SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
-  IF bDebug THEN RAISE NOTICE 'DEBUG: search_path=%', v_dummy; END IF;
+  IF bDebug THEN RAISE NOTICE 'DEBUG: current search_path=%', v_dummy; END IF;
 
   -- Assigning sequences to table columns.
   action := 'Sequences assigning';
@@ -2543,8 +2552,13 @@ BEGIN
     cnt := 0;
     -- MJV FIX per issue# 34
     -- SET search_path = '';
-    EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
-    
+    -- Issue#126: concatenate public with the source schema to pick up public stuff...
+    -- EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
+    spath_tmp = 'SET search_path = ' || quote_ident(source_schema) || ', public';    
+    EXECUTE spath_tmp;
+    SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
+    IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed tosource schema + public:%', v_dummy; END IF;
+
     -- Fixed Issue#65
     -- Fixed Issue#97
     -- FOR func_oid IN SELECT oid FROM pg_proc WHERE pronamespace = src_oid AND prokind != 'a'
@@ -2720,8 +2734,8 @@ BEGIN
   -- Issue#61 FIX: use set_config for empty string
   -- MJV FIX #43: also had to reset search_path from source schema to empty.
   -- SET search_path = '';
-  SELECT set_config('search_path', '', false)
-  INTO v_dummy;
+  SELECT set_config('search_path', '', false)  INTO v_dummy;
+  IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed back to empty string:%', v_dummy; END IF;
 
   cnt := 0;
   --FOR object IN
@@ -2913,7 +2927,8 @@ BEGIN
   
   -- Issue#111: forces us to defer triggers til after we populate the tables, just like we did with FKeys (Issue#78).
   -- MV: Create Triggers
-    SELECT set_config('search_path', '', false) into v_dummy;
+  SELECT set_config('search_path', '', false) into v_dummy;
+  IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed back to empty string:%', v_dummy; END IF;    
 
   -- MV: Create Rules
   -- Fixes Issue#59 Implement Rules
@@ -3206,6 +3221,7 @@ BEGIN
     -- MV: Permissions: Defaults
     -- ---------------------
     EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
+    IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed back to source schema:%', quote_ident(source_schema); END IF;    
     action := 'PRIVS: Defaults';
     IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
     cnt := 0;
@@ -3502,6 +3518,7 @@ BEGIN
     -- Issue#61 FIX: use set_config for empty string
     -- SET search_path = '';
     SELECT set_config('search_path', '', false) into v_dummy;
+    IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to empty string:%', v_dummy; END IF;
 
     -- RAISE NOTICE ' source_schema=%  dest_schema=%',source_schema, dest_schema;
     FOR arec IN
@@ -3535,7 +3552,8 @@ BEGIN
         END IF;
       END;
     END LOOP;
-    EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
+    EXECUTE 'SET search_path = ' || quote_ident(source_schema);
+    IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed back to source schema:%', quote_ident(source_schema); END IF;
     RAISE NOTICE '  FUNC PRIVS cloned: %', LPAD(cnt::text, 5, ' ');
   END IF; -- NO ACL BRANCH
 
@@ -3586,6 +3604,7 @@ BEGIN
     IF bVerbose THEN RAISE NOTICE 'Copying rows...'; END IF;  
 
     EXECUTE 'SET search_path = ' || quote_ident(dest_schema) ;
+    IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to target schema:%', quote_ident(dest_schema); END IF;
     action := 'Copy Rows';
     IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
     FOREACH tblelement IN ARRAY tblarray
@@ -3738,6 +3757,7 @@ BEGIN
   -- Issue#61 FIX: use set_config for empty string
   -- SET search_path = '';
   SELECT set_config('search_path', '', false) into v_dummy;
+  IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to empty string:%', v_dummy; END IF;
 
   FOR qry IN
     SELECT 'ALTER TABLE ' || quote_ident(dest_schema) || '.' || quote_ident(rn.relname)
@@ -3763,11 +3783,13 @@ BEGIN
       lastsql = '';
     END IF;
   END LOOP;
-  EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
+  EXECUTE 'SET search_path = ' || quote_ident(source_schema);
+  IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to source schema:%', quote_ident(source_schema); END IF;  
   RAISE NOTICE '       FKEYS cloned: %', LPAD(cnt::text, 5, ' ');
 
   -- Issue#111: forces us to defer triggers til after we populate the tables, just like we did with FKeys (Issue#78).
   SELECT set_config('search_path', '', false) into v_dummy;
+  IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to empty string:%', v_dummy; END IF;  
 
   action := 'Triggers';
   IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
@@ -3799,12 +3821,14 @@ BEGIN
   RAISE NOTICE '    TRIGGERS cloned: %', LPAD(cnt::text, 5, ' ');
 
 
-  IF src_path_old = '' OR src_path_old = '""' THEN
+  IF v_src_path_old = '' OR v_src_path_old = '""' THEN
     -- RAISE NOTICE 'Restoring old search_path to empty string';
     SELECT set_config('search_path', '', false) into v_dummy;
+    IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to empty string:%', v_dummy; END IF;  
   ELSE
-    -- RAISE NOTICE 'Restoring old search_path to:%', src_path_old;
-    EXECUTE 'SET search_path = ' || src_path_old;
+    -- RAISE NOTICE 'Restoring old search_path to:%', v_src_path_old;
+    EXECUTE 'SET search_path = ' || v_src_path_old;
+    IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to old one:%', v_src_path_old; END IF;  
   END IF;
   SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
   IF bDebug THEN RAISE NOTICE 'DEBUG: setting search_path back to what it was: %', v_dummy; END IF;
@@ -3830,14 +3854,14 @@ BEGIN
          END IF;
          -- get current state of search_path too
          SELECT setting INTO spath_tmp FROM pg_settings WHERE name = 'search_path';
-         RAISE EXCEPTION 'Version: %  Action: %  SearchPath: %  Diagnostics: %',v_version, action, spath_tmp, buffer;
+         RAISE EXCEPTION 'Version: %  Action: %  SearchPath: %  oldSP=%  newSP=%  Diagnostics: %',v_version, action, spath_tmp, v_src_path_old, v_src_path_new, buffer;
 
-         IF src_path_old = '' THEN
+         IF v_src_path_old = '' THEN
            -- RAISE NOTICE 'setting old search_path to empty string';
            SELECT set_config('search_path', '', false);
          ELSE
-           -- RAISE NOTICE 'setting old search_path to:%', src_path_old;
-           EXECUTE 'SET search_path = ' || src_path_old;
+           -- RAISE NOTICE 'setting old search_path to:%', v_src_path_old;
+           EXECUTE 'SET search_path = ' || v_src_path_old;
          END IF;
 
          RETURN;
