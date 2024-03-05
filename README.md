@@ -63,7 +63,7 @@ Regression Testing is done in the following order:
 # Limitations
 * Only works for PG Versions 10 and up.
 * You should not clone the "public" schema.  The resulting output may not be accurate even if it finishes without any errors.
-* You should not use multiple, user-defined schemas and expect cloning one schema to another to work.  This project does not support that at the present time.
+* You should not use multiple, user-defined schema objects and expect cloning one schema to another to work.  This project does not support that at the present time.  It only supports 3 schemas basically: the source schema, the target schema, and objects defined in the public schema referenced by those user-defined schemas.
 * Foreign Tables are not handled at the present time.  They must be done manually.
 <br/>
 <br/>
