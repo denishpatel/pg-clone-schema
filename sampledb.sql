@@ -1262,6 +1262,10 @@ CREATE TABLE films (
 CREATE INDEX films_title_ix ON films (title) INCLUDE (kind,rating);
 CREATE INDEX films_title_lower_ix ON films ((lower(title)));
 CREATE INDEX films_info_ix ON films (info) WITH (fillfactor = 70);
+CREATE INDEX films_did ON films(did) WHERE did > 5;
+
+
+
 
 -- created this table for a pg_get_tabledef() problemo
 CREATE TABLE orders (
