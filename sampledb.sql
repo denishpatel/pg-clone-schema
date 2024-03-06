@@ -1319,6 +1319,24 @@ CREATE OR REPLACE FUNCTION sample.ltree_function(public.ltree) RETURNS boolean A
  $$ LANGUAGE SQL STABLE;
 
 
+-- create a table with 4 triggers on it
+CREATE TABLE t_demo (id int);
+ 
+CREATE FUNCTION trig_func() 
+RETURNS trigger AS
+$$
+    BEGIN
+        RAISE NOTICE 'name of trigger: %', TG_NAME;
+        RETURN NEW;
+    END;
+$$ LANGUAGE 'plpgsql';
+ 
+CREATE TRIGGER c_trigger_bef BEFORE INSERT ON t_demo FOR EACH ROW EXECUTE PROCEDURE trig_func();
+CREATE TRIGGER b_trigger_bef BEFORE INSERT ON t_demo FOR EACH ROW EXECUTE PROCEDURE trig_func();
+CREATE TRIGGER a_trigger_bef BEFORE INSERT ON t_demo FOR EACH ROW EXECUTE PROCEDURE trig_func();
+CREATE TRIGGER c_trigger_aft AFTER INSERT  ON t_demo FOR EACH ROW EXECUTE PROCEDURE trig_func();
+CREATE TRIGGER b_trigger_aft AFTER INSERT  ON t_demo FOR EACH ROW EXECUTE PROCEDURE trig_func();
+
 --
 -- End Sample database
 --
