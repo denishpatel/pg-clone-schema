@@ -1311,6 +1311,7 @@ CREATE TABLE sample.vectors3 (
 INSERT INTO sample.vectors3 (email1, email2, email3) VALUES ('aa@aaa.com','bb@bbb.com','cc@ccc.com');
 INSERT INTO sample.vectors3 (email1, email2, email3) VALUES ('aa@aaaaa.com','bb@bbbbb.com','cc@ccccc.com');
 
+CREATE EXTENSION IF NOT EXISTS ltree WITH SCHEMA public;
 DROP FUNCTION IF EXISTS sample.ltree_function(ltree);
 CREATE OR REPLACE FUNCTION sample.ltree_function(public.ltree) RETURNS boolean AS $$
  SELECT $1 @> '1.2.3'::public.ltree;
