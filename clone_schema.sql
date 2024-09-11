@@ -71,6 +71,7 @@
 -- 2024-03-05  MJV FIX: Fixed Issue#125: Fix case where tablespace def occurs after the WHERE clause of a partial index creation.  It must occur BEFORE the WHERE clause. Corresponds to pg_get_tabledef issue#25.
 -- 2024-03-05  MJV FIX: Fixed Issue#126: Fix search path to pick up public stuff as well as source schema stuff --> search_path = '<source schema>','public'\
 -- 2024-04-15  MJV FIX: Fixed Issue#130: Apply pg_get_tabledef() fix (#26), refreshed function paste.
+-- 2024-09-11  MJV FIX: Fixed Issue#132: Fix case where NOT NULL appended twice to IDENTITY columns. Corresponds to pg_get_tabledef issue#28.
 -- 2024-??-??  MJV FIX: Fixed Issue#122: TODO ---> Do not create explicit sequence when it is implied via serial definition.
 
 do $$ 
@@ -239,6 +240,7 @@ NO OBLIGATIONS TO PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFI
 -- 2024-02-23   Fixed Issue#24: Fix empty table problem where we accidentally removed the closing paren thinking a column delimited commas was there...
 -- 2024-03-05   Fixed Issue#25: Fix case where tablespace def occurs after the WHERE clause of a partial index creation.  It must occur BEFORE the WHERE clause.
 -- 2024-04-15   Fixed Issue#26: Fix case for partition table unique indexes by adding the IF NOT EXISTS phrase, which we already do for non-unique indexes
+-- 2024-09-11   Fixed Issue#28: Avoid duplication of NOT NULL for identity columns.
 -- 2024-??-??   Fixed Issue#??: Distinguish between serial identity, and explicit sequences. NOT IMPLEMENTED YET
 
 
@@ -618,9 +620,11 @@ $$
          END IF;
 
          -- Handle NULL/NOT NULL
-         IF bSerial THEN 
+         -- Issue#28 - added identity check 
+         IF bSerial AND v_colrec.is_identity = 'NO' THEN 
              v_temp = v_temp || ' NOT NULL';
-         ELSEIF v_colrec.is_nullable = 'NO' THEN 
+         -- Issue#28 - added identity check              
+         ELSEIF v_colrec.is_nullable = 'NO' AND v_colrec.is_identity = 'NO' THEN 
              v_temp = v_temp || ' NOT NULL';
          ELSEIF v_colrec.is_nullable = 'YES' THEN
              v_temp = v_temp || ' NULL';
