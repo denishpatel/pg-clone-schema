@@ -1290,9 +1290,32 @@ BEGIN
   action := 'Collations';
   IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
   cnt := 0;
-  -- Issue#96 Handle differently based on PG Versions (PG15 rely on colliculocale, not collcolocate)
+  -- Issue#96 Handle differently based on PG Versions (PG15 rely on colliculocale, not collcollate; PG17 uses colllocale)
   -- perhaps use this logic instead: COALESCE(c.collcollate, c.colliculocale) AS lc_collate, COALESCE(c.collctype, c.colliculocale) AS lc_type  
-  IF sq_server_version_num > 150000 THEN 
+  IF sq_server_version_num >= 170000 THEN
+    FOR arec IN
+      SELECT n.nspname AS schemaname, a.rolname AS ownername, c.collname, c.collprovider, c.collcollate AS locale, 
+             'CREATE COLLATION ' || quote_ident(dest_schema) || '."' || c.collname || '" (provider = ' || 
+             CASE WHEN c.collprovider = 'i' THEN 'icu' WHEN c.collprovider = 'c' THEN 'libc' ELSE '' END || 
+             ', locale = ''' || c.colllocale || ''');' AS COLL_DDL
+      FROM pg_collation c
+          JOIN pg_namespace n ON (c.collnamespace = n.oid)
+          JOIN pg_roles a ON (c.collowner = a.oid)
+      WHERE n.nspname = quote_ident(source_schema)
+      ORDER BY c.collname
+    LOOP
+      BEGIN
+        cnt := cnt + 1;
+        IF bDDLOnly THEN
+          RAISE INFO '%', arec.coll_ddl;
+        ELSE
+          lastsql = arec.coll_ddl;
+          EXECUTE arec.coll_ddl;
+          lastsql = '';
+        END IF;
+      END;
+    END LOOP;
+  ELSIF sq_server_version_num >= 150000 THEN
     FOR arec IN
       SELECT n.nspname AS schemaname, a.rolname AS ownername, c.collname, c.collprovider, c.collcollate AS locale, 
              'CREATE COLLATION ' || quote_ident(dest_schema) || '."' || c.collname || '" (provider = ' || 
@@ -1315,7 +1338,7 @@ BEGIN
         END IF;
       END;
     END LOOP;
-  ELSIF sq_server_version_num > 100000 THEN   
+  ELSIF sq_server_version_num >= 100000 THEN
     FOR arec IN
       SELECT n.nspname AS schemaname, a.rolname AS ownername, c.collname, c.collprovider, c.collcollate AS locale, 
              'CREATE COLLATION ' || quote_ident(dest_schema) || '."' || c.collname || '" (provider = ' || 
