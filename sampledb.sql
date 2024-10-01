@@ -921,6 +921,7 @@ CONSTRAINT enforce_dims_geom CHECK ((st_ndims("position") = 2)),
 CONSTRAINT enforce_geotype_geom CHECK (((geometrytype("position") = 'POINT'::text) OR ("position" IS NULL))),
 CONSTRAINT enforce_srid_geom CHECK ((st_srid("position") = 4326))
 ) TABLESPACE pg_default;
+ALTER TABLE t_site add geometry geometry(Point, 4326) not null;
 
 
 --
