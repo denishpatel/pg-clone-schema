@@ -72,6 +72,7 @@
 -- 2024-03-05  MJV FIX: Fixed Issue#126: Fix search path to pick up public stuff as well as source schema stuff --> search_path = '<source schema>','public'\
 -- 2024-04-15  MJV FIX: Fixed Issue#130: Apply pg_get_tabledef() fix (#26), refreshed function paste.
 -- 2024-09-11  MJV FIX: Fixed Issue#132: Fix case where NOT NULL appended twice to IDENTITY columns. Corresponds to pg_get_tabledef issue#28.
+-- 2024-10-01  MJV FIX: Fixed Issue#136: Fixed issue#30 in pg_get_tabledef().
 -- 2024-??-??  MJV FIX: Fixed Issue#122: TODO ---> Do not create explicit sequence when it is implied via serial definition.
 
 do $$ 
@@ -241,7 +242,10 @@ NO OBLIGATIONS TO PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFI
 -- 2024-03-05   Fixed Issue#25: Fix case where tablespace def occurs after the WHERE clause of a partial index creation.  It must occur BEFORE the WHERE clause.
 -- 2024-04-15   Fixed Issue#26: Fix case for partition table unique indexes by adding the IF NOT EXISTS phrase, which we already do for non-unique indexes
 -- 2024-09-11   Fixed Issue#28: Avoid duplication of NOT NULL for identity columns.
+-- 2024-09-20   Fixed Issue#29: added verbose info for searchpath problems.
+-- 2024-10-01   Fixed Issue#30: Fixed column def with geometry point defined - geometry geometry(Point, 4326) 
 -- 2024-??-??   Fixed Issue#??: Distinguish between serial identity, and explicit sequences. NOT IMPLEMENTED YET
+
 
 
 DROP TYPE IF EXISTS public.tabledefs CASCADE;
@@ -335,6 +339,7 @@ $$
     v_relopts text;
     v_tablespace text;
     v_pgversion int;
+    v_context text := '';
     bSerial boolean;
     bPartition boolean;
     bInheritance boolean;
@@ -589,7 +594,10 @@ $$
          IF v_colrec.is_generated = 'ALWAYS' and v_colrec.generation_expression IS NOT NULL THEN
              -- searchable tsvector GENERATED ALWAYS AS (to_tsvector('simple'::regconfig, COALESCE(translate(email, '@.-'::citext, ' '::text), ''::text)) ) STORED
              v_temp = v_colrec.data_type || ' GENERATED ALWAYS AS (' || v_colrec.generation_expression || ') STORED ';
-         ELSEIF v_colrec.udt_name in ('geometry', 'box2d', 'box2df', 'box3d', 'geography', 'geometry_dump', 'gidx', 'spheroid', 'valid_detail') THEN
+         --Issue#30 fix handle geometries separately and use coldef func on it
+         ELSEIF v_colrec.udt_name in ('geometry') THEN
+             v_temp = public.pg_get_coldef(in_schema, in_table,v_colrec.column_name);
+         ELSEIF v_colrec.udt_name in ('box2d', 'box2df', 'box3d', 'geography', 'geometry_dump', 'gidx', 'spheroid', 'valid_detail') THEN         
 		         v_temp = v_colrec.udt_name;
 		     ELSEIF v_colrec.data_type = 'USER-DEFINED' THEN
 		         v_temp = v_colrec.udt_schema || '.' || v_colrec.udt_name;
@@ -921,9 +929,13 @@ $$
     IF bVerbose THEN RAISE NOTICE '(10)tabledef so far: %', v_table_ddl; END IF;
     
     -- reset search_path back to what it was
+    -- Issue#29: add verbose info for searchpath stuff
+    v_context = 'SEARCHPATH';
     IF search_path_old = '' THEN
       SELECT set_config('search_path', '', false) into v_temp;
+      IF bVerbose THEN RAISE NOTICE 'SearchPath Cleanup: current searchpath=%', v_temp; END IF;
     ELSE
+      IF bVerbose THEN RAISE NOTICE 'SearchPath Cleanup: resetting searchpath=%', search_path_old; END IF;
       EXECUTE 'SET search_path = ' || search_path_old;
     END IF;
 
@@ -934,9 +946,15 @@ $$
     BEGIN
       GET STACKED DIAGNOSTICS v_diag1 = MESSAGE_TEXT, v_diag2 = PG_EXCEPTION_DETAIL, v_diag3 = PG_EXCEPTION_HINT, v_diag4 = RETURNED_SQLSTATE, v_diag5 = PG_CONTEXT, v_diag6 = PG_EXCEPTION_CONTEXT;
       -- v_ret := 'line=' || v_diag6 || '. '|| v_diag4 || '. ' || v_diag1 || ' .' || v_diag2 || ' .' || v_diag3;
-      v_ret := 'line=' || v_diag6 || '. '|| v_diag4 || '. ' || v_diag1;
-      RAISE EXCEPTION '%', v_ret;
-      -- put additional coding here if necessarY
+
+      -- put additional coding here if necessary
+      IF v_context <> '' THEN
+          v_ret := 'line=' || v_diag6 || '. '|| v_diag4 || '. ' || v_diag1 || '  context=' || v_context;      
+          RAISE WARNING 'Search_path not reset correctly.  You may need to adjust it manually. %', v_ret;          
+      ELSE
+          v_ret := 'line=' || v_diag6 || '. '|| v_diag4 || '. ' || v_diag1;
+          RAISE EXCEPTION '%', v_ret;          
+      END IF;
        RETURN '';
     END;
 
