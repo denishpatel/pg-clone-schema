@@ -73,6 +73,7 @@
 -- 2024-04-15  MJV FIX: Fixed Issue#130: Apply pg_get_tabledef() fix (#26), refreshed function paste.
 -- 2024-09-11  MJV FIX: Fixed Issue#132: Fix case where NOT NULL appended twice to IDENTITY columns. Corresponds to pg_get_tabledef issue#28.
 -- 2024-10-01  MJV FIX: Fixed Issue#136: Fixed issue#30 in pg_get_tabledef().
+-- 2024-10-03  MJV FIX: Fixed Issue#133: Defer creation of Views dependent on MVs.
 -- 2024-??-??  MJV FIX: Fixed Issue#122: TODO ---> Do not create explicit sequence when it is implied via serial definition.
 
 do $$ 
@@ -1059,6 +1060,8 @@ DECLARE
   v_diag5          text;
   v_diag6          text;
   v_dummy          text;
+  v_dummy2         text;
+  v_dummy3         text;
   v_coldef         text;
   v_seqowner       text;
   spath            text;
@@ -1090,6 +1093,8 @@ DECLARE
 
   -- issue#98
   mvarray          text[] := '{}';  
+  deferredviews    text[] := '{}';  
+  viewdef          text;
   mvscopied        integer := 0;
   
   -- issue#99 tablespaces
@@ -2857,6 +2862,25 @@ BEGIN
     SELECT REPLACE(object, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO v_def;
     -- NOTE: definition already includes the closing statement semicolon
     SELECT REPLACE(aname, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO buffer3;
+    
+    -- Issue#133: Added logic to defer creation of views dependent on MVs.
+    v_dummy = SUBSTRING(aname, POSITION('.' IN aname) + 1);
+    WITH dependencies AS (SELECT distinct dependent_obj.relname, source_obj.relname FROM pg_depend
+    JOIN pg_rewrite ON pg_depend.objid = pg_rewrite.oid
+    JOIN pg_class as dependent_obj ON pg_rewrite.ev_class = dependent_obj.oid
+    JOIN pg_class as source_obj ON pg_depend.refobjid = source_obj.oid
+    JOIN pg_namespace dependent_ns ON dependent_ns.oid = dependent_obj.relnamespace
+    JOIN pg_namespace source_ns ON source_ns.oid = source_obj.relnamespace
+    WHERE source_ns.nspname = quote_ident(source_schema) AND dependent_ns.nspname = quote_ident(source_schema) 
+    AND dependent_obj.relname <> source_obj.relname AND dependent_obj.relkind in ('v') AND source_obj.relkind in ('m') AND dependent_obj.relname = v_dummy)
+    SELECT count(*) into cnt FROM dependencies;
+    IF bVerbose THEN RAISE NOTICE 'dependent view count=% for view, %', cnt, v_dummy; END IF;  
+    IF cnt > 0 THEN
+        -- defer view creation until after MVs are done
+        deferredviews := deferredviews || v_def;
+        CONTINUE;
+    END IF;
+    
     IF bDDLOnly THEN
       RAISE INFO '%', v_def;
       -- Issue#91 Fix
@@ -2972,8 +2996,22 @@ BEGIN
   END LOOP;
   RAISE NOTICE '   MAT VIEWS cloned: %', LPAD(cnt::text, 5, ' ');
 
+  --Issue#133: create deferred views here since MVs they depend on are done now
+  cnt = 0;
+  FOREACH viewdef IN ARRAY deferredviews
+    LOOP 
+      cnt = cnt + 1;
+      s = clock_timestamp();
+      IF bDebug THEN RAISE NOTICE 'DEBUG: executing deferred view, %',viewdef; END IF;    
+      IF bDDLOnly THEN
+        RAISE INFO '%', v_def;
+      ELSE
+        EXECUTE viewdef;
+      END IF;
+    END LOOP;
+  RAISE NOTICE 'Deferrd VIEWS cloned:%', LPAD(cnt::text, 5, ' ');
+
   -- Issue 90 Move create functions to before views
-  
   
   -- Issue#111: forces us to defer triggers til after we populate the tables, just like we did with FKeys (Issue#78).
   -- MV: Create Triggers
