@@ -728,6 +728,10 @@ ALTER TABLE activity OWNER TO postgres;
 COMMENT ON MATERIALIZED VIEW activity IS 'just a comment on the activity materialized view';
 CREATE INDEX activity_pid_idx ON activity USING btree (pid);
 
+-- create a view dependent on the previous MV
+CREATE VIEW activity2 AS SELECT pid, datname, state, substring(query,1,30) query FROM activity where state in ('active','idle in transaction');
+ALTER TABLE activity2 OWNER TO postgres;
+
 CREATE MATERIALIZED VIEW mv_foo_bar_baz AS
  SELECT count(*) as count
    FROM foo_bar_baz;
