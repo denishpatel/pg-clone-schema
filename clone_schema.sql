@@ -73,7 +73,7 @@
 -- 2024-04-15  MJV FIX: Fixed Issue#130: Apply pg_get_tabledef() fix (#26), refreshed function paste.
 -- 2024-09-11  MJV FIX: Fixed Issue#132: Fix case where NOT NULL appended twice to IDENTITY columns. Corresponds to pg_get_tabledef issue#28.
 -- 2024-10-01  MJV FIX: Fixed Issue#136: Fixed issue#30 in pg_get_tabledef().
--- 2024-10-03  MJV FIX: Fixed Issue#133: Defer creation of Views dependent on MVs.
+-- 2024-10-11  MJV FIX: Fixed Issue#133: Defer creation of Views dependent on MVs.  Also, for cases where DATA is specified, needed to change the order of things...
 -- 2024-??-??  MJV FIX: Fixed Issue#122: TODO ---> Do not create explicit sequence when it is implied via serial definition.
 
 do $$ 
@@ -2927,6 +2927,7 @@ BEGIN
       IF bData THEN
         -- issue#98 defer creation until after regular tables are populated. Also defer the ownership as well.
         -- EXECUTE 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || buffer2 || ' WITH DATA;' ;
+        IF bDebug THEN RAISE NOTICE 'Section=% deferring MV creation, %',action,buffer; END IF;
         buffer3 = 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || buffer2 || ' WITH DATA;';
         mvarray := mvarray || buffer3;
         
@@ -2996,20 +2997,24 @@ BEGIN
   END LOOP;
   RAISE NOTICE '   MAT VIEWS cloned: %', LPAD(cnt::text, 5, ' ');
 
-  --Issue#133: create deferred views here since MVs they depend on are done now
-  cnt = 0;
-  FOREACH viewdef IN ARRAY deferredviews
-    LOOP 
-      cnt = cnt + 1;
-      s = clock_timestamp();
-      IF bDebug THEN RAISE NOTICE 'DEBUG: executing deferred view, %',viewdef; END IF;    
-      IF bDDLOnly THEN
-        RAISE INFO '%', v_def;
-      ELSE
-        EXECUTE viewdef;
-      END IF;
-    END LOOP;
+  --Issue#133: create deferred views here since MVs they depend on are done now, but only if not in DATA mode where we do it after tables and MVs are created  
+  IF NOT bData THEN
+      action := 'Deferred Views';
+      IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
+      cnt = 0;
+      FOREACH viewdef IN ARRAY deferredviews
+        LOOP 
+          cnt = cnt + 1;
+          s = clock_timestamp();
+          IF bDebug THEN RAISE NOTICE 'DEBUG: executing deferred view, %',viewdef; END IF;    
+          IF bDDLOnly THEN
+            RAISE INFO '%', v_def;
+          ELSE
+            EXECUTE viewdef;
+          END IF;
+        END LOOP;
   RAISE NOTICE 'Deferrd VIEWS cloned:%', LPAD(cnt::text, 5, ' ');
+  END IF;
 
   -- Issue 90 Move create functions to before views
   
@@ -3645,45 +3650,6 @@ BEGIN
     RAISE NOTICE '  FUNC PRIVS cloned: %', LPAD(cnt::text, 5, ' ');
   END IF; -- NO ACL BRANCH
 
-  -- Issue#95 bypass if No ACL specified
-  IF NOT bNoACL THEN
-    -- MV: PRIVS: tables
-    action := 'PRIVS: Tables';
-    IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
-    -- regular, partitioned, and foreign tables plus view and materialized view permissions. Ignored for now: implement foreign table defs.
-    cnt := 0;
-    FOR arec IN
-      -- 2021-03-05  MJV FIX: Fixed Issue#36 for tables
-      -- Issue#78 FIX: handle case-sensitive names with quote_ident() on t.relname      
-      -- 2024-01-24  MJV FIX: Issue#117    
-      SELECT c.relkind, 'GRANT ' || tb.privilege_type || CASE WHEN c.relkind in ('r', 'p') THEN ' ON TABLE ' WHEN c.relkind in ('v', 'm')  THEN ' ON ' END ||
-      quote_ident(dest_schema) || '.' || quote_ident(tb.table_name) || ' TO ' || string_agg(tb.grantee, ',') || ';' as tbl_dcl
-      FROM information_schema.table_privileges tb, pg_class c, pg_namespace n
-      WHERE tb.table_schema = quote_ident(source_schema) AND tb.table_name = c.relname AND c.relkind in ('r', 'p', 'v', 'm')
-        AND c.relnamespace = n.oid AND n.nspname = quote_ident(source_schema)
-        GROUP BY c.relkind, tb.privilege_type, tb.table_schema, tb.table_name 
-        ORDER BY tb.table_name, tb.privilege_type
-    LOOP
-      BEGIN
-        cnt := cnt + 1;
-        -- IF bDebug THEN RAISE NOTICE 'DEBUG: ddl=%', arec.tbl_dcl; END IF;
-        -- Issue#46. Fixed reference to invalid record name (tbl_ddl --> tbl_dcl).
-        IF arec.relkind = 'f' THEN
-          RAISE WARNING 'Foreign tables are not currently implemented, so skipping privs for them. ddl=%', arec.tbl_dcl;
-        ELSE
-            IF bDDLOnly THEN
-                RAISE INFO '%', arec.tbl_dcl;
-            ELSE
-                lastsql = arec.tbl_dcl;
-                EXECUTE arec.tbl_dcl;
-                lastsql = '';
-              END IF;
-      END IF;
-      END;
-    END LOOP;
-    RAISE NOTICE ' TABLE PRIVS cloned: %', LPAD(cnt::text, 5, ' ');
-  END IF; -- NO ACL BRANCH
-
   -- LOOP for regular tables and populate them if specified
   -- Issue#75 moved from big table loop above to here.
   IF bData THEN
@@ -3824,6 +3790,25 @@ BEGIN
   RAISE NOTICE '      TABLES copied: %', LPAD(tblscopied::text, 5, ' ');
   RAISE NOTICE ' MATVIEWS refreshed: %', LPAD(mvscopied::text, 5, ' ');
 
+  --Issue#133: create deferred views here since MVs they depend on are done now, but only if not in DATA mode where we do it after tables and MVs are created  
+  IF bData THEN
+      action := 'Deferred Views';
+      IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
+      cnt = 0;
+      FOREACH viewdef IN ARRAY deferredviews
+        LOOP 
+          cnt = cnt + 1;
+          s = clock_timestamp();
+          IF bDebug THEN RAISE NOTICE 'DEBUG: executing deferred view, %',viewdef; END IF;    
+          IF bDDLOnly THEN
+            RAISE INFO '%', v_def;
+          ELSE
+            EXECUTE viewdef;
+          END IF;
+        END LOOP;
+  RAISE NOTICE 'Deferrd VIEWS cloned:%', LPAD(cnt::text, 5, ' ');
+  END IF;
+
   -- Issue#120: deferred sequence owner definitions until now
   FOREACH tblelement IN ARRAY tblarray4
   LOOP 
@@ -3835,6 +3820,46 @@ BEGIN
          EXECUTE tblelement;       
      END IF;
   END LOOP;    
+
+  -- Issue#95 bypass if No ACL specified
+  -- Issue#133: move to after table creation below
+  IF NOT bNoACL THEN
+    -- MV: PRIVS: tables
+    action := 'PRIVS: Tables';
+    IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
+    -- regular, partitioned, and foreign tables plus view and materialized view permissions. Ignored for now: implement foreign table defs.
+    cnt := 0;
+    FOR arec IN
+      -- 2021-03-05  MJV FIX: Fixed Issue#36 for tables
+      -- Issue#78 FIX: handle case-sensitive names with quote_ident() on t.relname      
+      -- 2024-01-24  MJV FIX: Issue#117    
+      SELECT c.relkind, 'GRANT ' || tb.privilege_type || CASE WHEN c.relkind in ('r', 'p') THEN ' ON TABLE ' WHEN c.relkind in ('v', 'm')  THEN ' ON ' END ||
+      quote_ident(dest_schema) || '.' || quote_ident(tb.table_name) || ' TO ' || string_agg(tb.grantee, ',') || ';' as tbl_dcl
+      FROM information_schema.table_privileges tb, pg_class c, pg_namespace n
+      WHERE tb.table_schema = quote_ident(source_schema) AND tb.table_name = c.relname AND c.relkind in ('r', 'p', 'v', 'm')
+        AND c.relnamespace = n.oid AND n.nspname = quote_ident(source_schema)
+        GROUP BY c.relkind, tb.privilege_type, tb.table_schema, tb.table_name 
+        ORDER BY tb.table_name, tb.privilege_type
+    LOOP
+      BEGIN
+        cnt := cnt + 1;
+        -- IF bDebug THEN RAISE NOTICE 'DEBUG: ddl=%', arec.tbl_dcl; END IF;
+        -- Issue#46. Fixed reference to invalid record name (tbl_ddl --> tbl_dcl).
+        IF arec.relkind = 'f' THEN
+          RAISE WARNING 'Foreign tables are not currently implemented, so skipping privs for them. ddl=%', arec.tbl_dcl;
+        ELSE
+            IF bDDLOnly THEN
+                RAISE INFO '%', arec.tbl_dcl;
+            ELSE
+                lastsql = arec.tbl_dcl;
+                EXECUTE arec.tbl_dcl;
+                lastsql = '';
+              END IF;
+      END IF;
+      END;
+    END LOOP;
+    RAISE NOTICE ' TABLE PRIVS cloned: %', LPAD(cnt::text, 5, ' ');
+  END IF; -- NO ACL BRANCH
   
   -- Issue#78 forces us to defer FKeys until the end since we previously did row copies before FKeys
   --  add FK constraint
@@ -3942,7 +3967,7 @@ BEGIN
          END IF;
          -- get current state of search_path too
          SELECT setting INTO spath_tmp FROM pg_settings WHERE name = 'search_path';
-         RAISE EXCEPTION 'Version: %  Action: %  SearchPath: %  oldSP=%  newSP=%  Diagnostics: %',v_version, action, spath_tmp, v_src_path_old, v_src_path_new, buffer;
+         RAISE EXCEPTION 'Version: %  Action: %  CurrentSP: %  oldSP=%  newSP=%  Diagnostics: %',v_version, action, spath_tmp, v_src_path_old, v_src_path_new, buffer;
 
          IF v_src_path_old = '' THEN
            -- RAISE NOTICE 'setting old search_path to empty string';
