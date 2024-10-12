@@ -73,7 +73,7 @@
 -- 2024-04-15  MJV FIX: Fixed Issue#130: Apply pg_get_tabledef() fix (#26), refreshed function paste.
 -- 2024-09-11  MJV FIX: Fixed Issue#132: Fix case where NOT NULL appended twice to IDENTITY columns. Corresponds to pg_get_tabledef issue#28.
 -- 2024-10-01  MJV FIX: Fixed Issue#136: Fixed issue#30 in pg_get_tabledef().
--- 2024-10-11  MJV FIX: Fixed Issue#133: Defer creation of Views dependent on MVs.  Also, for cases where DATA is specified, needed to change the order of things...
+-- 2024-10-12  MJV FIX: Fixed Issue#133: Defer creation of Views dependent on MVs.  Also, for cases where DATA is specified, needed to change the order of things...
 -- 2024-??-??  MJV FIX: Fixed Issue#122: TODO ---> Do not create explicit sequence when it is implied via serial definition.
 
 do $$ 
@@ -2816,7 +2816,9 @@ BEGIN
        WHERE v.relkind IN ('v')
          AND d.classid = 'pg_rewrite'::regclass
          AND d.refclassid = 'pg_class'::regclass
-         AND d.deptype = 'n'
+         --Issue#133
+         -- AND d.deptype = 'n'
+         AND d.deptype IN ('n', 'i')
     UNION
        -- add the views that depend on these
        SELECT n.nspname as schemaname, v.relname as tablename, v.oid::regclass AS viewname,
@@ -2835,7 +2837,9 @@ BEGIN
        WHERE v.relkind IN ('v')
          AND d.classid = 'pg_rewrite'::regclass
              AND d.refclassid = 'pg_class'::regclass
-         AND d.deptype = 'n'
+         --Issue#133
+         -- AND d.deptype = 'n'
+         AND d.deptype IN ('n', 'i')
          AND v.oid <> views.viewname
     )
     SELECT tablename, viewname, owner, format('CREATE OR REPLACE%s VIEW %s AS%s',
