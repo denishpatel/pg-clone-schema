@@ -73,7 +73,9 @@
 -- 2024-04-15  MJV FIX: Fixed Issue#130: Apply pg_get_tabledef() fix (#26), refreshed function paste.
 -- 2024-09-11  MJV FIX: Fixed Issue#132: Fix case where NOT NULL appended twice to IDENTITY columns. Corresponds to pg_get_tabledef issue#28.
 -- 2024-10-01  MJV FIX: Fixed Issue#136: Fixed issue#30 in pg_get_tabledef().
--- 2024-10-12  MJV FIX: Fixed Issue#133: Defer creation of Views dependent on MVs.  Also, for cases where DATA is specified, needed to change the order of things...
+-- 2024-10-21  MJV FIX: Fixed Issue#133: Defer creation of Views dependent on MVs.  Also, for cases where DATA is specified, needed to change the order of things...Also, had to fix bug with altering index names.
+--                                       When a table is created with the LIKE condition, the index names do not match the original.  They take the form, <table name>_<column name>_idx.  Multiple <column_name> if composite index.
+--                                       so don't try to rename anymore if we can't match new to original.
 -- 2024-??-??  MJV FIX: Fixed Issue#122: TODO ---> Do not create explicit sequence when it is implied via serial definition.
 
 do $$ 
@@ -82,11 +84,11 @@ DECLARE
     cnt int;
 BEGIN
   DROP TYPE IF EXISTS public.cloneparms CASCADE;
-  CREATE TYPE public.cloneparms AS ENUM ('DATA', 'NODATA','DDLONLY','NOOWNER','NOACL','VERBOSE','DEBUG','FILECOPY');
+  CREATE TYPE public.cloneparms AS ENUM ('DATA', 'NODATA','DDLONLY','NOOWNER','NOACL','VERBOSE','DEBUG','FILECOPY','DEBUGEXEC');
   -- END IF;
 end first_block $$;
 
-
+DROP FUNCTION IF EXISTS public.get_insert_stmt_ddl(text, text, text, boolean, boolean);
 -- select * from public.get_insert_stmt_ddl('clone1','sample','address');
 CREATE OR REPLACE FUNCTION public.get_insert_stmt_ddl(
   source_schema text,
@@ -1042,6 +1044,7 @@ DECLARE
   sq_server_version_num integer;
   bWindows         boolean;
   arec             RECORD;
+  cntables         integer;
   cnt              integer;
   cnt1             integer;
   cnt2             integer;
@@ -1084,6 +1087,7 @@ DECLARE
   bData            boolean := False;
   bDDLOnly         boolean := False;
   bVerbose         boolean := False;
+  bDebugExec       boolean := False;
   bDebug           boolean := False;
   bNoACL           boolean := False;
   bNoOwner         boolean := False;
@@ -1108,17 +1112,22 @@ DECLARE
   s                timestamptz;
   lastsql          text := '';
   lasttbl          text := '';
-  v_version        text := '2.2 March 05, 2024';
+  v_version        text := '2.3 October 21, 2024';
 
 BEGIN
+  -- uncomment the following to get line context info when debugging exceptions. 
+  -- Currently the next line is actually line 137 based on start line (without spaces) = $ BODY $
+  -- RAISE EXCEPTION 'line1';
+
   -- Make sure NOTICE are shown
-  SET client_min_messages = 'notice';
+    SET client_min_messages = 'notice';
   RAISE NOTICE 'clone_schema version %', v_version;
 
   IF 'DEBUG'   = ANY ($3) THEN bDebug = True; END IF;
   IF 'VERBOSE' = ANY ($3) THEN bVerbose = True; END IF;
-  
-  -- IF bVerbose THEN RAISE NOTICE 'START: %',clock_timestamp() - t; END IF;
+  IF 'DEBUGEXEC' = ANY ($3) THEN bDebugExec = True; END IF;
+    
+  IF bDEBUG THEN RAISE NOTICE 'DEBUG: Cloning % into %.    START: %',source_schema, dest_schema, clock_timestamp() - t; END IF;
   
   arglen := array_length($3, 1);
   IF arglen IS NULL THEN
@@ -1227,7 +1236,10 @@ BEGIN
 
   IF bDebug THEN RAISE NOTICE 'DEBUG: v_src_path_old=%', v_src_path_old; END IF;
 
-  EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
+  lastsql = 'SET search_path = ' || quote_ident(source_schema) ;
+  EXECUTE lastsql;
+  lastsql = '';
+  
   SELECT setting INTO v_src_path_new FROM pg_settings WHERE name='search_path';
   IF bDebug THEN RAISE NOTICE 'DEBUG: new search_path=%', v_src_path_new; END IF;
 
@@ -1291,9 +1303,16 @@ BEGIN
   ELSE
     -- issue#95
     IF bNoOwner THEN
-        EXECUTE 'CREATE SCHEMA ' || quote_ident(dest_schema) ;
+        lastsql = 'CREATE SCHEMA ' || quote_ident(dest_schema) ; 
+        IF bDebugExec THEN RAISE NOTICE 'EXEC: %',lastsql; END IF;
+        EXECUTE lastsql;
+        lastsql = '';
     ELSE
-        EXECUTE 'CREATE SCHEMA ' || quote_ident(dest_schema) || ' AUTHORIZATION ' || buffer;
+        -- EXECUTE 'CREATE SCHEMA ' || quote_ident(dest_schema) || ' AUTHORIZATION ' || buffer;
+        lastsql = 'CREATE SCHEMA ' || quote_ident(dest_schema) || ' AUTHORIZATION ' || buffer;
+        IF bDebugExec THEN RAISE NOTICE 'EXEC: %',lastsql; END IF;
+        EXECUTE lastsql;    
+        lastsql = '';
     END IF;
   END IF;
 
@@ -1311,7 +1330,7 @@ BEGIN
 
   -- MV: Create Collations
   action := 'Collations';
-  IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
+  IF bDebug THEN RAISE NOTICE 'DEBUG:  Section=%',action; END IF;
   cnt := 0;
   -- Issue#96 Handle differently based on PG Versions (PG15 rely on colliculocale, not collcollate; PG17 uses colllocale)
   -- perhaps use this logic instead: COALESCE(c.collcollate, c.colliculocale) AS lc_collate, COALESCE(c.collctype, c.colliculocale) AS lc_type  
@@ -1333,7 +1352,8 @@ BEGIN
           RAISE INFO '%', arec.coll_ddl;
         ELSE
           lastsql = arec.coll_ddl;
-          EXECUTE arec.coll_ddl;
+          IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+          EXECUTE lastsql;
           lastsql = '';
         END IF;
       END;
@@ -1356,7 +1376,8 @@ BEGIN
           RAISE INFO '%', arec.coll_ddl;
         ELSE
           lastsql = arec.coll_ddl;
-          EXECUTE arec.coll_ddl;
+          IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+          EXECUTE lastsql;
           lastsql = '';
         END IF;
       END;
@@ -1379,7 +1400,8 @@ BEGIN
           RAISE INFO '%', arec.coll_ddl;
         ELSE
           lastsql = arec.coll_ddl;
-          EXECUTE arec.coll_ddl;
+          IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+          EXECUTE lastsql;
           lastsql = '';
         END IF;
       END;
@@ -1402,7 +1424,8 @@ BEGIN
           RAISE INFO '%', arec.coll_ddl;
         ELSE
           lastsql = arec.coll_ddl;
-          EXECUTE arec.coll_ddl;
+          IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+          EXECUTE lastsql;
           lastsql = '';
         END IF;
       END;
@@ -1412,8 +1435,10 @@ BEGIN
 
   -- MV: Create Domains
   action := 'Domains';
-  IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
+  IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
+  -- RAISE NOTICE 'Bypassing section on creating domains...';
   cnt := 0;
+  
   FOR arec IN
     SELECT n.nspname AS "Schema", t.typname AS "Name", pg_catalog.format_type(t.typbasetype, t.typtypmod) AS "Type", (
             SELECT c.collname
@@ -1452,16 +1477,18 @@ BEGIN
         RAISE INFO '%', arec.dom_ddl;
       ELSE
         lastsql = arec.dom_ddl;
-        EXECUTE arec.dom_ddl;
+        IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+        EXECUTE lastsql;
         lastsql = '';
       END IF;
     END;
   END LOOP;
   RAISE NOTICE '     DOMAINS cloned: %', LPAD(cnt::text, 5, ' ');
-
+  
+  
   -- MV: Create types
   action := 'Types';
-  IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
+  IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
   cnt := 0;
   lastsql = '';
   FOR arec IN
@@ -1502,13 +1529,17 @@ BEGIN
           END IF;
         ELSE
           lastsql = arec.type_ddl;
-          EXECUTE arec.type_ddl;
+          IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+          EXECUTE lastsql;
           lastsql = '';
 
           --issue#95
           IF NOT bNoOwner THEN
               -- Fixed Issue#108: double-quote roles in case they have special characters
-	            EXECUTE 'ALTER TYPE ' || quote_ident(dest_schema) || '.' || arec.typname || ' OWNER TO ' || arec.owner;
+              lastsql = 'ALTER TYPE ' || quote_ident(dest_schema) || '.' || arec.typname || ' OWNER TO ' || arec.owner; 
+              IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+	            EXECUTE lastsql;
+	            lastsql = '';
 	        END IF;
         END IF;
       ELSIF arec.typcategory = 'C' THEN
@@ -1521,12 +1552,16 @@ BEGIN
           END IF;
         ELSE
           lastsql = arec.type_ddl;
+          IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
           EXECUTE arec.type_ddl;
           lastsql = '';
           --issue#95
           IF NOT bNoOwner THEN
               -- Fixed Issue#108: double-quote roles in case they have special characters
+              lastsql = 'ALTER TYPE ' || quote_ident(dest_schema) || '.' || arec.typname || ' OWNER TO ' || arec.owner; 
+              IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
 	            EXECUTE 'ALTER TYPE ' || quote_ident(dest_schema) || '.' || arec.typname || ' OWNER TO ' || arec.owner;
+	            lastsql = '';
 	        END IF;
         END IF;
       ELSE
@@ -1538,7 +1573,7 @@ BEGIN
 
   -- Create sequences
   action := 'Sequences';
-  IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
+  IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
   cnt := 0;
   -- fix#63  get from pg_sequences not information_schema
   -- fix#63  take 2: get it from information_schema.sequences since we need to treat IDENTITY columns differently.
@@ -1566,14 +1601,18 @@ BEGIN
         RAISE INFO '%', 'ALTER  SEQUENCE ' || quote_ident(dest_schema) || '.' || quote_ident(object) || ' OWNER TO ' || buffer || ';';
       END IF;
     ELSE
-      buffer2 = 'CREATE SEQUENCE ' || quote_ident(dest_schema) || '.' || quote_ident(object) || ';'; 
-      IF bDebug THEN RAISE NOTICE 'DEBUG: %',buffer2; END IF;
-      EXECUTE buffer2;
+      lastsql = 'CREATE SEQUENCE ' || quote_ident(dest_schema) || '.' || quote_ident(object) || ';'; 
+      IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+      EXECUTE lastsql;
+      lastsql = '';
 
       -- issue#95
       IF NOT bNoOwner THEN    
+        lastsql = 'ALTER SEQUENCE '  || quote_ident(dest_schema) || '.' || quote_ident(object) || ' OWNER TO ' || buffer;
+        IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
         -- Fixed Issue#108: double-quote roles in case they have special characters
-        EXECUTE 'ALTER SEQUENCE '  || quote_ident(dest_schema) || '.' || quote_ident(object) || ' OWNER TO ' || buffer;
+        EXECUTE lastsql;
+        lastsql = '';
       END IF;
     END IF;
     srctbl := quote_ident(source_schema) || '.' || quote_ident(object);
@@ -1645,7 +1684,8 @@ BEGIN
       RAISE INFO '%', qry;
     ELSE
       lastsql = qry;
-      EXECUTE qry;
+      IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+      EXECUTE lastsql;
       lastsql = '';
     END IF;
 
@@ -1670,11 +1710,11 @@ BEGIN
 
   -- Create tables including partitioned ones (parent/children) and unlogged ones.  Order by is critical since child partition range logic is dependent on it.
   action := 'Tables';
-  IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
+  IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
   SELECT setting INTO v_dummy FROM pg_settings WHERE name='search_path';
   IF bDebug THEN RAISE NOTICE 'DEBUG: search_path=%', v_dummy; END IF;
   
-  cnt := 0;
+  cntables := 0;
   lasttbl = '';
   -- Issue#61 FIX: use set_config for empty string
   -- SET search_path = '';
@@ -1713,12 +1753,12 @@ BEGIN
         LEFT JOIN pg_tablespace ts ON (c.reltablespace = ts.oid) 
     ORDER BY c.relkind DESC, c.relname
   LOOP
-    cnt := cnt + 1;
+    cntables := cntables + 1;
     lastsql = '';
     
     -- Issue#121 we may have dup tables due to multiple user-defined different datatypes, so skip 2-n occurences of them
     IF lasttbl = tblname THEN
-        IF bDebug THEN RAISE INFO 'skipping dup table, %', tblname; END IF;
+        IF bDebug THEN RAISE INFO 'DEBUG: skipping dup table, %', tblname; END IF;
         continue;
     END IF;
     
@@ -1732,7 +1772,7 @@ BEGIN
 
     IF data_type = 'USER-DEFINED' THEN
       IF bDebug THEN RAISE NOTICE 'DEBUG: Table (%) has column(s) with user-defined types so using pg_get_tabledef() instead of CREATE TABLE LIKE construct.',tblname; END IF;
-      cnt :=cnt;
+      cntables :=cntables;
     END IF;
     buffer := quote_ident(dest_schema) || '.' || quote_ident(tblname);
     buffer2 := '';
@@ -1802,15 +1842,16 @@ BEGIN
           IF bDebug THEN RAISE NOTICE 'DEBUG: setting search_path to public:%', v_dummy; END IF;
           SELECT set_config('search_path', v_dummy, false) into v_dummy;
           lastsql = buffer3;
-          EXECUTE buffer3;
+          IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+          EXECUTE lastsql;
           lastsql = '';
           -- issue#91 fix
           -- issue#95
           IF NOT bNoOwner THEN    
             -- Fixed Issue#108: double-quote roles in case they have special characters
-            buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
-            lastsql = buffer3;
-            EXECUTE buffer3;
+            lastsql = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
+            IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+            EXECUTE lastsql;
             lastsql = '';
           END IF;
         ELSE
@@ -1818,15 +1859,16 @@ BEGIN
             buffer3 := 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
             IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef02:%', buffer3; END IF;
             lastsql = buffer3;
-            EXECUTE buffer3;
+            IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+            EXECUTE lastsql;
             lastsql = '';
             -- issue#91 fix
             -- issue#95
             IF NOT bNoOwner THEN    
               -- Fixed Issue#108: double-quote roles in case they have special characters
-              buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.'  || quote_ident(tblname) || ' OWNER TO ' || tblowner;
-              lastsql = buffer3;
-              EXECUTE buffer3;
+              lastsql = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.'  || quote_ident(tblname) || ' OWNER TO ' || tblowner;
+              IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+              EXECUTE lastsql;
               lastsql = '';
             END IF;
             
@@ -1834,9 +1876,9 @@ BEGIN
             IF tblspace <> 'pg_default' THEN
               -- replace with user-defined tablespace
               -- ALTER TABLE myschema.mytable SET TABLESPACE usrtblspc;
-              buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' SET TABLESPACE ' || tblspace;
-              lastsql = buffer3;
-              EXECUTE buffer3;
+              lastsql = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' SET TABLESPACE ' || tblspace;
+              IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+              EXECUTE lastsql;
               lastsql = '';
             END IF;
 
@@ -1852,15 +1894,16 @@ BEGIN
             set client_min_messages = 'WARNING';
             IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef03:%', buffer3; END IF;
             lastsql = buffer3;
-            EXECUTE buffer3;
+            IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+            EXECUTE lastsql;
             lastsql = '';
             -- issue#91 fix
             -- issue#95
             IF NOT bNoOwner THEN
               -- Fixed Issue#108: double-quote roles in case they have special characters
-              buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
-              lastsql = buffer3;
-              EXECUTE buffer3;
+              lastsql = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
+              IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+              EXECUTE lastsql;
               lastsql = '';
             END IF;
 
@@ -1870,8 +1913,9 @@ BEGIN
         END IF;
         -- Add table comment.
         IF ocomment IS NOT NULL THEN
-          lastsql = 'COMMENT ON TABLE...';
-          EXECUTE 'COMMENT ON TABLE ' || buffer || ' IS ' || quote_literal(ocomment);
+          lastsql = 'COMMENT ON TABLE ' || buffer || ' IS ' || quote_literal(ocomment); 
+          IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+          EXECUTE lastsql;
           lastsql = '';
         END IF;
       END IF;
@@ -1905,6 +1949,7 @@ BEGIN
         END IF;
         IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef04:%', qry; END IF;
         lastsql = qry;
+        IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
         EXECUTE qry;
         lastsql = '';
         
@@ -1920,9 +1965,9 @@ BEGIN
         -- issue#95
         IF NOT bNoOwner THEN
           -- Fixed Issue#108: double-quote roles in case they have special characters
-          buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || ' OWNER TO ' || tblowner;
-          lastsql = buffer3;
-          EXECUTE buffer3;
+          lastsql = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || ' OWNER TO ' || tblowner;
+          IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+          EXECUTE lastsql;
           lastsql = '';
         END IF;
         
@@ -1949,7 +1994,8 @@ BEGIN
           END IF;
         ELSE
           lastsql = qry;
-          EXECUTE qry;
+          IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+          EXECUTE lastsql;
           lastsql = '';
           IF NOT bNoOwner THEN
             NULL;
@@ -1971,28 +2017,44 @@ BEGIN
         AND regexp_replace(old.indexdef, E'.*USING','') = regexp_replace(new.indexdef, E'.*USING','')
         ORDER BY old.indexdef, new.indexdef
     LOOP
+      -- Issue#133: We never get here when DDLONLY is specified since it depends on the cloned schema being created, so ALTER INDEX action does not happen on DDLONLY commands
       IF bDDLOnly THEN
         RAISE INFO '%', 'ALTER INDEX ' || quote_ident(dest_schema) || '.'  || quote_ident(ix_new_name) || ' RENAME TO ' || quote_ident(ix_old_name) || ';';
       ELSE
-        -- The SELECT query above may return duplicate names when a column is
-        -- indexed twice the same manner with 2 different names. Therefore, to
-        -- avoid a 'relation "xxx" already exists' we test if the index name
-        -- is in use or free. Skipping existing index will fallback on unused
+        -- The SELECT query above may return duplicate names when a column is indexed twice the same manner with 2 different names. Therefore, to
+        -- avoid a 'relation "xxx" already exists' we test if the index name is in use or free. Skipping existing index will fallback on unused
         -- ones and every duplicate will be mapped to distinct old names.
-        IF NOT EXISTS (
-            SELECT TRUE
-            FROM pg_indexes
-            WHERE schemaname = dest_schema
-              AND tablename = tblname
-              AND indexname = quote_ident(ix_old_name))
-          AND EXISTS (
-            SELECT TRUE
-            FROM pg_indexes
-            WHERE schemaname = dest_schema
-              AND tablename = tblname
-              AND indexname = quote_ident(ix_new_name))
-          THEN
-          EXECUTE 'ALTER INDEX ' || quote_ident(dest_schema) || '.' || quote_ident(ix_new_name) || ' RENAME TO ' || quote_ident(ix_old_name) || ';';
+        -- Issue#133: index names may be different when the table is created with the LIKE... INCLUDING ALL construct, so change the name to what is was in the original for non-unique indexes at the present time
+        --  IF NOT EXISTS (
+        --     SELECT TRUE
+        --     FROM pg_indexes
+        --     WHERE schemaname = dest_schema
+        --       AND tablename = tblname
+        --       AND indexname = quote_ident(ix_old_name))
+        --   AND EXISTS (
+        --     SELECT TRUE
+        --     FROM pg_indexes
+        --     WHERE schemaname = dest_schema
+        --       AND tablename = tblname
+        --       AND indexname = quote_ident(ix_new_name))
+        --   THEN
+        -- RAISE NOTICE 'AAAA: schema=%  table=%  oldixname=%  newixname=%',quote_ident(source_schema), tblname, ix_old_name, ix_new_name;
+        -- Issue#133: bypass primary and unique keys
+        IF NOT EXISTS (SELECT TRUE FROM pg_class c, pg_constraint ct WHERE ct.conrelid = c.oid AND c.relnamespace::regnamespace::text = quote_ident(source_schema) AND c.relname = tblname AND ct.contype IN ('p', 'u') AND ct.conname = ix_old_name) 
+				THEN
+				  -- Issue#133: bypass columns we can't find in new schema probably due to CREATE TABLE LIKE constructs where fabricated index names are created automatically.
+	        SELECT count(*) INTO cnt FROM pg_indexes WHERE schemaname = quote_ident(dest_schema) AND tablename = tblname AND indexname =  ix_new_name AND ix_old_name <> ix_new_name AND NOT EXISTS (SELECT TRUE FROM pg_indexes 
+	        WHERE schemaname = quote_ident(dest_schema) AND tablename = tblname AND indexname =  ix_old_name);
+	        IF cnt > 0 THEN
+              lastsql = 'ALTER INDEX ' || quote_ident(dest_schema) || '.' || quote_ident(ix_new_name) || ' RENAME TO ' || quote_ident(ix_old_name) || ';'; 
+              IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+              EXECUTE lastsql;
+              lastsql = '';
+          ELSE
+              IF bDebugExec THEN RAISE NOTICE 'EXEC: bypassing(1a) altering index from % TO % for table, %', ix_new_name, ix_old_name, tblname; END IF;   
+          END IF;
+        ELSE
+          IF bDebugExec THEN RAISE NOTICE 'EXEC: bypassing(1b) altering index from % TO % for table, %', ix_new_name, ix_old_name, tblname; END IF;   
         END IF;
       END IF;
     END LOOP;
@@ -2045,12 +2107,12 @@ BEGIN
               buffer2   := 'COPY ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || '  FROM ''/tmp/cloneschema.tmp'' (DELIMITER '','', NULL ''\N'', FORMAT CSV);';
               tblarray2 := tblarray2 || buffer2;
           END IF;
-          IF bDebug THEN RAISE NOTICE 'Deferring file copy to end:%', buffer2; END IF;
+          IF bDebug THEN RAISE NOTICE 'DEBUG: Deferring file copy to end:%', buffer2; END IF;
         ELSE
           -- Issue#101: assume direct copy with text cast, add to separate array
           SELECT * INTO buffer3 FROM public.get_insert_stmt_ddl(quote_ident(source_schema), quote_ident(dest_schema), quote_ident(tblname), True);
           tblarray3 := tblarray3 || buffer3;
-          IF bDebug THEN RAISE NOTICE 'Deferring complex insert to end:%', buffer3; END IF;
+          IF bDebug THEN RAISE NOTICE 'DEBUG: Deferring complex insert to end:%', buffer3; END IF;
         END IF;
       ELSE
         -- bypass child tables since we populate them when we populate the parents
@@ -2092,7 +2154,8 @@ BEGIN
         RAISE INFO '%', buffer2;
       ELSE
         lastsql = buffer2;
-        EXECUTE buffer2;
+        IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+        EXECUTE lastsql;
         lastsql = '';
       END IF;
     END LOOP;
@@ -2130,7 +2193,7 @@ BEGIN
         LEFT JOIN pg_tablespace ts ON (c.reltablespace = ts.oid) 
     ORDER BY c.relkind DESC, c.relname
   LOOP
-    cnt := cnt + 1;
+    cntables := cntables + 1;
     IF l_child IS NULL THEN
       bChild := False;
     ELSE
@@ -2140,7 +2203,7 @@ BEGIN
 
     IF data_type = 'USER-DEFINED' THEN
       -- RAISE NOTICE ' Table (%) has column(s) with user-defined types so using get_table_ddl() instead of CREATE TABLE LIKE construct.',tblname;
-      cnt :=cnt;
+      cntables :=cntables;
     END IF;
     buffer := quote_ident(dest_schema) || '.' || quote_ident(tblname);
     buffer2 := '';
@@ -2210,31 +2273,32 @@ BEGIN
           SELECT set_config('search_path', v_dummy, false) into v_dummy;
           IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to public:%', v_dummy; END IF;          
           lastsql = buffer3;
-          EXECUTE buffer3;
+          IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+          EXECUTE lastsql;
           lastsql = '';
           -- issue#91 fix
           -- issue#95
           IF NOT bNoOwner THEN    
             -- Fixed Issue#108: double-quote roles in case they have special characters
-            buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
-            lastsql = buffer3;
-            EXECUTE buffer3;
+            lastsql = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
+            IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+            EXECUTE lastsql;
             lastsql = '';
           END IF;
         ELSE
           IF (NOT bChild) THEN
-            buffer3 := 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
-            IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef02:%', buffer3; END IF;
-            lastsql = buffer3;
-            EXECUTE buffer3;
+            lastsql := 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
+            IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef02:%', lastsql; END IF;
+            IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+            EXECUTE lastsql;
             lastsql = '';
             -- issue#91 fix
             -- issue#95
             IF NOT bNoOwner THEN    
               -- Fixed Issue#108: double-quote roles in case they have special characters
-              buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.'  || quote_ident(tblname) || ' OWNER TO ' || tblowner;
-              lastsql = buffer3;
-              EXECUTE buffer3;
+              lastsql = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.'  || quote_ident(tblname) || ' OWNER TO ' || tblowner;
+              IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+              EXECUTE lastsql;
               lastsql = '';
             END IF;
             
@@ -2242,9 +2306,9 @@ BEGIN
             IF tblspace <> 'pg_default' THEN
               -- replace with user-defined tablespace
               -- ALTER TABLE myschema.mytable SET TABLESPACE usrtblspc;
-              buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' SET TABLESPACE ' || tblspace;
-              lastsql = buffer3;
-              EXECUTE buffer3;
+              lastsql = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' SET TABLESPACE ' || tblspace;
+              IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+              EXECUTE lastsql;
               lastsql = '';
             END IF;
 
@@ -2261,15 +2325,16 @@ BEGIN
             set client_min_messages = 'WARNING';
             IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef03:%', buffer3; END IF;
             lastsql = buffer3;
-            EXECUTE buffer3;
+            IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+            EXECUTE lastsql;
             lastsql = '';
             -- issue#91 fix
             -- issue#95
             IF NOT bNoOwner THEN
               -- Fixed Issue#108: double-quote roles in case they have special characters
-              buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
-              lastsql = buffer3;
-              EXECUTE buffer3;
+              lastsql = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
+              IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+              EXECUTE lastsql;
               lastsql = '';
             END IF;
 
@@ -2279,7 +2344,9 @@ BEGIN
         END IF;
         -- Add table comment.
         IF ocomment IS NOT NULL THEN
-          EXECUTE 'COMMENT ON TABLE ' || buffer || ' IS ' || quote_literal(ocomment);
+          lastsql = 'COMMENT ON TABLE ' || buffer || ' IS ' || quote_literal(ocomment); 
+          IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+          EXECUTE lastsql;
         END IF;
       END IF;
     ELSIF relknd = 'p' THEN
@@ -2314,7 +2381,8 @@ BEGIN
         END IF;
         IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef04:%', qry; END IF;
         lastsql = qry;
-        EXECUTE qry;
+        IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+        EXECUTE lastsql;
         lastsql = '';
         
         -- Issue#103
@@ -2329,8 +2397,9 @@ BEGIN
         -- issue#95
         IF NOT bNoOwner THEN
           -- Fixed Issue#108: double-quote roles in case they have special characters
-          buffer3 = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || ' OWNER TO ' || tblowner;
-          EXECUTE buffer3;
+          lastsql = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || ' OWNER TO ' || tblowner;
+          IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+          EXECUTE lastsql;
         END IF;
         
       END IF;
@@ -2356,7 +2425,8 @@ BEGIN
           END IF;
         ELSE
           lastsql = qry;
-          EXECUTE qry;
+          IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+          EXECUTE lastsql;
           lastsql = '';
           IF NOT bNoOwner THEN
             NULL;
@@ -2379,28 +2449,44 @@ BEGIN
         ORDER BY old.indexdef, new.indexdef
     LOOP
       lastsql = '';
+      -- Issue#133: We never get here when DDLONLY is specified since it depends on the cloned schema being created, so ALTER INDEX action does not happen on DDLONLY commands      
       IF bDDLOnly THEN
         RAISE INFO '%', 'ALTER INDEX ' || quote_ident(dest_schema) || '.'  || quote_ident(ix_new_name) || ' RENAME TO ' || quote_ident(ix_old_name) || ';';
       ELSE
-        -- The SELECT query above may return duplicate names when a column is
-        -- indexed twice the same manner with 2 different names. Therefore, to
-        -- avoid a 'relation "xxx" already exists' we test if the index name
-        -- is in use or free. Skipping existing index will fallback on unused
+        -- The SELECT query above may return duplicate names when a column is indexed twice the same manner with 2 different names. Therefore, to
+        -- avoid a 'relation "xxx" already exists' we test if the index name is in use or free. Skipping existing index will fallback on unused
         -- ones and every duplicate will be mapped to distinct old names.
-        IF NOT EXISTS (
-            SELECT TRUE
-            FROM pg_indexes
-            WHERE schemaname = dest_schema
-              AND tablename = tblname
-              AND indexname = quote_ident(ix_old_name))
-          AND EXISTS (
-            SELECT TRUE
-            FROM pg_indexes
-            WHERE schemaname = dest_schema
-              AND tablename = tblname
-              AND indexname = quote_ident(ix_new_name))
-          THEN
-          EXECUTE 'ALTER INDEX ' || quote_ident(dest_schema) || '.' || quote_ident(ix_new_name) || ' RENAME TO ' || quote_ident(ix_old_name) || ';';
+        -- Issue#133: index names may be different when the table is created with the LIKE... INCLUDING ALL construct, so change the name to what is was in the original for non-unique indexes at the present time
+        --  IF NOT EXISTS (
+        --     SELECT TRUE
+        --     FROM pg_indexes
+        --     WHERE schemaname = dest_schema
+        --       AND tablename = tblname
+        --       AND indexname = quote_ident(ix_old_name))
+        --   AND EXISTS (
+        --     SELECT TRUE
+        --     FROM pg_indexes
+        --     WHERE schemaname = dest_schema
+        --       AND tablename = tblname
+        --       AND indexname = quote_ident(ix_new_name))
+        --   THEN
+        -- RAISE NOTICE 'AAAA: schema=%  table=%  oldixname=%  newixname=%',quote_ident(source_schema), tblname, ix_old_name, ix_new_name;
+        -- Issue#133: bypass primary and unique keys
+        IF NOT EXISTS (SELECT TRUE FROM pg_class c, pg_constraint ct WHERE ct.conrelid = c.oid AND c.relnamespace::regnamespace::text = quote_ident(source_schema) AND c.relname = tblname AND ct.contype IN ('p', 'u') AND ct.conname = ix_old_name) 
+				THEN
+				  -- Issue#133: bypass columns we can't find in new schema probably due to CREATE TABLE LIKE constructs where fabricated index names are created automatically.
+	        SELECT count(*) INTO cnt FROM pg_indexes WHERE schemaname = quote_ident(dest_schema) AND tablename = tblname AND indexname =  ix_new_name AND ix_old_name <> ix_new_name AND NOT EXISTS (SELECT TRUE FROM pg_indexes 
+	        WHERE schemaname = quote_ident(dest_schema) AND tablename = tblname AND indexname =  ix_old_name);
+	        IF cnt > 0 THEN
+              lastsql = 'ALTER INDEX ' || quote_ident(dest_schema) || '.' || quote_ident(ix_new_name) || ' RENAME TO ' || quote_ident(ix_old_name) || ';'; 
+              IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+              EXECUTE lastsql;
+              lastsql = '';
+          ELSE
+              IF bDebugExec THEN RAISE NOTICE 'EXEC: bypassing(2a) altering index from % TO % for table, %', ix_new_name, ix_old_name, tblname; END IF;   
+          END IF;
+        ELSE
+          IF bDebugExec THEN RAISE NOTICE 'EXEC: bypassing(2b) altering index from % TO % for table, %', ix_new_name, ix_old_name, tblname; END IF;   
         END IF;
       END IF;
     END LOOP;
@@ -2485,7 +2571,8 @@ BEGIN
         RAISE INFO '%', buffer2;
       ELSE
         lastsql = buffer2;
-        EXECUTE buffer2;
+        IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+        EXECUTE lastsql;
         lastsql = '';
       END IF;
     END LOOP;
@@ -2496,14 +2583,14 @@ BEGIN
   END IF;
   -- end of 90600 branch
   
-  RAISE NOTICE '      TABLES cloned: %', LPAD(cnt::text, 5, ' ');
+  RAISE NOTICE '      TABLES cloned: %', LPAD(cntables::text, 5, ' ');
 
   SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
   IF bDebug THEN RAISE NOTICE 'DEBUG: current search_path=%', v_dummy; END IF;
 
   -- Assigning sequences to table columns.
   action := 'Sequences assigning';
-  IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
+  IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
   cnt := 0;
   FOR object IN
     SELECT sequence_name::text
@@ -2551,7 +2638,8 @@ BEGIN
         RAISE INFO '%', qry;
       ELSE
         lastsql = qry;
-        EXECUTE qry;
+        IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+        EXECUTE lastsql;
         lastsql = '';
       END IF;
 
@@ -2563,7 +2651,7 @@ BEGIN
   -- Update IDENTITY sequences to the last value, bypass 9.6 versions
   IF sq_server_version_num > 90624 THEN
       action := 'Identity updating';
-      IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
+      IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
       cnt := 0;
       FOR object, sq_last_value IN
         SELECT sequencename::text, COALESCE(last_value, -999) from pg_sequences where schemaname = quote_ident(source_schema)
@@ -2576,14 +2664,20 @@ BEGIN
         cnt := cnt + 1;
         buffer := quote_ident(dest_schema) || '.' || quote_ident(object);
         IF bData THEN
-          EXECUTE 'SELECT setval( ''' || buffer || ''', ' || sq_last_value || ', ' || sq_is_called || ');' ;
+          lastsql = 'SELECT setval( ''' || buffer || ''', ' || sq_last_value || ', ' || sq_is_called || ');' ; 
+          IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+          EXECUTE lastsql;
+          lastsql = '';
         ELSE
           if bDDLOnly THEN
             -- fix#63
             RAISE INFO '%', 'SELECT setval( ''' || buffer || ''', ' || sq_last_value || ', ' || sq_is_called || ');' ;
           ELSE
             -- fix#63
-            EXECUTE 'SELECT setval( ''' || buffer || ''', ' || sq_last_value || ', ' || sq_is_called || ');' ;
+            lastsql = 'SELECT setval( ''' || buffer || ''', ' || sq_last_value || ', ' || sq_is_called || ');' ; 
+            IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+            EXECUTE lastsql;
+            lastsql = '';
           END IF;
         END IF;
       END LOOP;
@@ -2597,13 +2691,13 @@ BEGIN
   -- Issue#78 forces us to defer FKeys until the end since we previously did row copies before FKeys
   --  add FK constraint
   -- action := 'FK Constraints';
-  IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
+  IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
   -- Issue#62: Add comments on indexes, and then removed them from here and reworked later below.
 
   -- Issue 90: moved functions to here, before views or MVs that might use them
   -- Create functions
     action := 'Functions';
-    IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
+    IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
     cnt := 0;
     -- MJV FIX per issue# 34
     -- SET search_path = '';
@@ -2644,7 +2738,8 @@ BEGIN
         ELSE
           IF bDebug THEN RAISE NOTICE 'DEBUG: %', dest_qry; END IF;
           lastsql = dest_qry;
-          EXECUTE dest_qry;
+          IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+          EXECUTE lastsql;
           lastsql = '';
 
           -- Issue#91 Fix
@@ -2659,7 +2754,8 @@ BEGIN
             END IF;
           END IF;
           lastsql = dest_qry;
-          EXECUTE dest_qry;
+          IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+          EXECUTE lastsql;
           lastsql = '';
         END IF;
       END LOOP;
@@ -2675,7 +2771,8 @@ BEGIN
           RAISE INFO '%;', dest_qry;
         ELSE
           lastsql = dest_qry;
-          EXECUTE dest_qry;
+          IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+          EXECUTE lastsql;
           lastsql = '';
         END IF;
       END LOOP;
@@ -2727,7 +2824,8 @@ BEGIN
           RAISE INFO '%;', dest_qry;
         ELSE
           lastsql = dest_qry;
-          EXECUTE dest_qry;
+          IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+          EXECUTE lastsql;
           lastsql = '';
         END IF;
   
@@ -2774,7 +2872,8 @@ BEGIN
           RAISE INFO '%;', dest_qry;
         ELSE
           lastsql = dest_qry;
-          EXECUTE dest_qry;
+          IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+          EXECUTE lastsql;
           lastsql = '';
         END IF;
   
@@ -2784,7 +2883,7 @@ BEGIN
   
   -- Create views
   action := 'Views';
-  IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
+  IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
 
   -- Issue#61 FIX: use set_config for empty string
   -- MJV FIX #43: also had to reset search_path from source schema to empty.
@@ -2816,7 +2915,7 @@ BEGIN
        WHERE v.relkind IN ('v')
          AND d.classid = 'pg_rewrite'::regclass
          AND d.refclassid = 'pg_class'::regclass
-         --Issue#133
+         -- Issue#133 aded extra deptype
          -- AND d.deptype = 'n'
          AND d.deptype IN ('n', 'i')
     UNION
@@ -2837,7 +2936,7 @@ BEGIN
        WHERE v.relkind IN ('v')
          AND d.classid = 'pg_rewrite'::regclass
              AND d.refclassid = 'pg_class'::regclass
-         --Issue#133
+         -- Issue#133 aded extra deptype
          -- AND d.deptype = 'n'
          AND d.deptype IN ('n', 'i')
          AND v.oid <> views.viewname
@@ -2878,7 +2977,7 @@ BEGIN
     WHERE source_ns.nspname = quote_ident(source_schema) AND dependent_ns.nspname = quote_ident(source_schema) 
     AND dependent_obj.relname <> source_obj.relname AND dependent_obj.relkind in ('v') AND source_obj.relkind in ('m') AND dependent_obj.relname = v_dummy)
     SELECT count(*) into cnt FROM dependencies;
-    IF bVerbose THEN RAISE NOTICE 'dependent view count=% for view, %', cnt, v_dummy; END IF;  
+    IF bDebug THEN RAISE NOTICE 'dependent view count=% for view, %', cnt, v_dummy; END IF;  
     IF cnt > 0 THEN
         -- defer view creation until after MVs are done
         deferredviews := deferredviews || v_def;
@@ -2897,16 +2996,17 @@ BEGIN
     ELSE
       -- EXECUTE 'CREATE OR REPLACE VIEW ' || buffer || ' AS ' || v_def;
       lastsql = v_def;
-      EXECUTE v_def;
+      IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+      EXECUTE lastsql;
       lastsql = '';
       -- Issue#73: commented out comment logic for views since we do it elsewhere now.
       -- Issue#91 Fix
       -- issue#95 
       IF NOT bNoOwner THEN      
         -- Fixed Issue#108: double-quote roles in case they have special characters
-        v_def = 'ALTER TABLE ' || buffer3 || ' OWNER TO ' || '"' || view_owner || '";';
-        lastsql = v_def;
-        EXECUTE v_def;
+        lastsql = 'ALTER TABLE ' || buffer3 || ' OWNER TO ' || '"' || view_owner || '";';
+        IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+        EXECUTE lastsql;
         lastsql = '';
       END IF;
     END IF;
@@ -2915,7 +3015,7 @@ BEGIN
 
   -- Create Materialized views
   action := 'Mat. Views';
-  IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
+  IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
   cnt := 0;
   -- Issue#91 get view_owner
   FOR object, view_owner, v_def IN
@@ -2931,7 +3031,7 @@ BEGIN
       IF bData THEN
         -- issue#98 defer creation until after regular tables are populated. Also defer the ownership as well.
         -- EXECUTE 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || buffer2 || ' WITH DATA;' ;
-        IF bDebug THEN RAISE NOTICE 'Section=% deferring MV creation, %',action,buffer; END IF;
+        IF bDebug THEN RAISE NOTICE 'DEBUG: Section=% deferring MV creation, %',action,buffer; END IF;
         buffer3 = 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || buffer2 || ' WITH DATA;';
         mvarray := mvarray || buffer3;
         
@@ -2953,14 +3053,17 @@ BEGIN
             RAISE INFO '%', 'ALTER MATERIALIZED VIEW ' || buffer || ' OWNER TO ' || view_owner || ';' ;
           END IF;
         ELSE
-          EXECUTE 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || buffer2 || ' WITH NO DATA;' ;
+          lastsql = 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || buffer2 || ' WITH NO DATA;' ; 
+          IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+          EXECUTE lastsql;
+          lastsql = '';
           -- Issue#91
           -- issue#95 
           IF NOT bNoOwner THEN      
             -- Fixed Issue#108: double-quote roles in case they have special characters
-            buffer3 = 'ALTER MATERIALIZED VIEW ' || buffer || ' OWNER TO ' || view_owner || ';' ;
-            lastsql = buffer3;
-            EXECUTE buffer3;
+            lastsql = 'ALTER MATERIALIZED VIEW ' || buffer || ' OWNER TO ' || view_owner || ';' ;
+            IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+            EXECUTE lastsql;
             lastsql = '';
           END IF;
         END IF;
@@ -2975,7 +3078,10 @@ BEGIN
             buffer3 = 'COMMENT ON MATERIALIZED VIEW ' || quote_ident(dest_schema) || '.' || object || ' IS ''' || adef || ''';';
             mvarray = mvarray || buffer3;
           ELSE
-            EXECUTE 'COMMENT ON MATERIALIZED VIEW ' || quote_ident(dest_schema) || '.' || object || ' IS ''' || adef || ''';';
+            lastsql = 'COMMENT ON MATERIALIZED VIEW ' || quote_ident(dest_schema) || '.' || object || ' IS ''' || adef || ''';'; 
+            IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+            EXECUTE lastsql;
+            lastsql = '';
           END IF;
           
         END IF;
@@ -2991,8 +3097,9 @@ BEGIN
               -- #issue#116 defer materialized view index creations as well
               mvarray = mvarray || adef;  
           ELSE
-              lastsql = adef; 
-              EXECUTE adef || ';';
+              lastsql = adef || ';';
+              IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;    
+              EXECUTE lastsql;
               lastsql = '';
           END IF;        
         END IF;        
@@ -3004,7 +3111,7 @@ BEGIN
   --Issue#133: create deferred views here since MVs they depend on are done now, but only if not in DATA mode where we do it after tables and MVs are created  
   IF NOT bData THEN
       action := 'Deferred Views';
-      IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
+      IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
       cnt = 0;
       FOREACH viewdef IN ARRAY deferredviews
         LOOP 
@@ -3014,7 +3121,10 @@ BEGIN
           IF bDDLOnly THEN
             RAISE INFO '%', v_def;
           ELSE
-            EXECUTE viewdef;
+            lastsql = viewdef;
+            IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;    
+            EXECUTE lastsql;
+            lastsql = '';
           END IF;
         END LOOP;
   RAISE NOTICE 'Deferrd VIEWS cloned:%', LPAD(cnt::text, 5, ' ');
@@ -3030,7 +3140,7 @@ BEGIN
   -- MV: Create Rules
   -- Fixes Issue#59 Implement Rules
   action := 'Rules';
-  IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
+  IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
   cnt := 0;
   FOR arec IN
     SELECT regexp_replace(definition, E'[\\n\\r]+', ' ', 'g' ) as definition
@@ -3043,6 +3153,7 @@ BEGIN
       RAISE INFO '%', buffer;
     ELSE
       lastsql = buffer;
+      IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;    
       EXECUTE buffer;
       lastsql = '';
     END IF;
@@ -3053,7 +3164,7 @@ BEGIN
   -- MV: Create Policies
   -- Fixes Issue#66 Implement Security policies for RLS
   action := 'Policies';
-  IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
+  IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
   cnt := 0;
   -- #106 Handle 9.6 which doesn't have "permissive"
   IF sq_server_version_num > 90624 THEN
@@ -3075,20 +3186,22 @@ BEGIN
       ELSE
         IF bDebug THEN RAISE NOTICE 'DEBUG: policiesA - %', arec.definition; END IF;
         lastsql = arec.definition;
-        EXECUTE arec.definition;
+        IF bDebugExec THEN RAISE NOTICE 'EXEC3: %', lastsql; END IF;    
+        EXECUTE lastsql;
         lastsql = '';
       END IF;
     
       -- Issue#76: Enable row security if indicated
       SELECT c.relrowsecurity INTO abool FROM pg_class c, pg_namespace n where n.nspname = quote_ident(arec.schemaname) AND n.oid = c.relnamespace AND c.relname = quote_ident(arec.tablename) and c.relkind = 'r';
       IF abool THEN
-        buffer = 'ALTER TABLE ' || dest_schema || '.' || arec.tablename || ' ENABLE ROW LEVEL SECURITY;';
+        lastsql = 'ALTER TABLE ' || dest_schema || '.' || arec.tablename || ' ENABLE ROW LEVEL SECURITY;';
         IF bDDLOnly THEN
-          RAISE INFO '%', buffer;
+          RAISE INFO '%', lastsql;
+          lastsql = '';
         ELSE
           IF bDebug THEN RAISE NOTICE 'DEBUG: policiesB - %', arec.definition; END IF;
-          lastsql = arec.definition;
-          EXECUTE buffer;
+          IF bDebugExec THEN RAISE NOTICE 'EXEC4: %', lastsql; END IF;    
+          EXECUTE lastsql;
           lastsql = '';
         END IF;
       END IF;
@@ -3112,7 +3225,8 @@ BEGIN
         RAISE INFO '%', arec.definition;
       ELSE
         lastsql = arec.definition;
-        EXECUTE arec.definition;
+        IF bDebugExec THEN RAISE NOTICE 'EXEC1: %', lastsql; END IF;    
+        EXECUTE lastsql;
         lastsql = '';
       END IF;
     
@@ -3124,7 +3238,8 @@ BEGIN
           RAISE INFO '%', buffer;
         ELSE
           lastsql = buffer;
-          EXECUTE buffer;
+          IF bDebugExec THEN RAISE NOTICE 'EXEC2: %', lastsql; END IF;    
+          EXECUTE lastsql;
           lastsql = '';
         END IF;
       END IF;
@@ -3135,11 +3250,11 @@ BEGIN
 
   -- MJV Fixed #62 for comments (PASS 1)
   action := 'Comments1';
-  IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
+  IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
   cnt := 0;
-  FOR qry IN
+  FOR buffer, buffer2, qry IN
     -- Issue#74 Fix: Change schema from source to target. Also, do not include comments on foreign tables since we do not clone foreign tables at this time.
-    SELECT 'COMMENT ON ' || CASE WHEN c.relkind in ('r','p') AND a.attname IS NULL THEN 'TABLE ' WHEN c.relkind in ('r','p') AND
+    SELECT c.relkind, c.relname, 'COMMENT ON ' || CASE WHEN c.relkind in ('r','p') AND a.attname IS NULL THEN 'TABLE ' WHEN c.relkind in ('r','p') AND
     a.attname IS NOT NULL THEN 'COLUMN ' WHEN c.relkind = 'f' THEN 'FOREIGN TABLE ' WHEN c.relkind = 'm' THEN 'MATERIALIZED VIEW ' WHEN c.relkind = 'v' THEN 'VIEW '
     WHEN c.relkind = 'i' THEN 'INDEX ' WHEN c.relkind = 'S' THEN 'SEQUENCE ' ELSE 'XX' END || quote_ident(dest_schema) || '.' || CASE WHEN c.relkind in ('r','p') AND
     -- Issue#78: handle case-sensitive names with quote_ident()
@@ -3159,6 +3274,12 @@ BEGIN
     
     -- BAD : "COMMENT ON SEQUENCE sample_clone2.CaseSensitive_ID_seq IS 'just a comment on CaseSensitive sequence';"
     -- GOOD: "COMMENT ON SEQUENCE "CaseSensitive_ID_seq" IS 'just a comment on CaseSensitive sequence';"
+
+    -- Issue#133: might have to change index name since we do not do alter index rename anymore...
+    -- See if it exists in new schema.  If not, change name to table name, column name ... _idx, which happens with CREATE TABLE LIKE construct.
+    IF buffer = 'i' THEN
+        -- to do
+    END IF;
     
     -- Issue#98 For MVs we create comments when we create the MVs
     IF substring(qry,1,28) = 'COMMENT ON MATERIALIZED VIEW' THEN
@@ -3171,7 +3292,8 @@ BEGIN
       RAISE INFO '%', qry;
     ELSE
       lastsql = qry;
-      EXECUTE qry;
+      IF bDebugExec THEN RAISE NOTICE 'EXEC: %',lastsql; END IF;
+      EXECUTE lastsql;
       lastsql = '';
     END IF;
   END LOOP;
@@ -3179,7 +3301,7 @@ BEGIN
 
   -- MJV Fixed #62 for comments (PASS 2)
   action := 'Comments2';
-  IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
+  IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
   cnt2 := 0;
   IF is_prokind THEN
   FOR qry IN
@@ -3234,6 +3356,11 @@ BEGIN
     WHERE t.typtype = 'd' AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default
     ORDER BY 1
   LOOP
+    -- TEMP!!!!!!!!
+    -- IF POSITION('COMMENT ON DOMAIN' IN qry) > 0 THEN 
+    --     RAISE NOTICE 'Bypassing domain comment, %',qry;
+    --     continue;
+    -- END IF;
     cnt2 := cnt2 + 1;
     IF bDDLOnly THEN
       RAISE INFO '%', qry;
@@ -3320,7 +3447,7 @@ BEGIN
     EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
     IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed back to source schema:%', quote_ident(source_schema); END IF;    
     action := 'PRIVS: Defaults';
-    IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
+    IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
     cnt := 0;
     FOR arec IN
       SELECT pg_catalog.pg_get_userbyid(d.defaclrole) AS "owner", n.nspname AS schema,
@@ -3360,7 +3487,8 @@ BEGIN
                 RAISE INFO '%', buffer;
               ELSE
                 lastsql = buffer;
-                EXECUTE buffer;
+                IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;    
+                EXECUTE lastsql;
                 lastsql = '';
               END IF;
               -- Issue#92 Fix:
@@ -3381,11 +3509,15 @@ BEGIN
                   RAISE INFO '%', buffer;
                 ELSE
                   lastsql = buffer;
-                  EXECUTE buffer;
+                  IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;    
+                  EXECUTE lastsql;
                   lastsql = '';
                 END IF;
                 -- Issue#92 Fix:
-                EXECUTE 'SET ROLE = ' || calleruser;
+                lastsql = 'SET ROLE = ' || calleruser; 
+                -- IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;    
+                EXECUTE lastsql;
+                lastsql = '';
 
               ELSE
                 -- have to specify each priv individually
@@ -3419,11 +3551,13 @@ BEGIN
                   RAISE INFO '%', buffer;
                 ELSE
                   lastsql = buffer;
-                  EXECUTE buffer;
+                  IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;    
+                  EXECUTE lastsql;
                   lastsql = '';
                 END IF;
                 select current_user into buffer;
                 -- Issue#92 Fix:
+                -- IF bDebugExec THEN RAISE NOTICE 'EXEC: %', 'SET ROLE = ' || calleruser; END IF;    
                 EXECUTE 'SET ROLE = ' || calleruser;
               END IF;
 
@@ -3480,12 +3614,14 @@ BEGIN
                 RAISE INFO '%', buffer;
               ELSE
                 lastsql = buffer;
-                EXECUTE buffer;
+                IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;    
+                EXECUTE lastsql;
                 lastsql = '';
               END IF;
               select current_user into buffer;
               -- Issue#92 Fix:
               EXECUTE 'SET ROLE = ' || calleruser;
+              -- IF bDebugExec THEN RAISE NOTICE 'EXEC: %', 'SET ROLE = ' || calleruser; END IF;    
 
             ELSIF arec.atype = 'type' THEN
               IF POSITION('r' IN privs) > 0 AND POSITION('w' IN privs) > 0 AND POSITION('U' IN privs) > 0 THEN
@@ -3502,11 +3638,15 @@ BEGIN
                   RAISE INFO '%', buffer;
                 ELSE
                   lastsql = buffer;
-                  EXECUTE buffer;
+                  IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;    
+                  EXECUTE lastsql;
                   lastsql = '';
                 END IF;
                 -- Issue#92 Fix:
-                EXECUTE 'SET ROLE = ' || calleruser;
+                -- IF bDebugExec THEN RAISE NOTICE 'EXEC: %', 'SET ROLE = ' || calleruser; END IF;    
+                lastsql = 'SET ROLE = ' || calleruser;
+                EXECUTE lastsql;
+                lastsql = '';
               
               ELSIF POSITION('U' IN privs) THEN
                 buffer := 'ALTER DEFAULT PRIVILEGES FOR ROLE ' || grantor || ' IN SCHEMA ' || quote_ident(dest_schema) || ' GRANT USAGE ON TYPES TO "' || grantee || '";';
@@ -3521,11 +3661,15 @@ BEGIN
                   RAISE INFO '%', buffer;
                 ELSE
                   lastsql = buffer;
-                  EXECUTE buffer;
+                  IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;    
+                  EXECUTE lastsql;
                   lastsql = '';
                 END IF;
                 -- Issue#92 Fix:
-                EXECUTE 'SET ROLE = ' || calleruser;
+                lastsql = 'SET ROLE = ' || calleruser;
+                IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;    
+                EXECUTE lastsql;
+                lastsql = '';
               
               ELSE
                 RAISE WARNING 'Unhandled TYPE Privs:: type=%  privs=%  owner=%   defaclacl=%  defaclstr=%  grantor=%  grantee=% ', arec.atype, privs, arec.owner, arec.defaclacl, arec.defaclstr, grantor, grantee;
@@ -3547,7 +3691,7 @@ BEGIN
     -- WHERE base_role != CURRENT_USER and objtype = 'schema' and schemaname = 'public' group by 1,2,3,4,5,6;
 
     action := 'PRIVS: Schema';
-    IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
+    IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
     cnt := 0;
     FOR arec IN
       SELECT 'GRANT ' || p.perm::perm_type || ' ON SCHEMA ' || quote_ident(dest_schema) || ' TO "' || r.rolname || '";' as schema_ddl
@@ -3565,7 +3709,8 @@ BEGIN
           RAISE INFO '%', arec.schema_ddl;
         ELSE
           lastsql = arec.schema_ddl;
-          EXECUTE arec.schema_ddl;
+          IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;    
+          EXECUTE lastsql;
           lastsql = '';
         END IF;
   
@@ -3578,7 +3723,7 @@ BEGIN
   IF NOT bNoACL THEN
     -- MV: PRIVS: sequences
     action := 'PRIVS: Sequences';
-    IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
+    IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
     cnt := 0;
     FOR arec IN
       -- Issue#78 FIX: handle case-sensitive names with quote_ident() on t.relname
@@ -3597,7 +3742,8 @@ BEGIN
           RAISE INFO '%', arec.seq_ddl;
         ELSE
           lastsql = arec.seq_ddl;
-          EXECUTE arec.seq_ddl;
+          IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;    
+          EXECUTE lastsql;
           lastsql = '';
         END IF;
       END;
@@ -3609,7 +3755,7 @@ BEGIN
   IF NOT bNoACL THEN
     -- MV: PRIVS: functions
     action := 'PRIVS: Functions/Procedures';
-    IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
+    IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
     cnt := 0;
 
     -- Issue#61 FIX: use set_config for empty string
@@ -3644,7 +3790,8 @@ BEGIN
           RAISE INFO '%', arec.func_dcl;
         ELSE
           lastsql = arec.func_dcl;
-          EXECUTE arec.func_dcl;
+          IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;    
+          EXECUTE lastsql;
           lastsql = '';
         END IF;
       END;
@@ -3664,13 +3811,14 @@ BEGIN
     EXECUTE 'SET search_path = ' || quote_ident(dest_schema) ;
     IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to target schema:%', quote_ident(dest_schema); END IF;
     action := 'Copy Rows';
-    IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
+    IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
     FOREACH tblelement IN ARRAY tblarray
     LOOP 
        s = clock_timestamp();
        IF bDebug THEN RAISE NOTICE 'DEBUG1: no UDTs %', tblelement; END IF;
        lastsql = tblelement;
-       EXECUTE tblelement;       
+       IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;    
+       EXECUTE lastsql;       
        lastsql = '';
        GET DIAGNOSTICS cnt = ROW_COUNT;  
        buffer = substring(tblelement, 13);
@@ -3694,7 +3842,8 @@ BEGIN
        s = clock_timestamp();
        IF bDebug THEN RAISE NOTICE 'DEBUG2: UDTs %', tblelement; END IF;
        lastsql = tblelement;
-       EXECUTE tblelement;       
+       IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;    
+       EXECUTE lastsql;       
        lastsql = '';
        GET DIAGNOSTICS cnt = ROW_COUNT;  
        
@@ -3747,7 +3896,8 @@ BEGIN
        s = clock_timestamp();
        IF bDebug THEN RAISE NOTICE 'DEBUG3: UDTs %', tblelement; END IF;
        lastsql = tblelement;
-       EXECUTE tblelement;       
+       IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;    
+       EXECUTE lastsql;       
        lastsql = '';
        GET DIAGNOSTICS cnt = ROW_COUNT;  
        cnt2 = POSITION(' (' IN tblelement::text);
@@ -3773,7 +3923,8 @@ BEGIN
     LOOP 
        s = clock_timestamp();
        lastsql = tblelement;
-       EXECUTE tblelement;       
+       IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;    
+       EXECUTE lastsql;       
        lastsql = '';
        -- get diagnostics for MV creates or refreshes does not work, always returns 1
        GET DIAGNOSTICS cnt = ROW_COUNT;  
@@ -3791,13 +3942,11 @@ BEGIN
     cnt := cast(extract(epoch from (clock_timestamp() - r)) as numeric(18,3));
     IF bVerbose THEN RAISE NOTICE 'Copy rows duration: % seconds',cnt; END IF;  
   END IF;
-  RAISE NOTICE '      TABLES copied: %', LPAD(tblscopied::text, 5, ' ');
-  RAISE NOTICE ' MATVIEWS refreshed: %', LPAD(mvscopied::text, 5, ' ');
-
+ 
   --Issue#133: create deferred views here since MVs they depend on are done now, but only if not in DATA mode where we do it after tables and MVs are created  
   IF bData THEN
       action := 'Deferred Views';
-      IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
+      IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
       cnt = 0;
       FOREACH viewdef IN ARRAY deferredviews
         LOOP 
@@ -3807,7 +3956,10 @@ BEGIN
           IF bDDLOnly THEN
             RAISE INFO '%', v_def;
           ELSE
-            EXECUTE viewdef;
+            lastsql = viewdef;
+            IF bDebugExec THEN RAISE NOTICE 'EXEC: %', substring(lastsql,1,25); END IF;    
+            EXECUTE lastsql;
+            lastsql = '';
           END IF;
         END LOOP;
   RAISE NOTICE 'Deferrd VIEWS cloned:%', LPAD(cnt::text, 5, ' ');
@@ -3821,6 +3973,7 @@ BEGIN
      IF bDDLOnly THEN
          RAISE INFO '%', tblelement;
      ELSE 
+         IF bDebugExec THEN RAISE NOTICE 'EXEC: %', tblelement; END IF;
          EXECUTE tblelement;       
      END IF;
   END LOOP;    
@@ -3830,7 +3983,7 @@ BEGIN
   IF NOT bNoACL THEN
     -- MV: PRIVS: tables
     action := 'PRIVS: Tables';
-    IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
+    IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
     -- regular, partitioned, and foreign tables plus view and materialized view permissions. Ignored for now: implement foreign table defs.
     cnt := 0;
     FOR arec IN
@@ -3856,6 +4009,7 @@ BEGIN
                 RAISE INFO '%', arec.tbl_dcl;
             ELSE
                 lastsql = arec.tbl_dcl;
+                IF bDebugExec THEN RAISE NOTICE 'EXEC: %', arec.tbl_dcl; END IF;    
                 EXECUTE arec.tbl_dcl;
                 lastsql = '';
               END IF;
@@ -3868,7 +4022,7 @@ BEGIN
   -- Issue#78 forces us to defer FKeys until the end since we previously did row copies before FKeys
   --  add FK constraint
   action := 'FK Constraints';
-  IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
+  IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
   cnt := 0;
 
   -- Issue#61 FIX: use set_config for empty string
@@ -3896,6 +4050,7 @@ BEGIN
     ELSE
       IF bDebug THEN RAISE NOTICE 'DEBUG: adding FKEY constraint: %', qry; END IF;
       lastsql = qry;
+      IF bDebugExec THEN RAISE NOTICE 'EXEC: %', qry; END IF;    
       EXECUTE qry;
       lastsql = '';
     END IF;
@@ -3909,7 +4064,7 @@ BEGIN
   IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to empty string:%', v_dummy; END IF;  
 
   action := 'Triggers';
-  IF bDebug THEN RAISE NOTICE 'Section=%',action; END IF;
+  IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
   cnt := 0;
   FOR arec IN
     -- 2021-03-09 MJV FIX: #40 fixed sql to get the def using pg_get_triggerdef() sql
@@ -3929,6 +4084,7 @@ BEGIN
         RAISE INFO '%', arec.trig_ddl;
       ELSE
         lastsql = arec.trig_ddl;
+        IF bDebugExec THEN RAISE NOTICE 'EXEC: %', arec.trig_ddl; END IF;    
         EXECUTE arec.trig_ddl;
         lastsql = '';
       END IF;
@@ -3937,6 +4093,8 @@ BEGIN
   END LOOP;
   RAISE NOTICE '    TRIGGERS cloned: %', LPAD(cnt::text, 5, ' ');
 
+  RAISE NOTICE '      TABLES copied: %', LPAD(tblscopied::text, 5, ' ');
+  RAISE NOTICE ' MATVIEWS refreshed: %', LPAD(mvscopied::text, 5, ' ');
 
   IF v_src_path_old = '' OR v_src_path_old = '""' THEN
     -- RAISE NOTICE 'Restoring old search_path to empty string';
