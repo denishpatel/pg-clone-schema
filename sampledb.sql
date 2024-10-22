@@ -505,6 +505,9 @@ CREATE TABLE foo2 (
     foo_name character varying(10)
 );
 
+insert into sample.foo (foo_id, foo_name) SELECT s.id * 1, (SELECT string_agg(x, '') FROM (SELECT chr(ascii('a') + floor(random() * 10)::integer) FROM generate_series(1, 10 + id * 0)) AS y(x))  FROM generate_series(1, 20000) s(id);
+insert into sample.foo2(foo_id, foo_name) SELECT s.id * 1, (SELECT string_agg(x, '') FROM (SELECT chr(ascii('a') + floor(random() * 10)::integer) FROM generate_series(1, 10 + id * 0)) AS y(x))  FROM generate_series(1, 20000) s(id);
+
 
 ALTER TABLE foo OWNER TO postgres;
 ALTER TABLE foo2 OWNER TO postgres;
@@ -762,7 +765,6 @@ CREATE TABLE person (
     lastname text NOT NULL
 );
 ALTER TABLE person OWNER TO postgres;
-
 ALTER TABLE person ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     SEQUENCE NAME person_id_seq
     START WITH 1
@@ -774,6 +776,11 @@ ALTER TABLE person ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
 
 INSERT into person OVERRIDING SYSTEM VALUE select 1, 'joe','shmoe';
 INSERT into person OVERRIDING SYSTEM VALUE select 2, 'james','bond';
+INSERT INTO sample.person (id, firstname, lastname) OVERRIDING SYSTEM VALUE 
+SELECT s.idd, (SELECT string_agg(x, '') FROM (SELECT chr(ascii('a') + floor(random() * 10)::integer) FROM generate_series(1, 10 + idd * 0)) AS y(x)),
+(SELECT string_agg(y, '') FROM (SELECT chr(ascii('a') + floor(random() * 10)::integer) FROM generate_series(1, 10 + idd * 0)) AS y(y))  
+FROM generate_series(3, 1000000) s(idd);
+
 --
 -- Name: sampletable; Type: TABLE; Schema: sample; Owner: postgres
 --
@@ -782,8 +789,8 @@ CREATE TABLE sampletable (x numeric);
 ALTER TABLE sampletable OWNER TO postgres;
 CREATE VIEW v_sampletable AS Select * from sampletable;
 COMMENT ON VIEW v_sampletable IS 'just a view on the sample table';
-INSERT INTO sampletable SELECT 1.00;
-INSERT INTO sampletable SELECT 2.00;
+INSERT INTO sample.sampletable (x) SELECT s.id FROM generate_series(1, 20000) s(id);
+INSERT INTO sample.sampletable (x) SELECT s.id * 1.00 FROM generate_series(1, 20000) s(id);
 
 --
 -- Name: seq111; Type: SEQUENCE; Schema: sample; Owner: postgres
@@ -809,9 +816,7 @@ CREATE TABLE test (
     minor integer
 );
 ALTER TABLE test OWNER TO postgres;
-
-INSERT INTO test SELECT 1,1;
-INSERT INTO test SELECT 2,2;
+insert into sample.test (major, minor) SELECT s.id, random() * 10000 FROM generate_series(1, 10000) s(id);
 
 --
 -- Name: address address_pkey; Type: CONSTRAINT; Schema: sample; Owner: postgres
@@ -1326,6 +1331,7 @@ CREATE OR REPLACE FUNCTION sample.ltree_function(public.ltree) RETURNS boolean A
 
 -- create a table with 4 triggers on it
 CREATE TABLE t_demo (id int);
+insert into sample.t_demo (id) SELECT s.id * 1 FROM generate_series(1, 20000) s(id);
  
 CREATE FUNCTION trig_func() 
 RETURNS trigger AS
@@ -1341,6 +1347,11 @@ CREATE TRIGGER b_trigger_bef BEFORE INSERT ON t_demo FOR EACH ROW EXECUTE PROCED
 CREATE TRIGGER a_trigger_bef BEFORE INSERT ON t_demo FOR EACH ROW EXECUTE PROCEDURE trig_func();
 CREATE TRIGGER c_trigger_aft AFTER INSERT  ON t_demo FOR EACH ROW EXECUTE PROCEDURE trig_func();
 CREATE TRIGGER b_trigger_aft AFTER INSERT  ON t_demo FOR EACH ROW EXECUTE PROCEDURE trig_func();
+
+-- Issue#133 test case
+CREATE TABLE IF NOT EXISTS f_f_hub (id varchar(255) not null constraint f_hub_id_key unique);
+CREATE UNIQUE INDEX IF NOT EXISTS xufhub on f_f_hub (id);
+COMMENT ON TABLE f_f_hub IS 'This table is my f_f_hub.';
 
 --
 -- End Sample database
