@@ -76,6 +76,7 @@
 -- 2024-10-21  MJV FIX: Fixed Issue#133: Defer creation of Views dependent on MVs.  Also, for cases where DATA is specified, needed to change the order of things...Also, had to fix bug with altering index names.
 --                                       When a table is created with the LIKE condition, the index names do not match the original.  They take the form, <table name>_<column name>_idx.  Multiple <column_name> if composite index.
 --                                       so don't try to rename anymore if we can't match new to original.
+-- 2024-10-24  MJV FIX: Fixed Issue#138: conversion changes for PG v17: search_path change for specific query;
 -- 2024-??-??  MJV FIX: Fixed Issue#122: TODO ---> Do not create explicit sequence when it is implied via serial definition.
 
 do $$ 
@@ -935,7 +936,8 @@ $$
     -- Issue#29: add verbose info for searchpath stuff
     v_context = 'SEARCHPATH';
     IF search_path_old = '' THEN
-      SELECT set_config('search_path', '', false) into v_temp;
+      -- Issue#138: make search path changes only effective for the current transaction (last parm goes from false to true)
+      SELECT set_config('search_path', '', true) into v_temp;
       IF bVerbose THEN RAISE NOTICE 'SearchPath Cleanup: current searchpath=%', v_temp; END IF;
     ELSE
       IF bVerbose THEN RAISE NOTICE 'SearchPath Cleanup: resetting searchpath=%', search_path_old; END IF;
@@ -1112,7 +1114,7 @@ DECLARE
   s                timestamptz;
   lastsql          text := '';
   lasttbl          text := '';
-  v_version        text := '2.3 October 21, 2024';
+  v_version        text := '2.3 October 24, 2024';
 
 BEGIN
   -- uncomment the following to get line context info when debugging exceptions. 
@@ -1436,9 +1438,14 @@ BEGIN
   -- MV: Create Domains
   action := 'Domains';
   IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
-  -- RAISE NOTICE 'Bypassing section on creating domains...';
   cnt := 0;
   
+  -- Issue#138: make public the first thing in the search_path to avoid error that only happens in PG v17!!!
+  SELECT setting INTO buffer2 FROM pg_settings WHERE name = 'search_path';
+  --SELECT set_config('search_path', 'public', true) into buffer3;
+  -- SELECT set_config('search_path', 'public','sample', true) into buffer3;
+  SELECT set_config('search_path', 'public', true) into buffer3;
+  RAISE NOTICE 'BEFORE: Changed search path from % to %',buffer2, buffer3;
   FOR arec IN
     SELECT n.nspname AS "Schema", t.typname AS "Name", pg_catalog.format_type(t.typbasetype, t.typtypmod) AS "Type", (
             SELECT c.collname
@@ -1472,6 +1479,7 @@ BEGIN
     ORDER BY 1, 2
   LOOP
     BEGIN
+      RAISE NOTICE 'AFTER';
       cnt := cnt + 1;
       IF bDDLOnly THEN
         RAISE INFO '%', arec.dom_ddl;
@@ -1483,6 +1491,8 @@ BEGIN
       END IF;
     END;
   END LOOP;
+  SELECT set_config('search_path', buffer3, true) into buffer3;
+  RAISE NOTICE 'AFTER: Changed search path back from % to %',buffer3, buffer2;  
   RAISE NOTICE '     DOMAINS cloned: %', LPAD(cnt::text, 5, ' ');
   
   
@@ -1718,7 +1728,8 @@ BEGIN
   lasttbl = '';
   -- Issue#61 FIX: use set_config for empty string
   -- SET search_path = '';
-  SELECT set_config('search_path', '', false) into v_dummy;
+  -- Issue#138: make search path changes only effective for the current transaction (last parm goes from false to true)
+  SELECT set_config('search_path', '', true) into v_dummy;
   IF bDebug THEN RAISE NOTICE 'DEBUG: setting search_path to empty string:%', v_dummy; END IF;
   -- Fix#86 add isgenerated to column list
   -- Fix#91 add tblowner for setting the table ownership to that of the source
@@ -1835,12 +1846,13 @@ BEGIN
           -- SELECT * INTO buffer3 FROM public.get_table_ddl_complex(source_schema, dest_schema, tblname, sq_server_version_num);     
           SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
-          IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef01a:%', buffer3; END IF;
+          IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef01a:%', buffer3; END IF;
           -- #82: Table def should be fully qualified with target schema, 
           --      so just make search path = public to handle extension types that should reside in public schema
           v_dummy = 'public';
           IF bDebug THEN RAISE NOTICE 'DEBUG: setting search_path to public:%', v_dummy; END IF;
-          SELECT set_config('search_path', v_dummy, false) into v_dummy;
+          -- Issue#138: make search path changes only effective for the current transaction (last parm goes from false to true)
+          SELECT set_config('search_path', v_dummy, true) into v_dummy;
           lastsql = buffer3;
           IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
           EXECUTE lastsql;
@@ -1857,7 +1869,7 @@ BEGIN
         ELSE
           IF (NOT bChild OR bRelispart) THEN
             buffer3 := 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
-            IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef02:%', buffer3; END IF;
+            IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef02:%', buffer3; END IF;
             lastsql = buffer3;
             IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
             EXECUTE lastsql;
@@ -1892,7 +1904,7 @@ BEGIN
             -- set client_min_messages higher to avoid messages like this:
             -- NOTICE:  merging column "city_id" with inherited definition
             set client_min_messages = 'WARNING';
-            IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef03:%', buffer3; END IF;
+            IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef03:%', buffer3; END IF;
             lastsql = buffer3;
             IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
             EXECUTE lastsql;
@@ -1926,7 +1938,7 @@ BEGIN
       -- SELECT * INTO qry FROM public.get_table_ddl_complex(source_schema, dest_schema, tblname, sq_server_version_num);
       SELECT * INTO qry FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
       qry := REPLACE(qry, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
-      IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef04 - %', qry; END IF;
+      IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef04 - %', qry; END IF;
 
       IF bDDLOnly THEN
         RAISE INFO '%', qry;
@@ -1937,7 +1949,7 @@ BEGIN
         END IF;
       ELSE
         -- Issue#103: we need to always set search_path priority to target schema when we execute DDL
-        IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef04 context: old search path=%  new search path=% current search path=%', v_src_path_old, v_src_path_new, v_dummy; END IF;
+        IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef04 context: old search path=%  new search path=% current search path=%', v_src_path_old, v_src_path_new, v_dummy; END IF;
         SELECT setting INTO spath_tmp FROM pg_settings WHERE name = 'search_path';   
         IF spath_tmp <> dest_schema THEN
           -- change it to target schema and don't forget to change it back after we execute the DDL
@@ -1947,7 +1959,7 @@ BEGIN
           SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';   
           IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to %', v_dummy; END IF;
         END IF;
-        IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef04:%', qry; END IF;
+        IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef04:%', qry; END IF;
         lastsql = qry;
         IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
         EXECUTE qry;
@@ -2024,7 +2036,7 @@ BEGIN
         -- The SELECT query above may return duplicate names when a column is indexed twice the same manner with 2 different names. Therefore, to
         -- avoid a 'relation "xxx" already exists' we test if the index name is in use or free. Skipping existing index will fallback on unused
         -- ones and every duplicate will be mapped to distinct old names.
-        -- Issue#133: index names may be different when the table is created with the LIKE... INCLUDING ALL construct, so change the name to what is was in the original for non-unique indexes at the present time
+        -- Issue#133: index names may be different when the table is created with the LIKE... INCLUDING ALL construct, so change the name to what is was in the original for primary keys and non-unique indexes at the present time
         --  IF NOT EXISTS (
         --     SELECT TRUE
         --     FROM pg_indexes
@@ -2039,8 +2051,9 @@ BEGIN
         --       AND indexname = quote_ident(ix_new_name))
         --   THEN
         -- RAISE NOTICE 'AAAA: schema=%  table=%  oldixname=%  newixname=%',quote_ident(source_schema), tblname, ix_old_name, ix_new_name;
-        -- Issue#133: bypass primary and unique keys
-        IF NOT EXISTS (SELECT TRUE FROM pg_class c, pg_constraint ct WHERE ct.conrelid = c.oid AND c.relnamespace::regnamespace::text = quote_ident(source_schema) AND c.relname = tblname AND ct.contype IN ('p', 'u') AND ct.conname = ix_old_name) 
+        -- Issue#133: bypass unique keys
+        -- IF NOT EXISTS (SELECT TRUE FROM pg_class c, pg_constraint ct WHERE ct.conrelid = c.oid AND c.relnamespace::regnamespace::text = quote_ident(source_schema) AND c.relname = tblname AND ct.contype IN ('p', 'u') AND ct.conname = ix_old_name) 
+        IF NOT EXISTS (SELECT TRUE FROM pg_class c, pg_constraint ct WHERE ct.conrelid = c.oid AND c.relnamespace::regnamespace::text = quote_ident(source_schema) AND c.relname = tblname AND ct.contype IN ('u') AND ct.conname = ix_old_name) 
 				THEN
 				  -- Issue#133: bypass columns we can't find in new schema probably due to CREATE TABLE LIKE constructs where fabricated index names are created automatically.
 	        SELECT count(*) INTO cnt FROM pg_indexes WHERE schemaname = quote_ident(dest_schema) AND tablename = tblname AND indexname =  ix_new_name AND ix_old_name <> ix_new_name AND NOT EXISTS (SELECT TRUE FROM pg_indexes 
@@ -2136,7 +2149,8 @@ BEGIN
 
     -- Issue#61 FIX: use set_config for empty string
     -- SET search_path = '';
-    SELECT set_config('search_path', '', false) into v_dummy;
+    -- Issue#138: make search path changes only effective for the current transaction (last parm goes from false to true)
+    SELECT set_config('search_path', '', true) into v_dummy;
     IF bDebug THEN RAISE NOTICE 'DEBUG: setting search_path to empty string:%', v_dummy; END IF;
 
     FOR column_, default_ IN
@@ -2266,11 +2280,12 @@ BEGIN
           -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
           SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
-          IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef01b:%', buffer3; END IF;
+          IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef01b:%', buffer3; END IF;
           -- #82: Table def should be fully qualified with target schema, 
           --      so just make search path = public to handle extension types that should reside in public schema
           v_dummy = 'public';
-          SELECT set_config('search_path', v_dummy, false) into v_dummy;
+          -- Issue#138: make search path changes only effective for the current transaction (last parm goes from false to true)
+          SELECT set_config('search_path', v_dummy, true) into v_dummy;
           IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to public:%', v_dummy; END IF;          
           lastsql = buffer3;
           IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
@@ -2288,7 +2303,7 @@ BEGIN
         ELSE
           IF (NOT bChild) THEN
             lastsql := 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
-            IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef02:%', lastsql; END IF;
+            IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef02:%', lastsql; END IF;
             IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
             EXECUTE lastsql;
             lastsql = '';
@@ -2323,7 +2338,7 @@ BEGIN
             -- set client_min_messages higher to avoid messages like this:
             -- NOTICE:  merging column "city_id" with inherited definition
             set client_min_messages = 'WARNING';
-            IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef03:%', buffer3; END IF;
+            IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef03:%', buffer3; END IF;
             lastsql = buffer3;
             IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
             EXECUTE lastsql;
@@ -2358,7 +2373,7 @@ BEGIN
       SELECT * INTO qry FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
       qry := REPLACE(qry, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
       
-      IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef04 - %', buffer; END IF;
+      IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef04 - %', buffer; END IF;
       
       IF bDDLOnly THEN
         RAISE INFO '%', qry;
@@ -2369,7 +2384,7 @@ BEGIN
         END IF;
       ELSE
         -- Issue#103: we need to always set search_path priority to target schema when we execute DDL
-        IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef04 context: old search path=%  new search path=% current search path=%', v_src_path_old, v_src_path_new, v_dummy; END IF;
+        IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef04 context: old search path=%  new search path=% current search path=%', v_src_path_old, v_src_path_new, v_dummy; END IF;
         SELECT setting INTO spath_tmp FROM pg_settings WHERE name = 'search_path';   
         IF spath_tmp <> dest_schema THEN
           -- change it to target schema and don't forget to change it back after we execute the DDL
@@ -2379,7 +2394,7 @@ BEGIN
           SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';   
           IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to %', v_dummy; END IF;
         END IF;
-        IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef04:%', qry; END IF;
+        IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef04:%', qry; END IF;
         lastsql = qry;
         IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
         EXECUTE lastsql;
@@ -2456,7 +2471,7 @@ BEGIN
         -- The SELECT query above may return duplicate names when a column is indexed twice the same manner with 2 different names. Therefore, to
         -- avoid a 'relation "xxx" already exists' we test if the index name is in use or free. Skipping existing index will fallback on unused
         -- ones and every duplicate will be mapped to distinct old names.
-        -- Issue#133: index names may be different when the table is created with the LIKE... INCLUDING ALL construct, so change the name to what is was in the original for non-unique indexes at the present time
+        -- Issue#133: index names may be different when the table is created with the LIKE... INCLUDING ALL construct, so change the name to what is was in the original for non-unique indexes and primary keys at the present time
         --  IF NOT EXISTS (
         --     SELECT TRUE
         --     FROM pg_indexes
@@ -2471,8 +2486,9 @@ BEGIN
         --       AND indexname = quote_ident(ix_new_name))
         --   THEN
         -- RAISE NOTICE 'AAAA: schema=%  table=%  oldixname=%  newixname=%',quote_ident(source_schema), tblname, ix_old_name, ix_new_name;
-        -- Issue#133: bypass primary and unique keys
-        IF NOT EXISTS (SELECT TRUE FROM pg_class c, pg_constraint ct WHERE ct.conrelid = c.oid AND c.relnamespace::regnamespace::text = quote_ident(source_schema) AND c.relname = tblname AND ct.contype IN ('p', 'u') AND ct.conname = ix_old_name) 
+        -- Issue#133: bypass unique keys
+        -- IF NOT EXISTS (SELECT TRUE FROM pg_class c, pg_constraint ct WHERE ct.conrelid = c.oid AND c.relnamespace::regnamespace::text = quote_ident(source_schema) AND c.relname = tblname AND ct.contype IN ('p', 'u') AND ct.conname = ix_old_name) 
+        IF NOT EXISTS (SELECT TRUE FROM pg_class c, pg_constraint ct WHERE ct.conrelid = c.oid AND c.relnamespace::regnamespace::text = quote_ident(source_schema) AND c.relname = tblname AND ct.contype IN ('u') AND ct.conname = ix_old_name)         
 				THEN
 				  -- Issue#133: bypass columns we can't find in new schema probably due to CREATE TABLE LIKE constructs where fabricated index names are created automatically.
 	        SELECT count(*) INTO cnt FROM pg_indexes WHERE schemaname = quote_ident(dest_schema) AND tablename = tblname AND indexname =  ix_new_name AND ix_old_name <> ix_new_name AND NOT EXISTS (SELECT TRUE FROM pg_indexes 
@@ -2553,7 +2569,8 @@ BEGIN
 
     -- Issue#61 FIX: use set_config for empty string
     -- SET search_path = '';
-    SELECT set_config('search_path', '', false) into v_dummy;
+    -- Issue#138: make search path changes only effective for the current transaction (last parm goes from false to true)
+    SELECT set_config('search_path', '', true) into v_dummy;
     IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to empty string:%', v_dummy; END IF;
 
     FOR column_, default_ IN
@@ -2888,7 +2905,8 @@ BEGIN
   -- Issue#61 FIX: use set_config for empty string
   -- MJV FIX #43: also had to reset search_path from source schema to empty.
   -- SET search_path = '';
-  SELECT set_config('search_path', '', false)  INTO v_dummy;
+  -- Issue#138: make search path changes only effective for the current transaction (last parm goes from false to true)
+  SELECT set_config('search_path', '', true)  INTO v_dummy;
   IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed back to empty string:%', v_dummy; END IF;
 
   cnt := 0;
@@ -3134,7 +3152,8 @@ BEGIN
   
   -- Issue#111: forces us to defer triggers til after we populate the tables, just like we did with FKeys (Issue#78).
   -- MV: Create Triggers
-  SELECT set_config('search_path', '', false) into v_dummy;
+  -- Issue#138: make search path changes only effective for the current transaction (last parm goes from false to true)
+  SELECT set_config('search_path', '', true) into v_dummy;
   IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed back to empty string:%', v_dummy; END IF;    
 
   -- MV: Create Rules
@@ -3760,7 +3779,8 @@ BEGIN
 
     -- Issue#61 FIX: use set_config for empty string
     -- SET search_path = '';
-    SELECT set_config('search_path', '', false) into v_dummy;
+    -- Issue#138: make search path changes only effective for the current transaction (last parm goes from false to true)
+    SELECT set_config('search_path', '', true) into v_dummy;
     IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to empty string:%', v_dummy; END IF;
 
     -- RAISE NOTICE ' source_schema=%  dest_schema=%',source_schema, dest_schema;
@@ -4027,7 +4047,8 @@ BEGIN
 
   -- Issue#61 FIX: use set_config for empty string
   -- SET search_path = '';
-  SELECT set_config('search_path', '', false) into v_dummy;
+  -- Issue#138: make search path changes only effective for the current transaction (last parm goes from false to true)
+  SELECT set_config('search_path', '', true) into v_dummy;
   IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to empty string:%', v_dummy; END IF;
 
   FOR qry IN
@@ -4060,7 +4081,8 @@ BEGIN
   RAISE NOTICE '       FKEYS cloned: %', LPAD(cnt::text, 5, ' ');
 
   -- Issue#111: forces us to defer triggers til after we populate the tables, just like we did with FKeys (Issue#78).
-  SELECT set_config('search_path', '', false) into v_dummy;
+  -- Issue#138: make search path changes only effective for the current transaction (last parm goes from false to true)
+  SELECT set_config('search_path', '', true) into v_dummy;
   IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to empty string:%', v_dummy; END IF;  
 
   action := 'Triggers';
@@ -4098,7 +4120,8 @@ BEGIN
 
   IF v_src_path_old = '' OR v_src_path_old = '""' THEN
     -- RAISE NOTICE 'Restoring old search_path to empty string';
-    SELECT set_config('search_path', '', false) into v_dummy;
+    -- Issue#138: make search path changes only effective for the current transaction (last parm goes from false to true)
+    SELECT set_config('search_path', '', true) into v_dummy;
     IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to empty string:%', v_dummy; END IF;  
   ELSE
     -- RAISE NOTICE 'Restoring old search_path to:%', v_src_path_old;
@@ -4133,7 +4156,8 @@ BEGIN
 
          IF v_src_path_old = '' THEN
            -- RAISE NOTICE 'setting old search_path to empty string';
-           SELECT set_config('search_path', '', false);
+           -- Issue#138: make search path changes only effective for the current transaction (last parm goes from false to true)
+           SELECT set_config('search_path', '', true);
          ELSE
            -- RAISE NOTICE 'setting old search_path to:%', v_src_path_old;
            EXECUTE 'SET search_path = ' || v_src_path_old;
