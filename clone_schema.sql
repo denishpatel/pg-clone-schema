@@ -76,7 +76,7 @@
 -- 2024-10-21  MJV FIX: Fixed Issue#133: Defer creation of Views dependent on MVs.  Also, for cases where DATA is specified, needed to change the order of things...Also, had to fix bug with altering index names.
 --                                       When a table is created with the LIKE condition, the index names do not match the original.  They take the form, <table name>_<column name>_idx.  Multiple <column_name> if composite index.
 --                                       so don't try to rename anymore if we can't match new to original.
--- 2024-10-24  MJV FIX: Fixed Issue#138: conversion changes for PG v17: search_path change for specific query;
+-- 2024-10-25  MJV FIX: Fixed Issue#138: conversion changes for PG v17: fixed query for domains
 -- 2024-??-??  MJV FIX: Fixed Issue#122: TODO ---> Do not create explicit sequence when it is implied via serial definition.
 
 do $$ 
@@ -1114,7 +1114,7 @@ DECLARE
   s                timestamptz;
   lastsql          text := '';
   lasttbl          text := '';
-  v_version        text := '2.3 October 24, 2024';
+  v_version        text := '2.3 October 25, 2024';
 
 BEGIN
   -- uncomment the following to get line context info when debugging exceptions. 
@@ -1440,59 +1440,36 @@ BEGIN
   IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
   cnt := 0;
   
-  -- Issue#138: make public the first thing in the search_path to avoid error that only happens in PG v17!!!
-  SELECT setting INTO buffer2 FROM pg_settings WHERE name = 'search_path';
+  -- Issue%138: Need to change query to be compatible with PG17 and still work with previous versions
+  -- SELECT setting INTO buffer2 FROM pg_settings WHERE name = 'search_path';
   --SELECT set_config('search_path', 'public', true) into buffer3;
   -- SELECT set_config('search_path', 'public','sample', true) into buffer3;
-  SELECT set_config('search_path', 'public', true) into buffer3;
-  RAISE NOTICE 'BEFORE: Changed search path from % to %',buffer2, buffer3;
+  -- SELECT set_config('search_path', 'public', true) into buffer3;
+  -- IF bDebugExec THEN RAISE NOTICE 'BEFORE: Changed search path from % to %',buffer2, buffer3; END IF;
   FOR arec IN
-    SELECT n.nspname AS "Schema", t.typname AS "Name", pg_catalog.format_type(t.typbasetype, t.typtypmod) AS "Type", (
-            SELECT c.collname
-            FROM pg_catalog.pg_collation c, pg_catalog.pg_type bt
-            WHERE c.oid = t.typcollation
-                AND bt.oid = t.typbasetype
-                AND t.typcollation <> bt.typcollation) AS "Collation", CASE WHEN t.typnotnull THEN
-            'not null'
-        END AS "Nullable", t.typdefault AS "Default", pg_catalog.array_to_string(ARRAY (
-                SELECT pg_catalog.pg_get_constraintdef(r.oid, TRUE)
-                FROM pg_catalog.pg_constraint r
-                -- Issue#78 FIX: handle case-sensitive names with quote_ident() on t.typename
-                WHERE t.oid = r.contypid), ' ') AS "Check", 'CREATE DOMAIN ' || quote_ident(dest_schema) || '.' || quote_ident(t.typname) || ' AS ' || pg_catalog.format_type(t.typbasetype, t.typtypmod) ||
-                CASE WHEN t.typnotnull IS NOT NULL THEN
-            ' NOT NULL '
-        ELSE
-            ' '
-        END || CASE WHEN t.typdefault IS NOT NULL THEN
-            'DEFAULT ' || t.typdefault || ' '
-        ELSE
-            ' '
-        END || pg_catalog.array_to_string(ARRAY (
-                SELECT pg_catalog.pg_get_constraintdef(r.oid, TRUE)
-                FROM pg_catalog.pg_constraint r
-                WHERE t.oid = r.contypid), ' ') || ';' AS DOM_DDL
-    FROM pg_catalog.pg_type t
-        LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
-    WHERE t.typtype = 'd'
-        AND n.nspname = quote_ident(source_schema)
-        AND pg_catalog.pg_type_is_visible(t.oid)
-    ORDER BY 1, 2
+    SELECT n.nspname as "Schema", t.typname, pg_catalog.format_type(t.typbasetype, t.typtypmod) as atype,
+    (SELECT c.collname FROM pg_catalog.pg_collation c, pg_catalog.pg_type bt WHERE c.oid = t.typcollation AND bt.oid = t.typbasetype AND t.typcollation <> bt.typcollation) as "Collation",
+    t.typnotnull, 
+    t.typdefault,
+    COALESCE(pg_catalog.array_to_string(ARRAY(SELECT pg_catalog.pg_get_constraintdef(r.oid, true) FROM pg_catalog.pg_constraint r WHERE t.oid = r.contypid AND r.contype = 'c' ORDER BY r.conname), ''), '') as acheck
+    FROM pg_catalog.pg_type t LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace WHERE t.typtype = 'd' AND n.nspname OPERATOR(pg_catalog.~) '^(sample)$' COLLATE pg_catalog.default ORDER BY 1, 2
   LOOP
     BEGIN
-      RAISE NOTICE 'AFTER';
       cnt := cnt + 1;
+      -- format: CREATE DOMAIN clone1.addr3 AS character varying(90) NOT NULL DEFAULT 'N/A'::character varying CHECK (VALUE::text > ''::text);                
+      lastsql = 'CREATE DOMAIN ' || quote_ident(dest_schema) || '.' || quote_ident(arec.typname) || ' AS ' || arec.atype || CASE WHEN arec.typnotnull IS NOT NULL THEN ' NOT NULL' ELSE '' END ||
+                CASE WHEN arec.typdefault IS NOT NULL THEN ' DEFAULT ' || arec.typdefault ELSE '' END || CASE WHEN arec.acheck <> '' THEN ' ' || arec.acheck ELSE '' END || ';' ;
       IF bDDLOnly THEN
-        RAISE INFO '%', arec.dom_ddl;
+        RAISE INFO '%', lastsql;
       ELSE
-        lastsql = arec.dom_ddl;
         IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
         EXECUTE lastsql;
         lastsql = '';
       END IF;
     END;
   END LOOP;
-  SELECT set_config('search_path', buffer3, true) into buffer3;
-  RAISE NOTICE 'AFTER: Changed search path back from % to %',buffer3, buffer2;  
+  -- SELECT set_config('search_path', buffer3, true) into buffer3;
+  -- IF bDebugExec THEN RAISE NOTICE 'AFTER: Changed search path back from % to %',buffer3, buffer2;  END IF;
   RAISE NOTICE '     DOMAINS cloned: %', LPAD(cnt::text, 5, ' ');
   
   
