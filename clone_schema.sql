@@ -76,7 +76,8 @@
 -- 2024-10-21  MJV FIX: Fixed Issue#133: Defer creation of Views dependent on MVs.  Also, for cases where DATA is specified, needed to change the order of things...Also, had to fix bug with altering index names.
 --                                       When a table is created with the LIKE condition, the index names do not match the original.  They take the form, <table name>_<column name>_idx.  Multiple <column_name> if composite index.
 --                                       so don't try to rename anymore if we can't match new to original.
--- 2024-10-25  MJV FIX: Fixed Issue#138: conversion changes for PG v17: fixed query for domains
+-- 2024-10-25  MJV FIX: Fixed Issue#138: conversion changes for PG v17: fixed queries for domains.
+-- 2024-10-29  MJV FIX: Fixed Issue#131: Use double-quotes around schemas with funky chars
 -- 2024-??-??  MJV FIX: Fixed Issue#122: TODO ---> Do not create explicit sequence when it is implied via serial definition.
 
 do $$ 
@@ -1114,7 +1115,7 @@ DECLARE
   s                timestamptz;
   lastsql          text := '';
   lasttbl          text := '';
-  v_version        text := '2.3 October 25, 2024';
+  v_version        text := '2.4 October 29, 2024';
 
 BEGIN
   -- uncomment the following to get line context info when debugging exceptions. 
@@ -1299,7 +1300,9 @@ BEGIN
     IF bNoOwner THEN
         RAISE INFO 'CREATE SCHEMA %;', quote_ident(dest_schema);    
     ELSE
-        RAISE INFO 'CREATE SCHEMA % AUTHORIZATION %;', quote_ident(dest_schema), buffer;    
+        -- Issue#131: double quote schema names
+        -- RAISE INFO 'CREATE SCHEMA % AUTHORIZATION %;', quote_ident(dest_schema), buffer;    
+        RAISE INFO 'CREATE SCHEMA % AUTHORIZATION %;', quote_ident(dest_schema), quote_ident(buffer);  
     END IF;
     RAISE NOTICE 'SET search_path=%;', quote_ident(dest_schema);
   ELSE
@@ -1310,7 +1313,9 @@ BEGIN
         EXECUTE lastsql;
         lastsql = '';
     ELSE
+        -- Issue#131: double quote schema names
         -- EXECUTE 'CREATE SCHEMA ' || quote_ident(dest_schema) || ' AUTHORIZATION ' || buffer;
+        -- EXECUTE 'CREATE SCHEMA ' || quote_ident(dest_schema) || ' AUTHORIZATION ' || quote_ident(buffer);
         lastsql = 'CREATE SCHEMA ' || quote_ident(dest_schema) || ' AUTHORIZATION ' || buffer;
         IF bDebugExec THEN RAISE NOTICE 'EXEC: %',lastsql; END IF;
         EXECUTE lastsql;    
@@ -3476,7 +3481,9 @@ BEGIN
               -- ALTER DEFAULT PRIVILEGES FOR ROLE cm_stage_ro_grp IN SCHEMA cm_stage GRANT REFERENCES, TRIGGER ON TABLES TO cm_stage_ro_grp;
               IF grantor = grantee THEN
                   -- append set role to statement
-                  buffer = 'SET ROLE = ' || grantor || '; ' || buffer;
+                  -- Issue#131: double quote schema/roles
+                  -- buffer = 'SET ROLE = ' || grantor || '; ' || buffer;
+                  buffer = 'SET ROLE = "' || grantor || '"; ' || buffer;
               END IF;
             
               IF bDDLOnly THEN
@@ -3770,7 +3777,9 @@ BEGIN
       -- 2021-03-05 MJV FIX: issue#37: defaults cause problems, use system function that returns args WITHOUT DEFAULTS
       -- COALESCE(r.routine_type, 'FUNCTION'): for aggregate functions, information_schema.routines contains NULL as routine_type value.
       -- Issue#78 FIX: handle case-sensitive names with quote_ident() on rp.routine_name
-      SELECT 'GRANT ' || rp.privilege_type || ' ON ' || COALESCE(r.routine_type, 'FUNCTION') || ' ' || quote_ident(dest_schema) || '.' || quote_ident(rp.routine_name) || ' (' || pg_get_function_identity_arguments(p.oid) || ') TO ' || string_agg(distinct rp.grantee, ',') || ';' as func_dcl
+      -- Issue#131: do the same for schema/owners
+      -- SELECT 'GRANT ' || rp.privilege_type || ' ON ' || COALESCE(r.routine_type, 'FUNCTION') || ' ' || quote_ident(dest_schema) || '.' || quote_ident(rp.routine_name) || ' (' || pg_get_function_identity_arguments(p.oid) || ') TO ' || string_agg(distinct rp.grantee, ',') || ';' as func_dcl
+      SELECT 'GRANT ' || rp.privilege_type || ' ON ' || COALESCE(r.routine_type, 'FUNCTION') || ' ' || quote_ident(dest_schema) || '.' || quote_ident(rp.routine_name) || ' (' || pg_get_function_identity_arguments(p.oid) || ') TO "' || string_agg(distinct rp.grantee, '","') || '";' as func_dcl
       FROM information_schema.routine_privileges rp, information_schema.routines r, pg_proc p, pg_namespace n
       WHERE rp.routine_schema = quote_ident(source_schema)
         AND rp.is_grantable = 'YES'
@@ -3988,7 +3997,9 @@ BEGIN
       -- Issue#78 FIX: handle case-sensitive names with quote_ident() on t.relname      
       -- 2024-01-24  MJV FIX: Issue#117    
       SELECT c.relkind, 'GRANT ' || tb.privilege_type || CASE WHEN c.relkind in ('r', 'p') THEN ' ON TABLE ' WHEN c.relkind in ('v', 'm')  THEN ' ON ' END ||
-      quote_ident(dest_schema) || '.' || quote_ident(tb.table_name) || ' TO ' || string_agg(tb.grantee, ',') || ';' as tbl_dcl
+      -- Issue#131: double quote schema/roles
+      -- quote_ident(dest_schema) || '.' || quote_ident(tb.table_name) || ' TO ' || string_agg(tb.grantee, ',') || ';' as tbl_dcl
+      quote_ident(dest_schema) || '.' || quote_ident(tb.table_name) || ' TO "' || string_agg(tb.grantee, '","') || '";' as tbl_dcl
       FROM information_schema.table_privileges tb, pg_class c, pg_namespace n
       WHERE tb.table_schema = quote_ident(source_schema) AND tb.table_name = c.relname AND c.relkind in ('r', 'p', 'v', 'm')
         AND c.relnamespace = n.oid AND n.nspname = quote_ident(source_schema)
