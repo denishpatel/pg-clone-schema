@@ -76,8 +76,8 @@
 -- 2024-10-21  MJV FIX: Fixed Issue#133: Defer creation of Views dependent on MVs.  Also, for cases where DATA is specified, needed to change the order of things...Also, had to fix bug with altering index names.
 --                                       When a table is created with the LIKE condition, the index names do not match the original.  They take the form, <table name>_<column name>_idx.  Multiple <column_name> if composite index.
 --                                       so don't try to rename anymore if we can't match new to original.
--- 2024-10-25  MJV FIX: Fixed Issue#138: conversion changes for PG v17: fixed queries for domains.
 -- 2024-10-29  MJV FIX: Fixed Issue#131: Use double-quotes around schemas with funky chars
+-- 2024-10-30  MJV FIX: Fixed Issue#138: conversion changes for PG v17: fixed queries for domains.
 -- 2024-??-??  MJV FIX: Fixed Issue#122: TODO ---> Do not create explicit sequence when it is implied via serial definition.
 
 do $$ 
