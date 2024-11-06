@@ -79,6 +79,7 @@
 -- 2024-10-29  MJV FIX: Fixed Issue#131: Use double-quotes around schemas with funky chars
 -- 2024-10-30  MJV FIX: Fixed Issue#138: conversion changes for PG v17: fixed queries for domains.
 -- 2024-11-05  MJV FIX: Fixed Issue#139: change return type from VOID to INTEGER for programatic error handling.
+-- 2024-11-06  MJV FIX: Fixed Issue#140: More issues with non-standard schema names requiring quoting
 -- 2024-??-??  MJV FIX: Fixed Issue#122: TODO ---> Do not create explicit sequence when it is implied via serial definition.
 
 do $$ 
@@ -1121,7 +1122,7 @@ DECLARE
   s                timestamptz;
   lastsql          text := '';
   lasttbl          text := '';
-  v_version        text := '2.5 November 05, 2024';
+  v_version        text := '2.6 November 06, 2024';
 
 BEGIN
   -- uncomment the following to get line context info when debugging exceptions. 
@@ -1200,8 +1201,10 @@ BEGIN
   -- Check that source_schema exists
   SELECT oid INTO src_oid
   FROM pg_namespace
-  WHERE nspname = quote_ident(source_schema);
-
+  -- Issue#140
+  -- WHERE nspname = quote_ident(source_schema);
+  WHERE quote_ident(nspname) = quote_ident(source_schema);
+  
   IF NOT FOUND
     THEN
     RAISE NOTICE ' source schema % does not exist!', source_schema;
@@ -1218,7 +1221,9 @@ BEGIN
   -- Check that dest_schema does not yet exist
   PERFORM nspname
   FROM pg_namespace
-  WHERE nspname = quote_ident(dest_schema);
+  -- Issue#140
+  -- WHERE nspname = quote_ident(dest_schema);
+  WHERE quote_ident(nspname) = quote_ident(dest_schema);
 
   IF FOUND
     THEN
@@ -1248,7 +1253,6 @@ BEGIN
   lastsql = 'SET search_path = ' || quote_ident(source_schema) ;
   EXECUTE lastsql;
   lastsql = '';
-  
   SELECT setting INTO v_src_path_new FROM pg_settings WHERE name='search_path';
   IF bDebug THEN RAISE NOTICE 'DEBUG: new search_path=%', v_src_path_new; END IF;
 
@@ -1289,7 +1293,6 @@ BEGIN
               AND n.nspname <> 'information_schema'
               AND pg_catalog.pg_type_is_visible(t.oid)
               AND pg_catalog.format_type(t.oid, NULL) = 'perm_type') b;
-
   IF cnt = 0 THEN
     CREATE TYPE obj_type AS ENUM ('TABLE','VIEW','COLUMN','SEQUENCE','FUNCTION','SCHEMA','DATABASE');
   END IF;
@@ -1298,7 +1301,9 @@ BEGIN
   END IF;
 
   -- Issue#95
-  SELECT pg_catalog.pg_get_userbyid(nspowner) INTO buffer FROM pg_namespace WHERE nspname = quote_ident(source_schema);
+  -- Issue#140
+  -- SELECT pg_catalog.pg_get_userbyid(nspowner) INTO buffer FROM pg_namespace WHERE nspname = quote_ident(source_schema);
+  SELECT pg_catalog.pg_get_userbyid(nspowner) INTO buffer FROM pg_namespace WHERE quote_ident(nspname) = quote_ident(source_schema);
 
   IF bDDLOnly THEN
     RAISE NOTICE ' Only generating DDL, not actually creating anything...';
