@@ -66,7 +66,7 @@ Regression Testing is done in the following order:
 * Only works for PG Versions 10 and up.
 * You should not clone the "public" schema.  The resulting output may not be accurate even if it finishes without any errors.
 * You should not use multiple, user-defined schema objects and expect cloning one schema to another to work.  This project does not support that at the present time.  It only supports 3 schemas basically: the source schema, the target schema, and objects defined in the public schema referenced by those user-defined schemas.
-* Index names are not all the same in the cloned schema since some of the tables are created with the CREATE TABLE ... (LIKE ...) construct.  Those index names are automatically fabricated by PG with naming format that is prepended with table and column names separated by underscores and ending with "_idx" or "_key"..
+* Index names are not all the same in the cloned schema since some of the tables are created with the CREATE TABLE ... (LIKE ...) construct.  Those index names are automatically fabricated by PG with naming format that is prepended with table and column names separated by underscores and ending with "_idx" or "_key".
 * Foreign Tables are not handled at the present time.  They must be done manually.
 * Case-sensitive (names with double quotes around them) schema names are not supported at the present time.  
 <br/>
