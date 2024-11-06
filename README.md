@@ -21,6 +21,8 @@ Arguments:
 * target schema
 * Enumerated list
 
+Returns: INTEGER (0 for success, positive non-zero number for an error)
+
 <pre>source schema  Required: text - schema name</pre>
 <pre>target schema  Required: text - table name</pre>
 <pre>ENUM list      Required: One of 'DATA','NODATA','DDLONLY'</pre>
