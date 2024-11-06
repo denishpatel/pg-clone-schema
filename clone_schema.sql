@@ -78,6 +78,7 @@
 --                                       so don't try to rename anymore if we can't match new to original.
 -- 2024-10-29  MJV FIX: Fixed Issue#131: Use double-quotes around schemas with funky chars
 -- 2024-10-30  MJV FIX: Fixed Issue#138: conversion changes for PG v17: fixed queries for domains.
+-- 2024-11-05  MJV FIX: Fixed Issue#139: change return type from VOID to INTEGER for programatic error handling.
 -- 2024-??-??  MJV FIX: Fixed Issue#122: TODO ---> Do not create explicit sequence when it is implied via serial definition.
 
 do $$ 
@@ -982,7 +983,9 @@ CREATE OR REPLACE FUNCTION public.clone_schema(
     source_schema text,
     dest_schema text,
     VARIADIC arr public.cloneparms[] DEFAULT '{}':: public.cloneparms[])
-  RETURNS void AS
+  -- Issue#139 : change return type from VOID to INTEGER
+  -- RETURNS void AS
+  RETURNS INTEGER AS
 $BODY$
 
 --  This function will clone all sequences, tables, data, views & functions from any existing schema to a new one
@@ -1057,6 +1060,9 @@ DECLARE
   tblscopied       integer := 0;
   l_child          integer;
   action           text := 'N/A';
+  RC_OK            integer := 0;
+  RC_ERR           integer := 1;
+  rc               integer := 0;
   tblname          text;
   v_ret            text;
   v_diag1          text;
@@ -1115,7 +1121,7 @@ DECLARE
   s                timestamptz;
   lastsql          text := '';
   lasttbl          text := '';
-  v_version        text := '2.4 October 29, 2024';
+  v_version        text := '2.5 November 05, 2024';
 
 BEGIN
   -- uncomment the following to get line context info when debugging exceptions. 
@@ -1161,7 +1167,7 @@ BEGIN
     END LOOP;
     IF bData and bDDLOnly THEN 
       RAISE WARNING 'You can only specify DDLONLY or DATA, but not both.';
-      RETURN;
+      RETURN RC_ERR;
     END IF;
   END IF;  
   
@@ -1187,7 +1193,7 @@ BEGIN
         RAISE WARNING 'Server Version:%  Number:%  PG Versions older than v10 are not supported.  Will try however for PG 9.6...', sq_server_version, sq_server_version_num;
     ELSE
         RAISE WARNING 'Server Version:%  Number:%  PG Versions older than v10 are not supported.  You need to be at minimum version 9.6 to at least try', sq_server_version, sq_server_version_num;
-        RETURN;
+        RETURN RC_ERR;
     END IF;
   END IF;
 
@@ -1199,14 +1205,14 @@ BEGIN
   IF NOT FOUND
     THEN
     RAISE NOTICE ' source schema % does not exist!', source_schema;
-    RETURN ;
+    RETURN RC_ERR;
   END IF;
 
   -- Check for case-sensitive target schemas and reject them for now.
   SELECT lower(dest_schema) = dest_schema INTO abool;
   IF not abool THEN
       RAISE NOTICE 'Case-sensitive target schemas are not supported at this time.';
-      RETURN;
+      RETURN RC_ERR;
   END IF;
 
   -- Check that dest_schema does not yet exist
@@ -1217,11 +1223,11 @@ BEGIN
   IF FOUND
     THEN
     RAISE NOTICE ' dest schema % already exists!', dest_schema;
-    RETURN ;
+    RETURN RC_ERR;
   END IF;
   IF bDDLOnly and bData THEN
     RAISE WARNING 'You cannot specify to clone data and generate ddl at the same time.';
-    RETURN ;
+    RETURN RC_ERR;
   END IF;
 
   -- Issue#92
@@ -1337,6 +1343,7 @@ BEGIN
 
   -- MV: Create Collations
   action := 'Collations';
+  rc = 21;
   IF bDebug THEN RAISE NOTICE 'DEBUG:  Section=%',action; END IF;
   cnt := 0;
   -- Issue#96 Handle differently based on PG Versions (PG15 rely on colliculocale, not collcollate; PG17 uses colllocale)
@@ -1442,6 +1449,7 @@ BEGIN
 
   -- MV: Create Domains
   action := 'Domains';
+  rc = 22;
   IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
   cnt := 0;
   
@@ -1480,6 +1488,7 @@ BEGIN
   
   -- MV: Create types
   action := 'Types';
+  rc = 23;
   IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
   cnt := 0;
   lastsql = '';
@@ -1565,6 +1574,7 @@ BEGIN
 
   -- Create sequences
   action := 'Sequences';
+  rc = 24;
   IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
   cnt := 0;
   -- fix#63  get from pg_sequences not information_schema
@@ -1702,6 +1712,7 @@ BEGIN
 
   -- Create tables including partitioned ones (parent/children) and unlogged ones.  Order by is critical since child partition range logic is dependent on it.
   action := 'Tables';
+  rc = 25;
   IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
   SELECT setting INTO v_dummy FROM pg_settings WHERE name='search_path';
   IF bDebug THEN RAISE NOTICE 'DEBUG: search_path=%', v_dummy; END IF;
@@ -2589,6 +2600,7 @@ BEGIN
 
   -- Assigning sequences to table columns.
   action := 'Sequences assigning';
+  rc = 26;
   IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
   cnt := 0;
   FOR object IN
@@ -2650,6 +2662,7 @@ BEGIN
   -- Update IDENTITY sequences to the last value, bypass 9.6 versions
   IF sq_server_version_num > 90624 THEN
       action := 'Identity updating';
+      rc = 27;
       IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
       cnt := 0;
       FOR object, sq_last_value IN
@@ -2696,6 +2709,7 @@ BEGIN
   -- Issue 90: moved functions to here, before views or MVs that might use them
   -- Create functions
     action := 'Functions';
+    rc = 28;
     IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
     cnt := 0;
     -- MJV FIX per issue# 34
@@ -2882,6 +2896,7 @@ BEGIN
   
   -- Create views
   action := 'Views';
+  rc = 29;
   IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
 
   -- Issue#61 FIX: use set_config for empty string
@@ -3015,6 +3030,7 @@ BEGIN
 
   -- Create Materialized views
   action := 'Mat. Views';
+  rc = 30;
   IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
   cnt := 0;
   -- Issue#91 get view_owner
@@ -3111,6 +3127,7 @@ BEGIN
   --Issue#133: create deferred views here since MVs they depend on are done now, but only if not in DATA mode where we do it after tables and MVs are created  
   IF NOT bData THEN
       action := 'Deferred Views';
+      rc = 31;
       IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
       cnt = 0;
       FOREACH viewdef IN ARRAY deferredviews
@@ -3141,6 +3158,7 @@ BEGIN
   -- MV: Create Rules
   -- Fixes Issue#59 Implement Rules
   action := 'Rules';
+  rc = 32;
   IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
   cnt := 0;
   FOR arec IN
@@ -3165,6 +3183,7 @@ BEGIN
   -- MV: Create Policies
   -- Fixes Issue#66 Implement Security policies for RLS
   action := 'Policies';
+  rc = 33;
   IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
   cnt := 0;
   -- #106 Handle 9.6 which doesn't have "permissive"
@@ -3251,6 +3270,7 @@ BEGIN
 
   -- MJV Fixed #62 for comments (PASS 1)
   action := 'Comments1';
+  rc = 34;
   IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
   cnt := 0;
   FOR buffer, buffer2, qry IN
@@ -3302,6 +3322,7 @@ BEGIN
 
   -- MJV Fixed #62 for comments (PASS 2)
   action := 'Comments2';
+  rc = 35;
   IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
   cnt2 := 0;
   IF is_prokind THEN
@@ -3448,6 +3469,7 @@ BEGIN
     EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
     IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed back to source schema:%', quote_ident(source_schema); END IF;    
     action := 'PRIVS: Defaults';
+    rc = 36;
     IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
     cnt := 0;
     FOR arec IN
@@ -3694,6 +3716,7 @@ BEGIN
     -- WHERE base_role != CURRENT_USER and objtype = 'schema' and schemaname = 'public' group by 1,2,3,4,5,6;
 
     action := 'PRIVS: Schema';
+    rc = 37;
     IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
     cnt := 0;
     FOR arec IN
@@ -3726,6 +3749,7 @@ BEGIN
   IF NOT bNoACL THEN
     -- MV: PRIVS: sequences
     action := 'PRIVS: Sequences';
+    rc = 38;
     IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
     cnt := 0;
     FOR arec IN
@@ -3758,6 +3782,7 @@ BEGIN
   IF NOT bNoACL THEN
     -- MV: PRIVS: functions
     action := 'PRIVS: Functions/Procedures';
+    rc = 39;
     IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
     cnt := 0;
 
@@ -3817,6 +3842,7 @@ BEGIN
     EXECUTE 'SET search_path = ' || quote_ident(dest_schema) ;
     IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to target schema:%', quote_ident(dest_schema); END IF;
     action := 'Copy Rows';
+    rc = 40;
     IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
     FOREACH tblelement IN ARRAY tblarray
     LOOP 
@@ -3952,6 +3978,7 @@ BEGIN
   --Issue#133: create deferred views here since MVs they depend on are done now, but only if not in DATA mode where we do it after tables and MVs are created  
   IF bData THEN
       action := 'Deferred Views';
+      rc = 41;
       IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
       cnt = 0;
       FOREACH viewdef IN ARRAY deferredviews
@@ -3989,6 +4016,7 @@ BEGIN
   IF NOT bNoACL THEN
     -- MV: PRIVS: tables
     action := 'PRIVS: Tables';
+    rc = 42;
     IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
     -- regular, partitioned, and foreign tables plus view and materialized view permissions. Ignored for now: implement foreign table defs.
     cnt := 0;
@@ -4120,7 +4148,8 @@ BEGIN
   IF bDebug THEN RAISE NOTICE 'DEBUG: setting search_path back to what it was: %', v_dummy; END IF;
   cnt := cast(extract(epoch from (clock_timestamp() - t)) as numeric(18,3));
   IF bVerbose THEN RAISE NOTICE 'clone_schema duration: % seconds',cnt; END IF;  
-
+  RETURN RC_OK;
+  
   EXCEPTION
      WHEN others THEN
      BEGIN
@@ -4150,11 +4179,8 @@ BEGIN
            -- RAISE NOTICE 'setting old search_path to:%', v_src_path_old;
            EXECUTE 'SET search_path = ' || v_src_path_old;
          END IF;
-
-         RETURN;
+         RETURN rc;
      END;
-
-RETURN;
 END;
 
 $BODY$
