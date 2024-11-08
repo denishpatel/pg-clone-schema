@@ -80,6 +80,7 @@
 -- 2024-10-30  MJV FIX: Fixed Issue#138: conversion changes for PG v17: fixed queries for domains.
 -- 2024-11-05  MJV FIX: Fixed Issue#139: change return type from VOID to INTEGER for programatic error handling.
 -- 2024-11-06  MJV FIX: Fixed Issue#140: More issues with non-standard schema names requiring quoting
+-- 2024-11-08  MJV FIX: Fixed Issue#141: Remove/rename function types (obj_type-->objj_type, perm_type-->permm_type) before exiting function and put them in the public schema so they don't get propagated during the cloning process.
 -- 2024-??-??  MJV FIX: Fixed Issue#122: TODO ---> Do not create explicit sequence when it is implied via serial definition.
 
 do $$ 
@@ -1122,7 +1123,7 @@ DECLARE
   s                timestamptz;
   lastsql          text := '';
   lasttbl          text := '';
-  v_version        text := '2.6 November 06, 2024';
+  v_version        text := '2.7 November 08, 2024';
 
 BEGIN
   -- uncomment the following to get line context info when debugging exceptions. 
@@ -1255,50 +1256,13 @@ BEGIN
   lastsql = '';
   SELECT setting INTO v_src_path_new FROM pg_settings WHERE name='search_path';
   IF bDebug THEN RAISE NOTICE 'DEBUG: new search_path=%', v_src_path_new; END IF;
-
+  
   -- Validate required types exist.  If not, create them.
-  SELECT a.objtypecnt, b.permtypecnt INTO cnt, cnt2
-  FROM (
-      SELECT count(*) AS objtypecnt
-      FROM pg_catalog.pg_type t
-      LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
-  WHERE (t.typrelid = 0
-      OR (
-          SELECT c.relkind = 'c'
-          FROM pg_catalog.pg_class c
-          WHERE c.oid = t.typrelid))
-      AND NOT EXISTS (
-          SELECT 1
-          FROM pg_catalog.pg_type el
-          WHERE el.oid = t.typelem
-              AND el.typarray = t.oid)
-          AND n.nspname <> 'pg_catalog'
-          AND n.nspname <> 'information_schema'
-          AND pg_catalog.pg_type_is_visible(t.oid)
-          AND pg_catalog.format_type(t.oid, NULL) = 'obj_type') a, (
-          SELECT count(*) AS permtypecnt
-          FROM pg_catalog.pg_type t
-          LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
-      WHERE (t.typrelid = 0
-          OR (
-              SELECT c.relkind = 'c'
-              FROM pg_catalog.pg_class c
-              WHERE c.oid = t.typrelid))
-          AND NOT EXISTS (
-              SELECT 1
-              FROM pg_catalog.pg_type el
-              WHERE el.oid = t.typelem
-                  AND el.typarray = t.oid)
-              AND n.nspname <> 'pg_catalog'
-              AND n.nspname <> 'information_schema'
-              AND pg_catalog.pg_type_is_visible(t.oid)
-              AND pg_catalog.format_type(t.oid, NULL) = 'perm_type') b;
-  IF cnt = 0 THEN
-    CREATE TYPE obj_type AS ENUM ('TABLE','VIEW','COLUMN','SEQUENCE','FUNCTION','SCHEMA','DATABASE');
-  END IF;
-  IF cnt2 = 0 THEN
-    CREATE TYPE perm_type AS ENUM ('SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER','USAGE','CREATE','EXECUTE','CONNECT','TEMPORARY');
-  END IF;
+  -- Issue#141, remove complex query to determine and simply drop them if they exist and recreate them.  Also put them in the public schema so they don't get propagated during cloning.
+  DROP TYPE IF EXISTS public.objj_type;
+  DROP TYPE IF EXISTS public.permm_type;
+  CREATE TYPE public.objj_type AS ENUM ('TABLE','VIEW','COLUMN','SEQUENCE','FUNCTION','SCHEMA','DATABASE');
+  CREATE TYPE public.permm_type AS ENUM ('SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER','USAGE','CREATE','EXECUTE','CONNECT','TEMPORARY');
 
   -- Issue#95
   -- Issue#140
@@ -3725,14 +3689,14 @@ BEGIN
     IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
     cnt := 0;
     FOR arec IN
-      SELECT 'GRANT ' || p.perm::perm_type || ' ON SCHEMA ' || quote_ident(dest_schema) || ' TO "' || r.rolname || '";' as schema_ddl
+      SELECT 'GRANT ' || p.perm::public.permm_type || ' ON SCHEMA ' || quote_ident(dest_schema) || ' TO "' || r.rolname || '";' as schema_ddl
       FROM pg_catalog.pg_namespace AS n
       CROSS JOIN pg_catalog.pg_roles AS r
       CROSS JOIN (VALUES ('USAGE'), ('CREATE')) AS p(perm)
       WHERE n.nspname = quote_ident(source_schema) AND NOT r.rolsuper AND has_schema_privilege(r.oid, n.oid, p.perm) AND
       --Issue#123: do not assign to system roles
       r.rolname NOT IN ('pg_read_all_data','pg_write_all_data') 
-      ORDER BY r.rolname, p.perm::perm_type
+      ORDER BY r.rolname, p.perm::public.permm_type
     LOOP
       BEGIN
         cnt := cnt + 1;
@@ -3759,7 +3723,7 @@ BEGIN
     cnt := 0;
     FOR arec IN
       -- Issue#78 FIX: handle case-sensitive names with quote_ident() on t.relname
-      SELECT 'GRANT ' || p.perm::perm_type || ' ON ' || quote_ident(dest_schema) || '.' || quote_ident(t.relname::text) || ' TO "' || r.rolname || '";' as seq_ddl
+      SELECT 'GRANT ' || p.perm::public.permm_type || ' ON ' || quote_ident(dest_schema) || '.' || quote_ident(t.relname::text) || ' TO "' || r.rolname || '";' as seq_ddl
       FROM pg_catalog.pg_class AS t
       CROSS JOIN pg_catalog.pg_roles AS r
       CROSS JOIN (VALUES ('SELECT'), ('USAGE'), ('UPDATE')) AS p(perm)
@@ -4152,6 +4116,11 @@ BEGIN
   SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
   IF bDebug THEN RAISE NOTICE 'DEBUG: setting search_path back to what it was: %', v_dummy; END IF;
   cnt := cast(extract(epoch from (clock_timestamp() - t)) as numeric(18,3));
+  
+  -- Issue#141: Remove processing types before leaving
+  DROP TYPE IF EXISTS public.objj_type;
+  DROP TYPE IF EXISTS public.permm_type;
+  
   IF bVerbose THEN RAISE NOTICE 'clone_schema duration: % seconds',cnt; END IF;  
   RETURN RC_OK;
   
