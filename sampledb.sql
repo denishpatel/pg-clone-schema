@@ -188,44 +188,7 @@ CREATE DOMAIN idx AS integer NOT NULL
 
 ALTER DOMAIN idx OWNER TO postgres;
 
---
--- Name: obj_type; Type: TYPE; Schema: sample; Owner: postgres
---
-
-CREATE TYPE obj_type AS ENUM (
-    'TABLE',
-    'VIEW',
-    'COLUMN',
-    'SEQUENCE',
-    'FUNCTION',
-    'SCHEMA',
-    'DATABASE'
-);
-
-
-ALTER TYPE obj_type OWNER TO postgres;
-
---
--- Name: perm_type; Type: TYPE; Schema: sample; Owner: postgres
---
-
-CREATE TYPE perm_type AS ENUM (
-    'SELECT',
-    'INSERT',
-    'UPDATE',
-    'DELETE',
-    'TRUNCATE',
-    'REFERENCES',
-    'TRIGGER',
-    'USAGE',
-    'CREATE',
-    'EXECUTE',
-    'CONNECT',
-    'TEMPORARY'
-);
-
-
-ALTER TYPE perm_type OWNER TO postgres;
+-- removed obj_type and perm_type definitions since they are only used by clone_schema function
 
 --
 -- Name: us_postal_code; Type: DOMAIN; Schema: sample; Owner: postgres
