@@ -68,6 +68,7 @@ Regression Testing is done in the following order:
 * You should not use multiple, user-defined schema objects and expect cloning one schema to another to work.  This project does not support that at the present time.  It only supports 3 schemas basically: the source schema, the target schema, and objects defined in the public schema referenced by those user-defined schemas.
 * Index and key names are not all the same in the cloned schema since some of the tables are created with the CREATE TABLE ... (LIKE ...) construct.  Those index names are automatically fabricated by PG with naming format that is prepended with table and column names separated by underscores and ending with "_idx" or "_key".
 * Foreign Tables are not handled at the present time.  They must be done manually.
+* Although clone_schema supports data copy, it is not very efficient for large datasets.  It only copies tables one at a time.  Using pg_dump/pg_restore in directory mode using parallel jobs would be a lot more efficient for large datasets.
 <br/>
 <br/>
 Sponsor:
