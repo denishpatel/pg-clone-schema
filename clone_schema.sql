@@ -2471,7 +2471,7 @@ BEGIN
 
       -- 2021-03-03  MJV FIX
       -- Issue#140
-      buffer := dest_schema || '.' || quote_ident(tblname);
+      -- buffer := dest_schema || '.' || quote_ident(tblname);
       buffer := quote_ident(dest_schema) || '.' || quote_ident(tblname);
       
       -- Issue#86 fix:
