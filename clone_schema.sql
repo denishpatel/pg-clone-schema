@@ -79,8 +79,8 @@
 -- 2024-10-29  MJV FIX: Fixed Issue#131: Use double-quotes around schemas with funky chars
 -- 2024-10-30  MJV FIX: Fixed Issue#138: conversion changes for PG v17: fixed queries for domains.
 -- 2024-11-05  MJV FIX: Fixed Issue#139: change return type from VOID to INTEGER for programatic error handling.
--- 2024-11-06  MJV FIX: Fixed Issue#140: More issues with non-standard schema names requiring quoting
 -- 2024-11-08  MJV FIX: Fixed Issue#141: Remove/rename function types (obj_type-->objj_type, perm_type-->permm_type) before exiting function and put them in the public schema so they don't get propagated during the cloning process.
+-- 2024-11-09  MJV FIX: Fixed Issue#140: More issues with non-standard schema names requiring quoting
 -- 2024-??-??  MJV FIX: Fixed Issue#122: TODO ---> Do not create explicit sequence when it is implied via serial definition.
 
 do $$ 
@@ -1123,7 +1123,7 @@ DECLARE
   s                timestamptz;
   lastsql          text := '';
   lasttbl          text := '';
-  v_version        text := '2.7 November 08, 2024';
+  v_version        text := '2.8 November 09, 2024';
 
 BEGIN
   -- uncomment the following to get line context info when debugging exceptions. 
@@ -1210,13 +1210,6 @@ BEGIN
     THEN
     RAISE NOTICE ' source schema % does not exist!', source_schema;
     RETURN RC_ERR;
-  END IF;
-
-  -- Check for case-sensitive target schemas and reject them for now.
-  SELECT lower(dest_schema) = dest_schema INTO abool;
-  IF not abool THEN
-      RAISE NOTICE 'Case-sensitive target schemas are not supported at this time.';
-      RETURN RC_ERR;
   END IF;
 
   -- Check that dest_schema does not yet exist
@@ -1434,7 +1427,7 @@ BEGIN
     t.typnotnull, 
     t.typdefault,
     COALESCE(pg_catalog.array_to_string(ARRAY(SELECT pg_catalog.pg_get_constraintdef(r.oid, true) FROM pg_catalog.pg_constraint r WHERE t.oid = r.contypid AND r.contype = 'c' ORDER BY r.conname), ''), '') as acheck
-    FROM pg_catalog.pg_type t LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace WHERE t.typtype = 'd' AND n.nspname OPERATOR(pg_catalog.~) '^(sample)$' COLLATE pg_catalog.default ORDER BY 1, 2
+    FROM pg_catalog.pg_type t LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace WHERE t.typtype = 'd' AND n.nspname OPERATOR(pg_catalog.~) '^(quote_ident(source_schema))$' COLLATE pg_catalog.default ORDER BY 1, 2
   LOOP
     BEGIN
       cnt := cnt + 1;
@@ -1716,7 +1709,9 @@ BEGIN
                     COALESCE(co.is_generated, ''), '"' || pg_catalog.pg_get_userbyid(c.relowner) || '"' as "Owner", CASE WHEN reltablespace = 0 THEN 'pg_default' ELSE ts.spcname END as tablespace                    
     FROM pg_class c
         JOIN pg_namespace n ON (n.oid = c.relnamespace
-                AND n.nspname = quote_ident(source_schema)
+                -- Issue#140
+                -- AND n.nspname = quote_ident(source_schema)
+                AND quote_ident(n.nspname) = quote_ident(source_schema)
                 AND c.relkind IN ('r', 'p'))
         LEFT JOIN information_schema.columns co ON (co.table_schema = n.nspname
                 AND co.table_name = c.relname
@@ -2039,7 +2034,9 @@ BEGIN
       -- Insert records from source table
 
       -- 2021-03-03  MJV FIX
-      buffer := dest_schema || '.' || quote_ident(tblname);
+      -- Issue#140 fix
+      -- buffer := dest_schema || '.' || quote_ident(tblname);
+      buffer := quote_ident(dest_schema) || '.' || quote_ident(tblname);
 
       -- 2020/06/18 - Issue #31 fix: add "OVERRIDING SYSTEM VALUE" for IDENTITY columns marked as GENERATED ALWAYS.
       select count(*) into cnt2 from pg_class c, pg_attribute a, pg_namespace n
@@ -2473,7 +2470,9 @@ BEGIN
       -- Insert records from source table
 
       -- 2021-03-03  MJV FIX
+      -- Issue#140
       buffer := dest_schema || '.' || quote_ident(tblname);
+      buffer := quote_ident(dest_schema) || '.' || quote_ident(tblname);
       
       -- Issue#86 fix:
       -- IF data_type = 'USER-DEFINED' THEN
