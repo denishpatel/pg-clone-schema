@@ -1068,6 +1068,7 @@ DECLARE
   cnt2             integer;
   cnt3             integer;
   cnt4             integer;
+  deferredviewcnt  integer;
   pos              integer;
   tblscopied       integer := 0;
   l_child          integer;
@@ -2897,6 +2898,7 @@ BEGIN
   IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed back to empty string:%', v_dummy; END IF;
 
   cnt := 0;
+  deferredviewcnt := 0;
   --FOR object IN
     -- SELECT table_name::text, view_definition
     -- FROM information_schema.views
@@ -2981,11 +2983,12 @@ BEGIN
     JOIN pg_namespace source_ns ON source_ns.oid = source_obj.relnamespace
     WHERE source_ns.nspname = quote_ident(source_schema) AND dependent_ns.nspname = quote_ident(source_schema) 
     AND dependent_obj.relname <> source_obj.relname AND dependent_obj.relkind in ('v') AND source_obj.relkind in ('m') AND dependent_obj.relname = v_dummy)
-    SELECT count(*) into cnt FROM dependencies;
-    IF bDebug THEN RAISE NOTICE 'dependent view count=% for view, %', cnt, v_dummy; END IF;  
-    IF cnt > 0 THEN
+    SELECT count(*) into cnt2 FROM dependencies;
+    IF bDebug THEN RAISE NOTICE 'dependent view count=% for view, %', cnt2, v_dummy; END IF;  
+    IF cnt2 > 0 THEN
         -- defer view creation until after MVs are done
         deferredviews := deferredviews || v_def;
+        deferredviewcnt = deferredviewcnt + 1;
         CONTINUE;
     END IF;
     
@@ -3016,7 +3019,7 @@ BEGIN
       END IF;
     END IF;
   END LOOP;
-  RAISE NOTICE '       VIEWS cloned: %', LPAD(cnt::text, 5, ' ');
+  RAISE NOTICE '       VIEWS cloned: %', LPAD((cnt-deferredviewcnt)::text, 5, ' ');
 
   -- Create Materialized views
   action := 'Mat. Views';
