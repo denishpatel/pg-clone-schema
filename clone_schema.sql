@@ -117,7 +117,9 @@ $$
   BEGIN
     FOR v_colrec IN
       SELECT c.column_name, c.data_type, c.udt_name, c.udt_schema, c.character_maximum_length, c.is_nullable, c.column_default, c.numeric_precision, c.numeric_scale, c.is_identity, c.identity_generation, c.is_generated 
-      FROM information_schema.columns c WHERE (table_schema, table_name) = (source_schema, atable) ORDER BY ordinal_position
+      -- Issue#140 handle special schemas
+      -- FROM information_schema.columns c WHERE (table_schema, table_name) = (source_schema, atable) ORDER BY ordinal_position
+      FROM information_schema.columns c WHERE (quote_ident(table_schema), table_name) = (source_schema, atable) ORDER BY ordinal_position
     LOOP
       IF v_colrec.udt_schema = 'public' THEN
         v_schema = 'public';
@@ -175,7 +177,13 @@ $$
         END IF;
       END IF;
     END LOOP;
-
+ 
+    -- Issue#140: abort if no columns detected, shouldn't happen
+    IF v_cols = '' THEN
+        RAISE WARNING 'No columns detected for schema:% and table:%', source_schema, atable;
+        RETURN '';
+    END IF;
+    
     -- put it all together and return the insert statement
     -- INSERT INTO clone1.address2 (id2, id3, addr) SELECT id2::text::clone1.udt_myint, id3::text::clone1.udt_myint, addr FROM sample.address;    
     IF bIdentity THEN
@@ -568,7 +576,9 @@ $$
     IF NOT bPartition THEN
       FOR v_colrec IN
         SELECT c.column_name, c.data_type, c.udt_name, c.udt_schema, c.character_maximum_length, c.is_nullable, c.column_default, c.numeric_precision, c.numeric_scale, c.is_identity, c.identity_generation, c.is_generated, c.generation_expression        
-        FROM information_schema.columns c WHERE (table_schema, table_name) = (in_schema, in_table) ORDER BY ordinal_position
+        -- Issue#140 handle special schemas
+        -- FROM information_schema.columns c WHERE (table_schema, table_name) = (in_schema, in_table) ORDER BY ordinal_position
+        FROM information_schema.columns c WHERE (quote_ident(table_schema), table_name) = (in_schema, in_table) ORDER BY ordinal_position
       LOOP
          IF bVerbose THEN RAISE NOTICE '(col loop) name=%  type=%  udt_name=%  default=%  is_generated=%  gen_expr=%', v_colrec.column_name, v_colrec.data_type, v_colrec.udt_name, v_colrec.column_default, v_colrec.is_generated, v_colrec.generation_expression; END IF;  
          
@@ -1123,7 +1133,7 @@ DECLARE
   s                timestamptz;
   lastsql          text := '';
   lasttbl          text := '';
-  v_version        text := '2.9 November 10, 2024';
+  v_version        text := '2.10 November 10, 2024';
 
 BEGIN
   -- uncomment the following to get line context info when debugging exceptions. 
@@ -2083,6 +2093,12 @@ BEGIN
         ELSE
           -- Issue#101: assume direct copy with text cast, add to separate array
           SELECT * INTO buffer3 FROM public.get_insert_stmt_ddl(quote_ident(source_schema), quote_ident(dest_schema), quote_ident(tblname), True);
+          
+          -- Issue#140 check for invalid statement
+          IF buffer3 = '' THEN
+              RAISE EXCEPTION 'Programming Error: 1 get_insert_stmt_ddl() failed. See previous errors/warnings.';
+          END IF;
+
           tblarray3 := tblarray3 || buffer3;
           IF bDebug THEN RAISE NOTICE 'DEBUG: Deferring complex insert to end:%', buffer3; END IF;
         END IF;
@@ -2507,6 +2523,12 @@ BEGIN
         ELSE
           -- Issue#101: assume direct copy with text cast, add to separate array
           SELECT * INTO buffer3 FROM public.get_insert_stmt_ddl(quote_ident(source_schema), quote_ident(dest_schema), quote_ident(tblname), True);
+
+          -- Issue#140 check for invalid statement
+          IF buffer3 = '' THEN
+             RAISE EXCEPTION 'Programming Error: 2 get_insert_stmt_ddl() failed. See previous errors/warnings.';
+          END IF;
+          
           tblarray3 := tblarray3 || buffer3;
         END IF;
       ELSE
