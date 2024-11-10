@@ -1083,6 +1083,11 @@ CREATE TABLE accounts (manager text, company text, contact_email text);
 ALTER TABLE accounts ENABLE ROW LEVEL SECURITY;
 INSERT INTO accounts SELECT 'admin','Sears','joe@sears.com';
 
+-- Set default privileges  
+ALTER DEFAULT PRIVILEGES FOR ROLE managers IN SCHEMA sample GRANT SELECT,USAGE ON SEQUENCES TO managers, users;
+ALTER DEFAULT PRIVILEGES FOR ROLE managers IN SCHEMA sample GRANT ALL ON TABLES TO managers, users;
+
+
 CREATE TABLE information (info text, group_id int NOT NULL REFERENCES groups);
 INSERT INTO information VALUES ('barely secret', 1), ('slightly secret', 2), ('very secret', 5);
 
