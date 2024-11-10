@@ -1086,6 +1086,7 @@ INSERT INTO accounts SELECT 'admin','Sears','joe@sears.com';
 -- Set default privileges  
 ALTER DEFAULT PRIVILEGES FOR ROLE managers IN SCHEMA sample GRANT SELECT,USAGE ON SEQUENCES TO managers, users;
 ALTER DEFAULT PRIVILEGES FOR ROLE managers IN SCHEMA sample GRANT ALL ON TABLES TO managers, users;
+ALTER DEFAULT PRIVILEGES FOR ROLE managers IN SCHEMA sample GRANT ALL ON SEQUENCES TO managers, users;
 
 
 CREATE TABLE information (info text, group_id int NOT NULL REFERENCES groups);
