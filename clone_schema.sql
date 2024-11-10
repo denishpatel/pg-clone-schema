@@ -1134,7 +1134,7 @@ DECLARE
   s                timestamptz;
   lastsql          text := '';
   lasttbl          text := '';
-  v_version        text := '2.10 November 10, 2024';
+  v_version        text := '2.11 November 10, 2024';
 
 BEGIN
   -- uncomment the following to get line context info when debugging exceptions. 
