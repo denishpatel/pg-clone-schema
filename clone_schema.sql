@@ -80,7 +80,7 @@
 -- 2024-10-30  MJV FIX: Fixed Issue#138: conversion changes for PG v17: fixed queries for domains.
 -- 2024-11-05  MJV FIX: Fixed Issue#139: change return type from VOID to INTEGER for programatic error handling.
 -- 2024-11-08  MJV FIX: Fixed Issue#141: Remove/rename function types (obj_type-->objj_type, perm_type-->permm_type) before exiting function and put them in the public schema so they don't get propagated during the cloning process.
--- 2024-11-09  MJV FIX: Fixed Issue#140: More issues with non-standard schema names requiring quoting
+-- 2024-11-10  MJV FIX: Fixed Issue#140: More issues with non-standard schema names requiring quoting
 -- 2024-??-??  MJV FIX: Fixed Issue#122: TODO ---> Do not create explicit sequence when it is implied via serial definition.
 
 do $$ 
@@ -1123,12 +1123,12 @@ DECLARE
   s                timestamptz;
   lastsql          text := '';
   lasttbl          text := '';
-  v_version        text := '2.8 November 09, 2024';
+  v_version        text := '2.9 November 10, 2024';
 
 BEGIN
   -- uncomment the following to get line context info when debugging exceptions. 
-  -- Currently the next line is actually line 137 based on start line (without spaces) = $ BODY $
-  -- RAISE EXCEPTION 'line1';
+  -- Currently the next line is actually line 141 based on start line (without spaces) = $ BODY $
+  -- RAISE EXCEPTION 'line1'; 
 
   -- Make sure NOTICE are shown
     SET client_min_messages = 'notice';
@@ -1427,7 +1427,7 @@ BEGIN
     t.typnotnull, 
     t.typdefault,
     COALESCE(pg_catalog.array_to_string(ARRAY(SELECT pg_catalog.pg_get_constraintdef(r.oid, true) FROM pg_catalog.pg_constraint r WHERE t.oid = r.contypid AND r.contype = 'c' ORDER BY r.conname), ''), '') as acheck
-    FROM pg_catalog.pg_type t LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace WHERE t.typtype = 'd' AND n.nspname OPERATOR(pg_catalog.~) '^(quote_ident(source_schema))$' COLLATE pg_catalog.default ORDER BY 1, 2
+    FROM pg_catalog.pg_type t LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace WHERE t.typtype = 'd' AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default ORDER BY 1, 2
   LOOP
     BEGIN
       cnt := cnt + 1;
@@ -4135,11 +4135,13 @@ BEGIN
              -- Issue#105 Help user to fix the problem.
              buffer2 = 'It appears you have a USER-DEFINED column type mismatch.  Try running clone_schema with the FILECOPY option. ';
          END IF;
+
          IF lastsql <> '' THEN
-             buffer = v_ret || E'\n'|| buffer2 || E'\nLastSQL='|| lastsql;
+             buffer = v_ret || E'\n'|| buffer2 || E'\naction=' || action || '  LastSQL='|| lastsql;
          ELSE
-             buffer = v_ret || E'\n'|| buffer2;
-         END IF;
+             buffer = v_ret || E'\n'|| buffer2 || 'action =' || action;
+         END IF;         
+         
          -- get current state of search_path too
          SELECT setting INTO spath_tmp FROM pg_settings WHERE name = 'search_path';
          RAISE EXCEPTION 'Version: %  Action: %  CurrentSP: %  oldSP=%  newSP=%  Diagnostics: %',v_version, action, spath_tmp, v_src_path_old, v_src_path_new, buffer;
