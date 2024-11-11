@@ -1075,6 +1075,8 @@ DROP ROLE IF EXISTS alice;
 CREATE ROLE managers;
 CREATE ROLE users;
 
+GRANT USAGE ON SCHEMA sample TO public,managers,users,admin,bob,alice;
+
 CREATE TABLE groups (group_id int PRIMARY KEY, group_name text NOT NULL);
 INSERT INTO groups VALUES (1, 'low'), (2, 'medium'), (5, 'high');
 CREATE TABLE users (user_name text PRIMARY KEY, group_id int NOT NULL REFERENCES groups);
@@ -1141,6 +1143,7 @@ CREATE TABLE "CaseSensitive" ("ID" integer, "aValue" text);
 ALTER TABLE "CaseSensitive" OWNER TO postgres;
 CREATE VIEW "CaseSensitiveView" AS SELECT * FROM "CaseSensitive";
 CREATE SEQUENCE "CaseSensitive_ID_seq" START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1;
+
 ALTER TABLE "CaseSensitive_ID_seq" OWNER TO postgres;
 COMMENT ON TABLE "CaseSensitive" IS 'just a comment on the CaseSensitive table';
 ALTER SEQUENCE "CaseSensitive_ID_seq" OWNED BY "CaseSensitive"."ID";
@@ -1314,10 +1317,13 @@ CREATE TRIGGER a_trigger_bef BEFORE INSERT ON t_demo FOR EACH ROW EXECUTE PROCED
 CREATE TRIGGER c_trigger_aft AFTER INSERT  ON t_demo FOR EACH ROW EXECUTE PROCEDURE trig_func();
 CREATE TRIGGER b_trigger_aft AFTER INSERT  ON t_demo FOR EACH ROW EXECUTE PROCEDURE trig_func();
 
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA sample TO managers, users;
+
 -- Issue#133 test case
 CREATE TABLE IF NOT EXISTS f_f_hub (id varchar(255) not null constraint f_hub_id_key unique);
 CREATE UNIQUE INDEX IF NOT EXISTS xufhub on f_f_hub (id);
 COMMENT ON TABLE f_f_hub IS 'This table is my f_f_hub.';
+
 
 --
 -- End Sample database
