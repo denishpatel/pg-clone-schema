@@ -80,7 +80,7 @@
 -- 2024-10-30  MJV FIX: Fixed Issue#138: conversion changes for PG v17: fixed queries for domains.
 -- 2024-11-05  MJV FIX: Fixed Issue#139: change return type from VOID to INTEGER for programatic error handling.
 -- 2024-11-08  MJV FIX: Fixed Issue#141: Remove/rename function types (obj_type-->objj_type, perm_type-->permm_type) before exiting function and put them in the public schema so they don't get propagated during the cloning process.
--- 2024-11-10  MJV FIX: Fixed Issue#140: More issues with non-standard schema names requiring quoting
+-- 2024-11-11  MJV FIX: Fixed Issue#140: More issues with non-standard schema names requiring quoting
 -- 2024-??-??  MJV FIX: Fixed Issue#122: TODO ---> Do not create explicit sequence when it is implied via serial definition.
 
 do $$ 
@@ -1134,7 +1134,7 @@ DECLARE
   s                timestamptz;
   lastsql          text := '';
   lasttbl          text := '';
-  v_version        text := '2.11 November 10, 2024';
+  v_version        text := '2.13 November 11, 2024';
 
 BEGIN
   -- uncomment the following to get line context info when debugging exceptions. 
@@ -2595,9 +2595,11 @@ BEGIN
   IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
   cnt := 0;
   FOR object IN
-    SELECT sequence_name::text
+    SELECT sequence_name::text 
     FROM information_schema.sequences
-    WHERE sequence_schema = quote_ident(source_schema)
+    -- Issue#140
+    -- WHERE sequence_schema = quote_ident(source_schema)
+    WHERE quote_ident(sequence_schema) = quote_ident(source_schema)
   LOOP
     cnt := cnt + 1;
     srctbl := quote_ident(source_schema) || '.' || quote_ident(object);
@@ -2657,9 +2659,13 @@ BEGIN
       IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
       cnt := 0;
       FOR object, sq_last_value IN
-        SELECT sequencename::text, COALESCE(last_value, -999) from pg_sequences where schemaname = quote_ident(source_schema)
+        -- Isssue#140
+        -- SELECT sequencename::text, COALESCE(last_value, -999) from pg_sequences where schemaname = quote_ident(source_schema)
+        SELECT sequencename::text, COALESCE(last_value, -999) from pg_sequences where quote_ident(schemaname) = quote_ident(source_schema)
         AND NOT EXISTS
-        (select 1 from information_schema.sequences where sequence_schema = quote_ident(source_schema) and sequence_name = sequencename)
+        -- Isssue#140
+        -- (select 1 from information_schema.sequences where sequence_schema = quote_ident(source_schema) and sequence_name = sequencename)
+        (select 1 from information_schema.sequences where quote_ident(sequence_schema) = quote_ident(source_schema) and sequence_name = sequencename)
       LOOP
         IF sq_last_value = -999 THEN
           continue;
@@ -2710,7 +2716,7 @@ BEGIN
     spath_tmp = 'SET search_path = ' || quote_ident(source_schema) || ', public';    
     EXECUTE spath_tmp;
     SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
-    IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed tosource schema + public:%', v_dummy; END IF;
+    IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to source schema + public:%', v_dummy; END IF;
 
     -- Fixed Issue#65
     -- Fixed Issue#97
