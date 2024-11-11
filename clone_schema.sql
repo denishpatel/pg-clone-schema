@@ -2962,7 +2962,9 @@ BEGIN
                   viewname,
                   pg_get_viewdef(viewname))
     FROM views
-    WHERE schemaname = quote_ident(source_schema)
+    -- Issue#140
+    -- WHERE schemaname = quote_ident(source_schema)
+    WHERE quote_ident(schemaname) = quote_ident(source_schema)
     GROUP BY schemaname, tablename, viewname, owner, is_materialized
     ORDER BY max(level), schemaname, tablename
   LOOP
