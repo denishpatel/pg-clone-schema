@@ -80,7 +80,7 @@
 -- 2024-10-30  MJV FIX: Fixed Issue#138: conversion changes for PG v17: fixed queries for domains.
 -- 2024-11-05  MJV FIX: Fixed Issue#139: change return type from VOID to INTEGER for programatic error handling.
 -- 2024-11-08  MJV FIX: Fixed Issue#141: Remove/rename function types (obj_type-->objj_type, perm_type-->permm_type) before exiting function and put them in the public schema so they don't get propagated during the cloning process.
--- 2024-11-11  MJV FIX: Fixed Issue#140: More issues with non-standard schema names requiring quoting
+-- 2024-11-13  MJV FIX: Fixed Issue#140: More issues with non-standard schema names requiring quoting. Also required changes to pg_get_tabledef().
 -- 2024-??-??  MJV FIX: Fixed Issue#122: TODO ---> Do not create explicit sequence when it is implied via serial definition.
 
 do $$ 
@@ -117,9 +117,7 @@ $$
   BEGIN
     FOR v_colrec IN
       SELECT c.column_name, c.data_type, c.udt_name, c.udt_schema, c.character_maximum_length, c.is_nullable, c.column_default, c.numeric_precision, c.numeric_scale, c.is_identity, c.identity_generation, c.is_generated 
-      -- Issue#140 handle special schemas
-      -- FROM information_schema.columns c WHERE (table_schema, table_name) = (source_schema, atable) ORDER BY ordinal_position
-      FROM information_schema.columns c WHERE (quote_ident(table_schema), table_name) = (source_schema, atable) ORDER BY ordinal_position
+      FROM information_schema.columns c WHERE (table_schema, table_name) = (source_schema, atable) ORDER BY ordinal_position
     LOOP
       IF v_colrec.udt_schema = 'public' THEN
         v_schema = 'public';
@@ -188,9 +186,13 @@ $$
     -- INSERT INTO clone1.address2 (id2, id3, addr) SELECT id2::text::clone1.udt_myint, id3::text::clone1.udt_myint, addr FROM sample.address;    
     IF bIdentity THEN
         -- Issue#124 Fix
-        v_insert_ddl = 'INSERT INTO ' || target_schema || '.' || atable || ' (' || v_cols || ') OVERRIDING SYSTEM VALUE ' || 'SELECT ' || v_cols_sel || ' FROM ' || source_schema || '.' || atable || ';';    
+        -- Issue#140
+        -- v_insert_ddl = 'INSERT INTO ' || target_schema || '.' || atable || ' (' || v_cols || ') OVERRIDING SYSTEM VALUE ' || 'SELECT ' || v_cols_sel || ' FROM ' || source_schema || '.' || atable || ';';    
+        v_insert_ddl = 'INSERT INTO ' || target_schema || '.' || atable || ' (' || v_cols || ') OVERRIDING SYSTEM VALUE ' || 'SELECT ' || v_cols_sel || ' FROM ' || quote_ident(source_schema) || '.' || atable || ';';    
     ELSE
-        v_insert_ddl = 'INSERT INTO ' || target_schema || '.' || atable || ' (' || v_cols || ') ' || 'SELECT ' || v_cols_sel || ' FROM ' || source_schema || '.' || atable || ';';
+        -- Issue#140
+        -- v_insert_ddl = 'INSERT INTO ' || target_schema || '.' || atable || ' (' || v_cols || ') ' || 'SELECT ' || v_cols_sel || ' FROM ' || source_schema || '.' || atable || ';';
+        v_insert_ddl = 'INSERT INTO ' || target_schema || '.' || atable || ' (' || v_cols || ') ' || 'SELECT ' || v_cols_sel || ' FROM ' || quote_ident(source_schema) || '.' || atable || ';';
     END IF;
     RETURN v_insert_ddl;
   END;
@@ -260,8 +262,8 @@ NO OBLIGATIONS TO PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFI
 -- 2024-09-11   Fixed Issue#28: Avoid duplication of NOT NULL for identity columns.
 -- 2024-09-20   Fixed Issue#29: added verbose info for searchpath problems.
 -- 2024-10-01   Fixed Issue#30: Fixed column def with geometry point defined - geometry geometry(Point, 4326) 
+-- 2024-11-13   Fixed Issue#31: Case-sensitive schemas not handled correctly.
 -- 2024-??-??   Fixed Issue#??: Distinguish between serial identity, and explicit sequences. NOT IMPLEMENTED YET
-
 
 
 DROP TYPE IF EXISTS public.tabledefs CASCADE;
@@ -331,6 +333,8 @@ LANGUAGE plpgsql VOLATILE
 AS
 $$
   DECLARE
+    v_schema    text := '';
+    v_coldef    text := '';
     v_qualified text := '';
     v_table_ddl text;
     v_table_oid int;
@@ -440,6 +444,10 @@ $$
         END IF;		   		   
     END IF;
 
+    -- Issue#31 - always handle case-sensitive schemas
+    v_schema = quote_ident(in_schema);
+    -- RAISE NOTICE 'DEBUG: schema qualified:%  before:%', v_schema, in_schema;
+
     SELECT c.oid, (select setting from pg_settings where name = 'server_version_num') INTO v_table_oid, v_pgversion FROM pg_catalog.pg_class c LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
     WHERE c.relkind in ('r','p') AND c.relname = in_table AND n.nspname = in_schema;
 
@@ -456,8 +464,8 @@ $$
     
     -- throw an error if table was not found
     IF (v_table_oid IS NULL) THEN
-      RAISE EXCEPTION 'table does not exist';
-    END IF;
+      RAISE EXCEPTION 'schema(%) table(%) does not exist %', v_schema, in_table, v_schema || '.' || in_table;
+    END IF;    
 
     -- get user-defined tablespaces if applicable
     SELECT tablespace INTO v_temp FROM pg_tables WHERE schemaname = in_schema and tablename = in_table and tablespace IS NOT NULL;
@@ -520,9 +528,13 @@ $$
       IF bInheritance THEN
         -- inheritance-based
         IF v_cnt1 > 0 OR v_cnt2 > 0 THEN
-          v_table_ddl := 'CREATE TABLE ' || in_schema || '."' || in_table || '"( '|| E'\n';        
+          -- Issue#31 fix
+          -- v_table_ddl := 'CREATE TABLE ' || in_schema || '."' || in_table || '"( '|| E'\n';        
+          v_table_ddl := 'CREATE TABLE ' || v_schema || '."' || in_table || '"( '|| E'\n';        
         ELSE
-          v_table_ddl := 'CREATE TABLE ' || in_schema || '.' || in_table || '( '|| E'\n';                
+          -- Issue#31 fix
+          -- v_table_ddl := 'CREATE TABLE ' || in_schema || '.' || in_table || '( '|| E'\n';                
+          v_table_ddl := 'CREATE TABLE ' || v_schema || '.' || in_table || '( '|| E'\n';                
         END IF;
 
         -- Jump to constraints section to add the check constraints
@@ -530,15 +542,23 @@ $$
         -- declarative-based
         IF v_relopts <> '' THEN
           IF v_cnt1 > 0 OR v_cnt2 > 0 THEN
-            v_table_ddl := 'CREATE TABLE ' || in_schema || '."' || in_table || '" PARTITION OF ' || in_schema || '.' || v_parent || ' ' || v_partbound || v_relopts || ' ' || v_tablespace || '; ' || E'\n';
+            -- Issue#31 fix
+            -- v_table_ddl := 'CREATE TABLE ' || in_schema || '."' || in_table || '" PARTITION OF ' || in_schema || '.' || v_parent || ' ' || v_partbound || v_relopts || ' ' || v_tablespace || '; ' || E'\n';
+            v_table_ddl := 'CREATE TABLE ' || v_schema || '."' || in_table || '" PARTITION OF ' || v_schema || '.' || v_parent || ' ' || v_partbound || v_relopts || ' ' || v_tablespace || '; ' || E'\n';
 				  ELSE
-				    v_table_ddl := 'CREATE TABLE ' || in_schema || '.' || in_table || ' PARTITION OF ' || in_schema || '.' || v_parent || ' ' || v_partbound || v_relopts || ' ' || v_tablespace || '; ' || E'\n';
+				    -- Issue#31 fix
+				    -- v_table_ddl := 'CREATE TABLE ' || in_schema || '.' || in_table || ' PARTITION OF ' || in_schema || '.' || v_parent || ' ' || v_partbound || v_relopts || ' ' || v_tablespace || '; ' || E'\n';
+				    v_table_ddl := 'CREATE TABLE ' || v_schema || '.' || in_table || ' PARTITION OF ' || v_schema || '.' || v_parent || ' ' || v_partbound || v_relopts || ' ' || v_tablespace || '; ' || E'\n';
 				  END IF;
         ELSE
           IF v_cnt1 > 0 OR v_cnt2 > 0 THEN
-            v_table_ddl := 'CREATE TABLE ' || in_schema || '."' || in_table || '" PARTITION OF ' || in_schema || '.' || v_parent || ' ' || v_partbound || ' ' || v_tablespace || '; ' || E'\n';
+            -- Issue#31 fix
+            -- v_table_ddl := 'CREATE TABLE ' || in_schema || '."' || in_table || '" PARTITION OF ' || in_schema || '.' || v_parent || ' ' || v_partbound || ' ' || v_tablespace || '; ' || E'\n';
+            v_table_ddl := 'CREATE TABLE ' || v_schema || '."' || in_table || '" PARTITION OF ' || v_schema || '.' || v_parent || ' ' || v_partbound || ' ' || v_tablespace || '; ' || E'\n';
 				  ELSE
-				    v_table_ddl := 'CREATE TABLE ' || in_schema || '.' || in_table || ' PARTITION OF ' || in_schema || '.' || v_parent || ' ' || v_partbound || ' ' || v_tablespace || '; ' || E'\n';
+				    -- Issue#31 fix
+				    -- v_table_ddl := 'CREATE TABLE ' || in_schema || '.' || in_table || ' PARTITION OF ' || in_schema || '.' || v_parent || ' ' || v_partbound || ' ' || v_tablespace || '; ' || E'\n';
+				    v_table_ddl := 'CREATE TABLE ' || v_schema || '.' || in_table || ' PARTITION OF ' || v_schema || '.' || v_parent || ' ' || v_partbound || ' ' || v_tablespace || '; ' || E'\n';
 				  END IF;
         END IF;
         -- Jump to constraints and index section to add the check constraints and indexes and perhaps FKeys
@@ -566,9 +586,13 @@ $$
       SELECT count(*) INTO v_cnt1 FROM information_schema.tables t WHERE EXISTS (SELECT REGEXP_MATCHES(s.table_name, '([A-Z]+)','g') FROM information_schema.tables s 
       WHERE t.table_schema=s.table_schema AND t.table_name=s.table_name AND t.table_schema = in_schema AND t.table_name = in_table AND t.table_type = 'BASE TABLE');         
       IF v_cnt1 > 0 THEN
-        v_table_ddl := 'CREATE ' || v_temp || ' TABLE ' || in_schema || '."' || in_table || '" (' || E'\n';
+        -- Issue#31 fix
+        -- v_table_ddl := 'CREATE ' || v_temp || ' TABLE ' || in_schema || '."' || in_table || '" (' || E'\n';
+        v_table_ddl := 'CREATE ' || v_temp || ' TABLE ' || v_schema || '."' || in_table || '" (' || E'\n';
       ELSE
-        v_table_ddl := 'CREATE ' || v_temp || ' TABLE ' || in_schema || '.' || in_table || ' (' || E'\n';
+        -- Issue#31 fix
+        -- v_table_ddl := 'CREATE ' || v_temp || ' TABLE ' || in_schema || '.' || in_table || ' (' || E'\n';
+        v_table_ddl := 'CREATE ' || v_temp || ' TABLE ' || v_schema || '.' || in_table || ' (' || E'\n';
       END IF;
     END IF;
     -- RAISE NOTICE 'DEBUG2: tabledef so far: %', v_table_ddl;    
@@ -576,24 +600,20 @@ $$
     IF NOT bPartition THEN
       FOR v_colrec IN
         SELECT c.column_name, c.data_type, c.udt_name, c.udt_schema, c.character_maximum_length, c.is_nullable, c.column_default, c.numeric_precision, c.numeric_scale, c.is_identity, c.identity_generation, c.is_generated, c.generation_expression        
-        -- Issue#140 handle special schemas
-        -- FROM information_schema.columns c WHERE (table_schema, table_name) = (in_schema, in_table) ORDER BY ordinal_position
-        FROM information_schema.columns c WHERE (quote_ident(table_schema), table_name) = (in_schema, in_table) ORDER BY ordinal_position
+        FROM information_schema.columns c WHERE (table_schema, table_name) = (in_schema, in_table) ORDER BY ordinal_position
       LOOP
          IF bVerbose THEN RAISE NOTICE '(col loop) name=%  type=%  udt_name=%  default=%  is_generated=%  gen_expr=%', v_colrec.column_name, v_colrec.data_type, v_colrec.udt_name, v_colrec.column_default, v_colrec.is_generated, v_colrec.generation_expression; END IF;  
-         
+         -- v17 fix: handle case-sensitive for pg_get_serial_sequence that requires SQL Identifier handling
+         -- SELECT pg_get_serial_sequence(v_qualified, v_colrec.column_name) into v_temp;
+         SELECT pg_get_serial_sequence(quote_ident(in_schema) || '.' || quote_ident(in_table), v_colrec.column_name) into v_temp;         
+         IF v_temp IS NULL THEN v_temp = 'NA'; END IF;
+         SELECT public.pg_get_coldef(in_schema, in_table,v_colrec.column_name) INTO v_coldef;         
+
          -- v17 fix: handle case-sensitive for pg_get_serial_sequence that requires SQL Identifier handling
          -- SELECT CASE WHEN pg_get_serial_sequence(v_qualified, v_colrec.column_name) IS NOT NULL THEN True ELSE False END into bSerial;
          SELECT CASE WHEN pg_get_serial_sequence(quote_ident(in_schema) || '.' || quote_ident(in_table), v_colrec.column_name) IS NOT NULL THEN True ELSE False END into bSerial;
-         IF bVerbose THEN
-           -- v17 fix: handle case-sensitive for pg_get_serial_sequence that requires SQL Identifier handling
-           -- SELECT pg_get_serial_sequence(v_qualified, v_colrec.column_name) into v_temp;
-           SELECT pg_get_serial_sequence(quote_ident(in_schema) || '.' || quote_ident(in_table), v_colrec.column_name) into v_temp;
-           IF v_temp IS NULL THEN v_temp = 'NA'; END IF;
-           SELECT public.pg_get_coldef(in_schema, in_table,v_colrec.column_name) INTO v_diag1;
-           RAISE NOTICE 'DEBUG table: %  Column: %  datatype: %  Serial=%  serialval=%  coldef=%', v_qualified, v_colrec.column_name, v_colrec.data_type, bSerial, v_temp, v_diag1;
-           RAISE NOTICE 'DEBUG tabledef: %', v_table_ddl;
-         END IF;
+         
+         IF bVerbose THEN RAISE NOTICE 'DEBUG table: %  Column: %  datatype: %  Serial=%  serialval=%  udtname=%  coldef=%', v_qualified, v_colrec.column_name, v_colrec.data_type, bSerial, v_temp, v_colrec.udt_name, v_coldef; END IF;
          
          --Issue#17 put double-quotes around case-sensitive column names
          SELECT COUNT(*) INTO v_cnt1 FROM information_schema.columns t WHERE EXISTS (SELECT REGEXP_MATCHES(s.column_name, '([A-Z]+)','g') FROM information_schema.columns s 
@@ -618,7 +638,9 @@ $$
          ELSEIF v_colrec.udt_name in ('box2d', 'box2df', 'box3d', 'geography', 'geometry_dump', 'gidx', 'spheroid', 'valid_detail') THEN         
 		         v_temp = v_colrec.udt_name;
 		     ELSEIF v_colrec.data_type = 'USER-DEFINED' THEN
-		         v_temp = v_colrec.udt_schema || '.' || v_colrec.udt_name;
+		         -- Issue#31 fix
+		         -- v_temp = v_colrec.udt_schema || '.' || v_colrec.udt_name;
+		         v_temp = quote_ident(v_colrec.udt_schema) || '.' || v_colrec.udt_name;
 		     ELSEIF v_colrec.data_type = 'ARRAY' THEN
    		       -- Issue#6 fix: handle arrays
 		         v_temp = public.pg_get_coldef(in_schema, in_table,v_colrec.column_name);
@@ -628,7 +650,9 @@ $$
 		         -- Issue#8 fix: handle serial. Note: NOT NULL is implied so no need to declare it explicitly
 		         v_temp = public.pg_get_coldef(in_schema, in_table,v_colrec.column_name);
 		     ELSE
-		         v_temp = v_colrec.data_type;
+		         -- Issue#31 fix
+		         -- v_temp = v_colrec.data_type;
+		         v_temp = v_coldef;
          END IF;
          -- RAISE NOTICE 'column def1=%', v_temp;
 
@@ -639,10 +663,11 @@ $$
 		         ELSE
 		             v_temp = v_temp || ' GENERATED BY DEFAULT AS IDENTITY NOT NULL';
 		         END IF;
-         ELSEIF v_colrec.character_maximum_length IS NOT NULL THEN 
-             v_temp = v_temp || ('(' || v_colrec.character_maximum_length || ')');
-         ELSEIF v_colrec.numeric_precision > 0 AND v_colrec.numeric_scale > 0 THEN 
-             v_temp = v_temp || '(' || v_colrec.numeric_precision || ',' || v_colrec.numeric_scale || ')';
+         -- Issue#31: no need to add stuff since we get the coldef definition now above		         
+         -- ELSEIF v_colrec.character_maximum_length IS NOT NULL THEN 
+         --     v_temp = v_temp || ('(' || v_colrec.character_maximum_length || ')');
+         -- ELSEIF v_colrec.numeric_precision > 0 AND v_colrec.numeric_scale > 0 THEN 
+         --     v_temp = v_temp || '(' || v_colrec.numeric_precision || ',' || v_colrec.numeric_scale || ')';
          END IF;
 
          -- Handle NULL/NOT NULL
@@ -665,7 +690,8 @@ $$
          -- RAISE NOTICE 'column def2=%', v_temp;
          v_table_ddl := v_table_ddl || v_temp;
          -- RAISE NOTICE 'tabledef=%', v_table_ddl;
-
+         
+         IF bVerbose THEN RAISE NOTICE 'DEBUG tabledef: %', v_table_ddl; END IF;
       END LOOP;
     END IF;
     IF bVerbose THEN RAISE NOTICE '(2)tabledef so far: %', v_table_ddl; END IF;
@@ -950,8 +976,7 @@ $$
     -- Issue#29: add verbose info for searchpath stuff
     v_context = 'SEARCHPATH';
     IF search_path_old = '' THEN
-      -- Issue#138: make search path changes only effective for the current transaction (last parm goes from false to true)
-      SELECT set_config('search_path', '', true) into v_temp;
+      SELECT set_config('search_path', '', false) into v_temp;
       IF bVerbose THEN RAISE NOTICE 'SearchPath Cleanup: current searchpath=%', v_temp; END IF;
     ELSE
       IF bVerbose THEN RAISE NOTICE 'SearchPath Cleanup: resetting searchpath=%', search_path_old; END IF;
@@ -979,7 +1004,6 @@ $$
 
   END;
 $$;
-
 
 /****************************************************/
 /*  Drop In function pg_get_tabledef ends here...   */
@@ -1134,7 +1158,7 @@ DECLARE
   s                timestamptz;
   lastsql          text := '';
   lasttbl          text := '';
-  v_version        text := '2.13 November 11, 2024';
+  v_version        text := '2.14 November 13, 2024';
 
 BEGIN
   -- uncomment the following to get line context info when debugging exceptions. 
@@ -1263,8 +1287,23 @@ BEGIN
   
   -- Validate required types exist.  If not, create them.
   -- Issue#141, remove complex query to determine and simply drop them if they exist and recreate them.  Also put them in the public schema so they don't get propagated during cloning.
-  DROP TYPE IF EXISTS public.objj_type;
-  DROP TYPE IF EXISTS public.permm_type;
+  -- DROP TYPE IF EXISTS public.objj_type;
+  -- DROP TYPE IF EXISTS public.permm_type;
+  SELECT count(*) INTO cnt FROM pg_catalog.pg_type t LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+	WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class c WHERE c.oid = t.typrelid))
+	AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_type el WHERE el.oid = t.typelem AND el.typarray = t.oid)
+	AND n.nspname OPERATOR(pg_catalog.~) '^(public)$' COLLATE pg_catalog.default AND pg_catalog.format_type(t.oid, NULL) = 'objj_type';
+	IF cnt = 1 THEN
+	    DROP TYPE public.objj_type;
+	END IF;
+	SELECT count(*) INTO cnt FROM pg_catalog.pg_type t LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+	WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class c WHERE c.oid = t.typrelid))
+	AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_type el WHERE el.oid = t.typelem AND el.typarray = t.oid)
+	AND n.nspname OPERATOR(pg_catalog.~) '^(public)$' COLLATE pg_catalog.default AND pg_catalog.format_type(t.oid, NULL) = 'permm_type';
+	IF cnt = 1 THEN
+	    DROP TYPE public.permm_type;
+	END IF;
+  
   CREATE TYPE public.objj_type AS ENUM ('TABLE','VIEW','COLUMN','SEQUENCE','FUNCTION','SCHEMA','DATABASE');
   CREATE TYPE public.permm_type AS ENUM ('SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER','USAGE','CREATE','EXECUTE','CONNECT','TEMPORARY');
 
@@ -1330,7 +1369,9 @@ BEGIN
       FROM pg_collation c
           JOIN pg_namespace n ON (c.collnamespace = n.oid)
           JOIN pg_roles a ON (c.collowner = a.oid)
-      WHERE n.nspname = quote_ident(source_schema)
+      -- Issue#140    
+      -- WHERE n.nspname = quote_ident(source_schema)
+      WHERE n.nspname = source_schema
       ORDER BY c.collname
     LOOP
       BEGIN
@@ -1354,7 +1395,9 @@ BEGIN
       FROM pg_collation c
           JOIN pg_namespace n ON (c.collnamespace = n.oid)
           JOIN pg_roles a ON (c.collowner = a.oid)
-      WHERE n.nspname = quote_ident(source_schema)
+      -- Issue#140              
+      -- WHERE n.nspname = quote_ident(source_schema)
+      WHERE n.nspname = source_schema
       ORDER BY c.collname
     LOOP
       BEGIN
@@ -1378,7 +1421,9 @@ BEGIN
       FROM pg_collation c
           JOIN pg_namespace n ON (c.collnamespace = n.oid)
           JOIN pg_roles a ON (c.collowner = a.oid)
-      WHERE n.nspname = quote_ident(source_schema)
+      -- Issue#140              
+      -- WHERE n.nspname = quote_ident(source_schema)
+      WHERE n.nspname = source_schema
       ORDER BY c.collname
     LOOP
       BEGIN
@@ -1402,7 +1447,9 @@ BEGIN
       FROM pg_collation c
           JOIN pg_namespace n ON (c.collnamespace = n.oid)
           JOIN pg_roles a ON (c.collowner = a.oid)
-      WHERE n.nspname = quote_ident(source_schema)
+      -- Issue#140
+      -- WHERE n.nspname = quote_ident(source_schema)
+      WHERE n.nspname = source_schema
       ORDER BY c.collname
     LOOP
       BEGIN
@@ -1438,7 +1485,9 @@ BEGIN
     t.typnotnull, 
     t.typdefault,
     COALESCE(pg_catalog.array_to_string(ARRAY(SELECT pg_catalog.pg_get_constraintdef(r.oid, true) FROM pg_catalog.pg_constraint r WHERE t.oid = r.contypid AND r.contype = 'c' ORDER BY r.conname), ''), '') as acheck
-    FROM pg_catalog.pg_type t LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace WHERE t.typtype = 'd' AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default ORDER BY 1, 2
+    -- Issue#140
+    -- FROM pg_catalog.pg_type t LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace WHERE t.typtype = 'd' AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default ORDER BY 1, 2
+    FROM pg_catalog.pg_type t LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace WHERE t.typtype = 'd' AND n.nspname = source_schema COLLATE pg_catalog.default ORDER BY 1, 2
   LOOP
     BEGIN
       cnt := cnt + 1;
@@ -1481,7 +1530,9 @@ BEGIN
         LEFT JOIN pg_enum e ON (t.oid = e.enumtypid)
         LEFT JOIN pg_class c ON (c.reltype = t.oid)
         LEFT JOIN pg_attribute a ON (a.attrelid = c.oid)
-    WHERE n.nspname = quote_ident(source_schema)
+    -- Issue#131: no need to quote_ident
+    -- WHERE n.nspname = quote_ident(source_schema)
+    WHERE n.nspname = source_schema
         AND (c.relkind IS NULL
             OR c.relkind = 'c')
         AND t.typcategory IN ('C', 'E')
@@ -1557,10 +1608,13 @@ BEGIN
   FOR object, buffer IN
     -- Fixed Issue#108:
     -- SELECT s1.sequence_name::text, s2.sequenceowner FROM information_schema.sequences s1 JOIN pg_sequences s2 ON (s1.sequence_schema = s2.schemaname AND s1.sequence_name = s2.sequencename) AND s1.sequence_schema = quote_ident(source_schema)
-    SELECT s.sequence_name::text, '"' || u.usename || '"' as owner FROM information_schema.sequences s JOIN pg_class c ON (s.sequence_name = c.relname AND s.sequence_schema = c.relnamespace::regnamespace::text) JOIN pg_user u ON (c.relowner = u.usesysid) 
-    WHERE c.relkind = 'S' AND s.sequence_schema = quote_ident(source_schema)
+    -- Issue#140 quote_ident
+    --SELECT s.sequence_name::text, '"' || u.usename || '"' as owner FROM information_schema.sequences s JOIN pg_class c ON (s.sequence_name = c.relname AND s.sequence_schema = c.relnamespace::regnamespace::text) JOIN pg_user u ON (c.relowner = u.usesysid) 
+    SELECT s.sequence_name::text, '"' || u.usename || '"' as owner FROM information_schema.sequences s JOIN pg_class c ON (s.sequence_name = c.relname AND quote_ident(s.sequence_schema) = c.relnamespace::regnamespace::text) JOIN pg_user u ON (c.relowner = u.usesysid)     
+    -- WHERE c.relkind = 'S' AND s.sequence_schema = quote_ident(source_schema)
+    WHERE c.relkind = 'S' AND quote_ident(s.sequence_schema) = quote_ident(source_schema)
     UNION SELECT s.sequence_name::text, g.groname as owner FROM information_schema.sequences s JOIN pg_class c ON (s.sequence_name = c.relname AND s.sequence_schema = c.relnamespace::regnamespace::text) JOIN pg_group g ON (c.relowner = g.grosysid) 
-    WHERE c.relkind = 'S' AND s.sequence_schema = quote_ident(source_schema)
+    WHERE c.relkind = 'S' AND s.sequence_schema = quote_ident(source_schema)    
   LOOP
     cnt := cnt + 1;
     -- Issue#122: bypass serial columns (smallserial, serial, bigserial), not implemented yet because some explicit sequence defs show up as serial????
@@ -1722,7 +1776,7 @@ BEGIN
         JOIN pg_namespace n ON (n.oid = c.relnamespace
                 -- Issue#140
                 -- AND n.nspname = quote_ident(source_schema)
-                AND quote_ident(n.nspname) = quote_ident(source_schema)
+                AND n.nspname = source_schema
                 AND c.relkind IN ('r', 'p'))
         LEFT JOIN information_schema.columns co ON (co.table_schema = n.nspname
                 AND co.table_name = c.relname
@@ -1764,7 +1818,9 @@ BEGIN
           -- FIXED #65, #67
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
           -- FIX: #121 Use pg_get_tabledef instead
-          SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');          
+          -- Issue#140 remove quote_ident!
+          -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');          
+          SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, bDebug, 'FKEYS_NONE');          
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
           RAISE INFO '%', buffer3;
           -- issue#91 fix
@@ -1794,7 +1850,9 @@ BEGIN
             -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
             -- FIX: #121 Use pg_get_tabledef instead
             -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
-            SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
+            -- Issue#140 remove quote_ident!
+            -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
+            SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, bDebug, 'FKEYS_NONE');                      
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
             RAISE INFO '%', buffer3;
             -- issue#91 fix
@@ -1812,7 +1870,9 @@ BEGIN
           -- FIX: #121 Use pg_get_tabledef instead
           -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
           -- SELECT * INTO buffer3 FROM public.get_table_ddl_complex(source_schema, dest_schema, tblname, sq_server_version_num);     
-          SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
+          -- Issue#140 remove quote_ident!
+          -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
+          SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, bDebug, 'FKEYS_NONE');                      
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
           IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef01a:%', buffer3; END IF;
           -- #82: Table def should be fully qualified with target schema, 
@@ -1867,7 +1927,9 @@ BEGIN
             -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
             -- FIX: #121 Use pg_get_tabledef instead
             -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
-            SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
+            -- Issue#140 remove quote_ident!
+            -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
+            SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, bDebug, 'FKEYS_NONE');                      
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
             -- set client_min_messages higher to avoid messages like this:
             -- NOTICE:  merging column "city_id" with inherited definition
@@ -1904,7 +1966,9 @@ BEGIN
       -- Issue #103 Put the complex query into its own function, get_table_ddl_complex()
       -- FIX: #121 Use pg_get_tabledef instead
       -- SELECT * INTO qry FROM public.get_table_ddl_complex(source_schema, dest_schema, tblname, sq_server_version_num);
-      SELECT * INTO qry FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
+      -- Issue#140 remove quote_ident!
+      -- SELECT * INTO qry FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
+      SELECT * INTO qry FROM public.pg_get_tabledef(source_schema, tblname, bDebug, 'FKEYS_NONE');                      
       qry := REPLACE(qry, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
       IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef04 - %', qry; END IF;
 
@@ -1935,8 +1999,10 @@ BEGIN
         
         -- Issue#103
         -- Set search path back to what it was
-        spath = 'SET search_path = "' || spath_tmp || '"';
-        IF bDebug THEN RAISE NOTICE 'DEBUG: setting search_path back to:%', spath_tmp; END IF;
+        -- Issue#131: do not surround with single ticks
+        -- spath = 'SET search_path = "' || spath_tmp || '"';
+        spath = 'SET search_path = ' || spath_tmp;
+        IF bDebug THEN RAISE NOTICE 'DEBUG: setting search_path back to:%  --> %', spath_tmp,spath; END IF;
         EXECUTE spath;
         SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';   
         IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed back to %', v_dummy; END IF;
@@ -1957,7 +2023,9 @@ BEGIN
       FOR aname, part_range, object IN
         SELECT quote_ident(dest_schema) || '.' || c1.relname as tablename, pg_catalog.pg_get_expr(c1.relpartbound, c1.oid) as partrange, quote_ident(dest_schema) || '.' || c2.relname as object
         FROM pg_catalog.pg_class c1, pg_namespace n, pg_catalog.pg_inherits i, pg_class c2
-        WHERE n.nspname = quote_ident(source_schema) AND c1.relnamespace = n.oid AND c1.relkind = 'r' 
+        -- Issue#140
+        -- WHERE n.nspname = quote_ident(source_schema) AND c1.relnamespace = n.oid AND c1.relkind = 'r' 
+        WHERE n.nspname = source_schema AND c1.relnamespace = n.oid AND c1.relkind = 'r' 
         -- Issue#103: added this condition to only work on current partitioned table.  The problem was regression testing previously only worked on one partition table clone case
         AND c2.relname = tblname AND 
         c1.relispartition AND c1.oid=i.inhrelid AND i.inhparent = c2.oid AND c2.relnamespace = n.oid ORDER BY pg_catalog.pg_get_expr(c1.relpartbound, c1.oid) = 'DEFAULT',
@@ -2051,7 +2119,9 @@ BEGIN
 
       -- 2020/06/18 - Issue #31 fix: add "OVERRIDING SYSTEM VALUE" for IDENTITY columns marked as GENERATED ALWAYS.
       select count(*) into cnt2 from pg_class c, pg_attribute a, pg_namespace n
-          where a.attrelid = c.oid and c.relname = quote_ident(tblname) and n.oid = c.relnamespace and n.nspname = quote_ident(source_schema) and a.attidentity = 'a';
+          -- Issue#140
+          -- where a.attrelid = c.oid and c.relname = quote_ident(tblname) and n.oid = c.relnamespace and n.nspname = quote_ident(source_schema) and a.attidentity = 'a';
+          where a.attrelid = c.oid and c.relname = quote_ident(tblname) and n.oid = c.relnamespace and n.nspname = source_schema and a.attidentity = 'a';
       buffer3 := '';
       IF cnt2 > 0 THEN
           buffer3 := ' OVERRIDING SYSTEM VALUE';
@@ -2093,7 +2163,9 @@ BEGIN
           IF bDebug THEN RAISE NOTICE 'DEBUG: Deferring file copy to end:%', buffer2; END IF;
         ELSE
           -- Issue#101: assume direct copy with text cast, add to separate array
-          SELECT * INTO buffer3 FROM public.get_insert_stmt_ddl(quote_ident(source_schema), quote_ident(dest_schema), quote_ident(tblname), True);
+          -- Issue#140
+          -- SELECT * INTO buffer3 FROM public.get_insert_stmt_ddl(quote_ident(source_schema), quote_ident(dest_schema), quote_ident(tblname), True);
+          SELECT * INTO buffer3 FROM public.get_insert_stmt_ddl(source_schema, dest_schema, quote_ident(tblname), True);
           
           -- Issue#140 check for invalid statement
           IF buffer3 = '' THEN
@@ -2207,7 +2279,9 @@ BEGIN
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
           -- FIX: #121 Use pg_get_tabledef instead
           -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
-          SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
+          -- Issue#140 remove quote_ident!
+          -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
+          SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, bDebug, 'FKEYS_NONE');                      
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
           RAISE INFO '%', buffer3;
           -- issue#91 fix
@@ -2237,7 +2311,9 @@ BEGIN
             -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
             -- FIX: #121 Use pg_get_tabledef instead
             -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
-            SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
+            -- Issue#140 remove quote_ident!
+            -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
+            SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, bDebug, 'FKEYS_NONE');                      
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
             RAISE INFO '%', buffer3;
             -- issue#91 fix
@@ -2254,7 +2330,9 @@ BEGIN
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
           -- FIX: #121 Use pg_get_tabledef instead
           -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
-          SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
+          -- Issue#140 remove quote_ident!
+          -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
+          SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, bDebug, 'FKEYS_NONE');                      
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
           IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef01b:%', buffer3; END IF;
           -- #82: Table def should be fully qualified with target schema, 
@@ -2309,7 +2387,9 @@ BEGIN
            
             -- FIX: #121 Use pg_get_tabledef instead
             -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
-            SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
+            -- Issue#140 remove quote_ident!
+            -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
+            SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, bDebug, 'FKEYS_NONE');                      
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
             -- set client_min_messages higher to avoid messages like this:
             -- NOTICE:  merging column "city_id" with inherited definition
@@ -2346,7 +2426,9 @@ BEGIN
       
       -- FIX: #121 Use pg_get_tabledef instead
       -- SELECT * INTO qry FROM public.get_table_ddl_complex(source_schema, dest_schema, tblname, sq_server_version_num);
-      SELECT * INTO qry FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
+      -- Issue#140 remove quote_ident!
+      -- SELECT * INTO qry FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
+      SELECT * INTO qry FROM public.pg_get_tabledef(source_schema, tblname, bDebug, 'FKEYS_NONE');                      
       qry := REPLACE(qry, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
       
       IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef04 - %', buffer; END IF;
@@ -2523,7 +2605,9 @@ BEGIN
           END IF;
         ELSE
           -- Issue#101: assume direct copy with text cast, add to separate array
-          SELECT * INTO buffer3 FROM public.get_insert_stmt_ddl(quote_ident(source_schema), quote_ident(dest_schema), quote_ident(tblname), True);
+          -- Issue#140
+          -- SELECT * INTO buffer3 FROM public.get_insert_stmt_ddl(quote_ident(source_schema), quote_ident(dest_schema), quote_ident(tblname), True);
+          SELECT * INTO buffer3 FROM public.get_insert_stmt_ddl(source_schema, dest_schema, quote_ident(tblname), True);
 
           -- Issue#140 check for invalid statement
           IF buffer3 = '' THEN
@@ -2595,11 +2679,9 @@ BEGIN
   IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
   cnt := 0;
   FOR object IN
-    SELECT sequence_name::text 
+    SELECT sequence_name::text
     FROM information_schema.sequences
-    -- Issue#140
-    -- WHERE sequence_schema = quote_ident(source_schema)
-    WHERE quote_ident(sequence_schema) = quote_ident(source_schema)
+    WHERE sequence_schema = source_schema
   LOOP
     cnt := cnt + 1;
     srctbl := quote_ident(source_schema) || '.' || quote_ident(object);
@@ -2653,6 +2735,7 @@ BEGIN
   RAISE NOTICE '    SEQUENCES set:   %', LPAD(cnt::text, 5, ' ');
 
   -- Update IDENTITY sequences to the last value, bypass 9.6 versions
+  -- NOTE: the IDENTITY SETS do not always add up to the number if IDENTITY columns.  It depends if the identity column table was ever incrememented.
   IF sq_server_version_num > 90624 THEN
       action := 'Identity updating';
       rc = 27;
@@ -2666,7 +2749,7 @@ BEGIN
         -- Isssue#140
         -- (select 1 from information_schema.sequences where sequence_schema = quote_ident(source_schema) and sequence_name = sequencename)
         (select 1 from information_schema.sequences where quote_ident(sequence_schema) = quote_ident(source_schema) and sequence_name = sequencename)
-      LOOP
+      LOOP      
         IF sq_last_value = -999 THEN
           continue;
         END IF;
@@ -2989,7 +3072,9 @@ BEGIN
     JOIN pg_class as source_obj ON pg_depend.refobjid = source_obj.oid
     JOIN pg_namespace dependent_ns ON dependent_ns.oid = dependent_obj.relnamespace
     JOIN pg_namespace source_ns ON source_ns.oid = source_obj.relnamespace
-    WHERE source_ns.nspname = quote_ident(source_schema) AND dependent_ns.nspname = quote_ident(source_schema) 
+    -- Issue#140
+    -- WHERE source_ns.nspname = quote_ident(source_schema) AND dependent_ns.nspname = quote_ident(source_schema) 
+    WHERE source_ns.nspname = source_schema AND dependent_ns.nspname = source_schema 
     AND dependent_obj.relname <> source_obj.relname AND dependent_obj.relkind in ('v') AND source_obj.relkind in ('m') AND dependent_obj.relname = v_dummy)
     SELECT count(*) into cnt2 FROM dependencies;
     IF bDebug THEN RAISE NOTICE 'dependent view count=% for view, %', cnt2, v_dummy; END IF;  
@@ -3036,7 +3121,9 @@ BEGIN
   cnt := 0;
   -- Issue#91 get view_owner
   FOR object, view_owner, v_def IN
-      SELECT matviewname::text, '"' || matviewowner::text || '"', replace(definition,';','') FROM pg_catalog.pg_matviews WHERE schemaname = quote_ident(source_schema)
+      -- Issue#140
+      -- SELECT matviewname::text, '"' || matviewowner::text || '"', replace(definition,';','') FROM pg_catalog.pg_matviews WHERE schemaname = quote_ident(source_schema)
+      SELECT matviewname::text, '"' || matviewowner::text || '"', replace(definition,';','') FROM pg_catalog.pg_matviews WHERE schemaname = source_schema
   LOOP
       cnt := cnt + 1;
       -- Issue#78 FIX: handle case-sensitive names with quote_ident() on target schema and object
@@ -3165,7 +3252,9 @@ BEGIN
   FOR arec IN
     SELECT regexp_replace(definition, E'[\\n\\r]+', ' ', 'g' ) as definition
     FROM pg_rules
-    WHERE schemaname = quote_ident(source_schema)
+    -- Issue#140
+    -- WHERE schemaname = quote_ident(source_schema)
+    WHERE schemaname = source_schema
   LOOP
     cnt := cnt + 1;
     buffer := REPLACE(arec.definition, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
@@ -3199,7 +3288,9 @@ BEGIN
       SELECT schemaname as schemaname, tablename as tablename, 'CREATE POLICY ' || quote_ident(policyname) || ' ON ' || quote_ident(dest_schema) || '.' || quote_ident(tablename) || ' AS ' || permissive || ' FOR ' || cmd || ' TO '
       ||  array_to_string(roles, ',', '*') || CASE WHEN qual is NULL THEN ' ' ELSE ' USING (' || regexp_replace(qual, E'[\\n\\r]+', ' ', 'g' )  || ')' END 
       || CASE WHEN with_check IS NOT NULL THEN ' WITH CHECK (' ELSE '' END || coalesce(with_check, '') || CASE WHEN with_check IS NOT NULL THEN ');' ELSE ';' END as definition
-      FROM pg_policies WHERE schemaname = quote_ident(source_schema) ORDER BY policyname
+      -- Issue#140
+      -- FROM pg_policies WHERE schemaname = quote_ident(source_schema) ORDER BY policyname
+      FROM pg_policies WHERE schemaname = source_schema ORDER BY policyname
     LOOP
       cnt := cnt + 1;
       IF bDDLOnly THEN
@@ -3213,7 +3304,9 @@ BEGIN
       END IF;
     
       -- Issue#76: Enable row security if indicated
-      SELECT c.relrowsecurity INTO abool FROM pg_class c, pg_namespace n where n.nspname = quote_ident(arec.schemaname) AND n.oid = c.relnamespace AND c.relname = quote_ident(arec.tablename) and c.relkind = 'r';
+      -- Issue#140
+      -- SELECT c.relrowsecurity INTO abool FROM pg_class c, pg_namespace n where n.nspname = quote_ident(arec.schemaname) AND n.oid = c.relnamespace AND c.relname = quote_ident(arec.tablename) and c.relkind = 'r';
+      SELECT c.relrowsecurity INTO abool FROM pg_class c, pg_namespace n where n.nspname = arec.schemaname AND n.oid = c.relnamespace AND c.relname = quote_ident(arec.tablename) and c.relkind = 'r';
       IF abool THEN
         lastsql = 'ALTER TABLE ' || dest_schema || '.' || arec.tablename || ' ENABLE ROW LEVEL SECURITY;';
         IF bDDLOnly THEN
@@ -3289,7 +3382,9 @@ BEGIN
     LEFT JOIN pg_description d ON (c.oid = d.objoid)
     LEFT JOIN pg_attribute a ON (c.oid = a.attrelid
       AND a.attnum > 0 and a.attnum = d.objsubid)
-    WHERE c.relkind <> 'f' AND d.description IS NOT NULL AND n.nspname = quote_ident(source_schema)
+    -- Issue#140
+    -- WHERE c.relkind <> 'f' AND d.description IS NOT NULL AND n.nspname = quote_ident(source_schema)
+    WHERE c.relkind <> 'f' AND d.description IS NOT NULL AND n.nspname = source_schema
     ORDER BY ddl
   LOOP
     cnt := cnt + 1;
@@ -3333,7 +3428,9 @@ BEGIN
     -- Issue#74 Fix
     -- ' IS ''' || d.description || ''';' as ddl
     ' IS '   || quote_literal(d.description) || ';' as ddl
-    from pg_namespace n, pg_description d where d.objoid = n.oid and n.nspname = quote_ident(source_schema)
+    -- Issue#140
+    -- from pg_namespace n, pg_description d where d.objoid = n.oid and n.nspname = quote_ident(source_schema)
+    from pg_namespace n, pg_description d where d.objoid = n.oid and n.nspname = source_schema
     UNION
     -- Issue#74 Fix: need to replace source schema inline
     -- SELECT 'COMMENT ON TYPE ' || pg_catalog.format_type(t.oid, NULL) || ' IS ''' || pg_catalog.obj_description(t.oid, 'pg_type') || ''';' as ddl
@@ -3342,14 +3439,18 @@ BEGIN
     JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
     WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class c WHERE c.oid = t.typrelid))
       AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_type el WHERE el.oid = t.typelem AND el.typarray = t.oid)
-      AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default
+      -- Issue#140
+      -- AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default
+      AND n.nspname = source_schema COLLATE pg_catalog.default
       AND pg_catalog.obj_description(t.oid, 'pg_type') IS NOT NULL and t.typtype = 'c'
     UNION
     -- Issue#78: handle case-sensitive names with quote_ident()
     SELECT 'COMMENT ON COLLATION ' || quote_ident(dest_schema) || '.' || quote_ident(c.collname) || ' IS ''' || pg_catalog.obj_description(c.oid, 'pg_collation') || ''';' as ddl
     FROM pg_catalog.pg_collation c, pg_catalog.pg_namespace n
     WHERE n.oid = c.collnamespace AND c.collencoding IN (-1, pg_catalog.pg_char_to_encoding(pg_catalog.getdatabaseencoding()))
-      AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default AND pg_catalog.obj_description(c.oid, 'pg_collation') IS NOT NULL
+      -- Issue#140
+      -- AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default AND pg_catalog.obj_description(c.oid, 'pg_collation') IS NOT NULL
+      AND n.nspname = source_schema COLLATE pg_catalog.default AND pg_catalog.obj_description(c.oid, 'pg_collation') IS NOT NULL
     UNION
     SELECT 'COMMENT ON ' || CASE WHEN p.prokind = 'f' THEN 'FUNCTION ' WHEN p.prokind = 'p' THEN 'PROCEDURE ' WHEN p.prokind = 'a' THEN 'AGGREGATE ' END ||
     dest_schema || '.' || p.proname || ' (' || oidvectortypes(p.proargtypes) || ')'
@@ -3359,7 +3460,9 @@ BEGIN
     FROM pg_catalog.pg_namespace n
     JOIN pg_catalog.pg_proc p ON p.pronamespace = n.oid
     JOIN pg_description d ON (d.objoid = p.oid)
-    WHERE n.nspname = quote_ident(source_schema)
+    -- Issue#140
+    -- WHERE n.nspname = quote_ident(source_schema)
+    WHERE n.nspname = source_schema
     UNION
     SELECT 'COMMENT ON POLICY ' || p1.policyname || ' ON ' || dest_schema || '.' || p1.tablename ||
     -- Issue#74 Fix
@@ -3367,7 +3470,9 @@ BEGIN
     ' IS '   || quote_literal(d.description) || ';' as ddl
     FROM pg_policies p1, pg_policy p2, pg_class c, pg_namespace n, pg_description d
     WHERE p1.schemaname = n.nspname AND p1.tablename = c.relname AND n.oid = c.relnamespace
-      AND c.relkind in ('r','p') AND p1.policyname = p2.polname AND d.objoid = p2.oid AND p1.schemaname = quote_ident(source_schema)
+      -- Issue#140
+      -- AND c.relkind in ('r','p') AND p1.policyname = p2.polname AND d.objoid = p2.oid AND p1.schemaname = quote_ident(source_schema)
+      AND c.relkind in ('r','p') AND p1.policyname = p2.polname AND d.objoid = p2.oid AND p1.schemaname = source_schema
     UNION
     SELECT 'COMMENT ON DOMAIN ' || dest_schema || '.' || t.typname ||
     -- Issue#74 Fix
@@ -3376,7 +3481,9 @@ BEGIN
     FROM pg_catalog.pg_type t
     LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
     JOIN pg_catalog.pg_description d ON d.classoid = t.tableoid AND d.objoid = t.oid AND d.objsubid = 0
-    WHERE t.typtype = 'd' AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default
+    -- Issue#140
+    -- WHERE t.typtype = 'd' AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default
+    WHERE t.typtype = 'd' AND n.nspname = source_schema COLLATE pg_catalog.default
     ORDER BY 1
   LOOP
     -- TEMP!!!!!!!!
@@ -3478,7 +3585,9 @@ BEGIN
       CASE d.defaclobjtype WHEN 'r' THEN 'table' WHEN 'S' THEN 'sequence' WHEN 'f' THEN 'function' WHEN 'T' THEN 'type' WHEN 'n' THEN 'schema' END AS atype,
       d.defaclacl as defaclacl, pg_catalog.array_to_string(d.defaclacl, ',') as defaclstr
       FROM pg_catalog.pg_default_acl d LEFT JOIN pg_catalog.pg_namespace n ON (n.oid = d.defaclnamespace)
-      WHERE n.nspname IS NOT NULL AND n.nspname = quote_ident(source_schema)
+      -- Issue#130
+      -- WHERE n.nspname IS NOT NULL AND n.nspname = quote_ident(source_schema)
+      WHERE n.nspname IS NOT NULL AND n.nspname = source_schema
       ORDER BY 3, 2, 1
     LOOP
       BEGIN
@@ -3725,7 +3834,9 @@ BEGIN
       FROM pg_catalog.pg_namespace AS n
       CROSS JOIN pg_catalog.pg_roles AS r
       CROSS JOIN (VALUES ('USAGE'), ('CREATE')) AS p(perm)
-      WHERE n.nspname = quote_ident(source_schema) AND NOT r.rolsuper AND has_schema_privilege(r.oid, n.oid, p.perm) AND
+      -- Issue#140
+      -- WHERE n.nspname = quote_ident(source_schema) AND NOT r.rolsuper AND has_schema_privilege(r.oid, n.oid, p.perm) AND
+      WHERE n.nspname = source_schema AND NOT r.rolsuper AND has_schema_privilege(r.oid, n.oid, p.perm) AND      
       --Issue#123: do not assign to system roles
       r.rolname NOT IN ('pg_read_all_data','pg_write_all_data') 
       ORDER BY r.rolname, p.perm::public.permm_type
@@ -3807,7 +3918,9 @@ BEGIN
       -- SELECT 'GRANT ' || rp.privilege_type || ' ON ' || COALESCE(r.routine_type, 'FUNCTION') || ' ' || quote_ident(dest_schema) || '.' || quote_ident(rp.routine_name) || ' (' || pg_get_function_identity_arguments(p.oid) || ') TO ' || string_agg(distinct rp.grantee, ',') || ';' as func_dcl
       SELECT 'GRANT ' || rp.privilege_type || ' ON ' || COALESCE(r.routine_type, 'FUNCTION') || ' ' || quote_ident(dest_schema) || '.' || quote_ident(rp.routine_name) || ' (' || pg_get_function_identity_arguments(p.oid) || ') TO "' || string_agg(distinct rp.grantee, '","') || '";' as func_dcl
       FROM information_schema.routine_privileges rp, information_schema.routines r, pg_proc p, pg_namespace n
-      WHERE rp.routine_schema = quote_ident(source_schema)
+      -- Issue#140
+      -- WHERE rp.routine_schema = quote_ident(source_schema)
+      WHERE rp.routine_schema = source_schema
         AND rp.is_grantable = 'YES'
         AND rp.routine_schema = r.routine_schema
         AND rp.routine_name = r.routine_name
@@ -4030,8 +4143,11 @@ BEGIN
       -- quote_ident(dest_schema) || '.' || quote_ident(tb.table_name) || ' TO ' || string_agg(tb.grantee, ',') || ';' as tbl_dcl
       quote_ident(dest_schema) || '.' || quote_ident(tb.table_name) || ' TO "' || string_agg(tb.grantee, '","') || '";' as tbl_dcl
       FROM information_schema.table_privileges tb, pg_class c, pg_namespace n
-      WHERE tb.table_schema = quote_ident(source_schema) AND tb.table_name = c.relname AND c.relkind in ('r', 'p', 'v', 'm')
-        AND c.relnamespace = n.oid AND n.nspname = quote_ident(source_schema)
+      -- Issue#140
+      -- WHERE tb.table_schema = quote_ident(source_schema) AND tb.table_name = c.relname AND c.relkind in ('r', 'p', 'v', 'm')
+      --  AND c.relnamespace = n.oid AND n.nspname = quote_ident(source_schema)
+      WHERE tb.table_schema = source_schema AND tb.table_name = c.relname AND c.relkind in ('r', 'p', 'v', 'm')
+        AND c.relnamespace = n.oid AND n.nspname = source_schema
         GROUP BY c.relkind, tb.privilege_type, tb.table_schema, tb.table_name 
         ORDER BY tb.table_name, tb.privilege_type
     LOOP
@@ -4109,7 +4225,9 @@ BEGIN
     -- 2021-03-09 MJV FIX: #40 fixed sql to get the def using pg_get_triggerdef() sql
     SELECT n.nspname, c.relname, t.tgname, p.proname, REPLACE(pg_get_triggerdef(t.oid), quote_ident(source_schema), quote_ident(dest_schema)) || ';' AS trig_ddl
     FROM pg_trigger t, pg_class c, pg_namespace n, pg_proc p
-    WHERE n.nspname = quote_ident(source_schema)
+    -- Issue#140
+    -- WHERE n.nspname = quote_ident(source_schema)
+    WHERE n.nspname = source_schema
       AND n.oid = c.relnamespace
       AND c.relkind in ('r','p')
       AND n.oid = p.pronamespace
