@@ -944,7 +944,9 @@ $$
     IF  cmtcnt > 0 THEN 
         FOR v_rec IN
           SELECT c.relname, 'COMMENT ON ' || CASE WHEN c.relkind in ('r','p') AND a.attname IS NULL THEN 'TABLE ' WHEN c.relkind in ('r','p') AND a.attname IS NOT NULL THEN 'COLUMN ' WHEN c.relkind = 'f' THEN 'FOREIGN TABLE ' 
-                 WHEN c.relkind = 'm' THEN 'MATERIALIZED VIEW ' WHEN c.relkind = 'v' THEN 'VIEW ' WHEN c.relkind = 'i' THEN 'INDEX ' WHEN c.relkind = 'S' THEN 'SEQUENCE ' ELSE 'XX' END || n.nspname || '.' || 
+                 -- Issue#140
+                 -- WHEN c.relkind = 'm' THEN 'MATERIALIZED VIEW ' WHEN c.relkind = 'v' THEN 'VIEW ' WHEN c.relkind = 'i' THEN 'INDEX ' WHEN c.relkind = 'S' THEN 'SEQUENCE ' ELSE 'XX' END || n.nspname || '.' || 
+                 WHEN c.relkind = 'm' THEN 'MATERIALIZED VIEW ' WHEN c.relkind = 'v' THEN 'VIEW ' WHEN c.relkind = 'i' THEN 'INDEX ' WHEN c.relkind = 'S' THEN 'SEQUENCE ' ELSE 'XX' END || quote_ident(n.nspname) || '.' || 
                  CASE WHEN c.relkind in ('r','p') AND a.attname IS NOT NULL THEN quote_ident(c.relname) || '.' || a.attname ELSE quote_ident(c.relname) END || ' IS '   || quote_literal(d.description) || ';' as ddl
 	   	    FROM pg_class c JOIN pg_namespace n ON (n.oid = c.relnamespace) LEFT JOIN pg_description d ON (c.oid = d.objoid) LEFT JOIN pg_attribute a ON (c.oid = a.attrelid AND a.attnum > 0 and a.attnum = d.objsubid)
 	   	    WHERE d.description IS NOT NULL AND n.nspname = in_schema AND c.relname = in_table ORDER BY 2 desc, ddl
@@ -2092,8 +2094,11 @@ BEGIN
         IF NOT EXISTS (SELECT TRUE FROM pg_class c, pg_constraint ct WHERE ct.conrelid = c.oid AND c.relnamespace::regnamespace::text = quote_ident(source_schema) AND c.relname = tblname AND ct.contype IN ('u') AND ct.conname = ix_old_name) 
 				THEN
 				  -- Issue#133: bypass columns we can't find in new schema probably due to CREATE TABLE LIKE constructs where fabricated index names are created automatically.
-	        SELECT count(*) INTO cnt FROM pg_indexes WHERE schemaname = quote_ident(dest_schema) AND tablename = tblname AND indexname =  ix_new_name AND ix_old_name <> ix_new_name AND NOT EXISTS (SELECT TRUE FROM pg_indexes 
-	        WHERE schemaname = quote_ident(dest_schema) AND tablename = tblname AND indexname =  ix_old_name);
+				  -- Issue#140
+	        -- SELECT count(*) INTO cnt FROM pg_indexes WHERE schemaname = quote_ident(dest_schema) AND tablename = tblname AND indexname =  ix_new_name AND ix_old_name <> ix_new_name AND NOT EXISTS (SELECT TRUE FROM pg_indexes 
+	        -- WHERE schemaname = quote_ident(dest_schema) AND tablename = tblname AND indexname =  ix_old_name);
+	        SELECT count(*) INTO cnt FROM pg_indexes WHERE schemaname = dest_schema AND tablename = tblname AND indexname =  ix_new_name AND ix_old_name <> ix_new_name AND NOT EXISTS (SELECT TRUE FROM pg_indexes 
+	        WHERE schemaname = dest_schema AND tablename = tblname AND indexname =  ix_old_name);
 	        IF cnt > 0 THEN
               lastsql = 'ALTER INDEX ' || quote_ident(dest_schema) || '.' || quote_ident(ix_new_name) || ' RENAME TO ' || quote_ident(ix_old_name) || ';'; 
               IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
@@ -2883,7 +2888,9 @@ BEGIN
         cnt := cnt + 1;
         SELECT
           'CREATE AGGREGATE '
-          || dest_schema
+          -- Issue#140
+          -- || dest_schema
+          || quote_ident(dest_schema)
           || '.'
           || p.proname
           || '('
@@ -2931,7 +2938,9 @@ BEGIN
         cnt := cnt + 1;
         SELECT
           'CREATE AGGREGATE '
-          || dest_schema
+          -- Issue#140
+          -- || dest_schema
+          || quote_ident(dest_schema)
           || '.'
           || p.proname
           || '('
@@ -3308,7 +3317,9 @@ BEGIN
       -- SELECT c.relrowsecurity INTO abool FROM pg_class c, pg_namespace n where n.nspname = quote_ident(arec.schemaname) AND n.oid = c.relnamespace AND c.relname = quote_ident(arec.tablename) and c.relkind = 'r';
       SELECT c.relrowsecurity INTO abool FROM pg_class c, pg_namespace n where n.nspname = arec.schemaname AND n.oid = c.relnamespace AND c.relname = quote_ident(arec.tablename) and c.relkind = 'r';
       IF abool THEN
-        lastsql = 'ALTER TABLE ' || dest_schema || '.' || arec.tablename || ' ENABLE ROW LEVEL SECURITY;';
+        -- Issue#140
+        -- lastsql = 'ALTER TABLE ' || dest_schema || '.' || arec.tablename || ' ENABLE ROW LEVEL SECURITY;';
+        lastsql = 'ALTER TABLE ' || quote_ident(dest_schema) || '.' || arec.tablename || ' ENABLE ROW LEVEL SECURITY;';
         IF bDDLOnly THEN
           RAISE INFO '%', lastsql;
           lastsql = '';
@@ -3347,7 +3358,9 @@ BEGIN
       -- Issue#76: Enable row security if indicated
       SELECT c.relrowsecurity INTO abool FROM pg_class c, pg_namespace n where n.nspname = quote_ident(arec.schemaname) AND n.oid = c.relnamespace AND c.relname = quote_ident(arec.tablename) and c.relkind = 'r';
       IF abool THEN
-        buffer = 'ALTER TABLE ' || dest_schema || '.' || arec.tablename || ' ENABLE ROW LEVEL SECURITY;';
+        -- Issue#140
+        -- buffer = 'ALTER TABLE ' || dest_schema || '.' || arec.tablename || ' ENABLE ROW LEVEL SECURITY;';
+        buffer = 'ALTER TABLE ' || quote_ident(dest_schema) || '.' || arec.tablename || ' ENABLE ROW LEVEL SECURITY;';
         IF bDDLOnly THEN
           RAISE INFO '%', buffer;
         ELSE
@@ -3424,7 +3437,9 @@ BEGIN
   IF is_prokind THEN
   FOR qry IN
     -- Issue#74 Fix: Change schema from source to target.
-    SELECT 'COMMENT ON SCHEMA ' || dest_schema ||
+    -- Issue#140
+    -- SELECT 'COMMENT ON SCHEMA ' || dest_schema ||
+    SELECT 'COMMENT ON SCHEMA ' || quote_ident(dest_schema) ||
     -- Issue#74 Fix
     -- ' IS ''' || d.description || ''';' as ddl
     ' IS '   || quote_literal(d.description) || ';' as ddl
@@ -3453,7 +3468,9 @@ BEGIN
       AND n.nspname = source_schema COLLATE pg_catalog.default AND pg_catalog.obj_description(c.oid, 'pg_collation') IS NOT NULL
     UNION
     SELECT 'COMMENT ON ' || CASE WHEN p.prokind = 'f' THEN 'FUNCTION ' WHEN p.prokind = 'p' THEN 'PROCEDURE ' WHEN p.prokind = 'a' THEN 'AGGREGATE ' END ||
-    dest_schema || '.' || p.proname || ' (' || oidvectortypes(p.proargtypes) || ')'
+    -- Issue#140
+    -- dest_schema || '.' || p.proname || ' (' || oidvectortypes(p.proargtypes) || ')'
+    quote_ident(dest_schema) || '.' || p.proname || ' (' || oidvectortypes(p.proargtypes) || ')'
     -- Issue#74 Fix
     -- ' IS ''' || d.description || ''';' as ddl
     ' IS '   || quote_literal(d.description) || ';' as ddl
@@ -3464,7 +3481,9 @@ BEGIN
     -- WHERE n.nspname = quote_ident(source_schema)
     WHERE n.nspname = source_schema
     UNION
-    SELECT 'COMMENT ON POLICY ' || p1.policyname || ' ON ' || dest_schema || '.' || p1.tablename ||
+    -- Issue#140
+    -- SELECT 'COMMENT ON POLICY ' || p1.policyname || ' ON ' || dest_schema || '.' || p1.tablename ||
+    SELECT 'COMMENT ON POLICY ' || p1.policyname || ' ON ' || quote_ident(dest_schema) || '.' || p1.tablename ||
     -- Issue#74 Fix
     -- ' IS ''' || d.description || ''';' as ddl
     ' IS '   || quote_literal(d.description) || ';' as ddl
@@ -3474,7 +3493,9 @@ BEGIN
       -- AND c.relkind in ('r','p') AND p1.policyname = p2.polname AND d.objoid = p2.oid AND p1.schemaname = quote_ident(source_schema)
       AND c.relkind in ('r','p') AND p1.policyname = p2.polname AND d.objoid = p2.oid AND p1.schemaname = source_schema
     UNION
-    SELECT 'COMMENT ON DOMAIN ' || dest_schema || '.' || t.typname ||
+    -- Issue#140
+    -- SELECT 'COMMENT ON DOMAIN ' || dest_schema || '.' || t.typname ||
+    SELECT 'COMMENT ON DOMAIN ' || quote_ident(dest_schema) || '.' || t.typname ||
     -- Issue#74 Fix
     -- ' IS ''' || d.description || ''';' as ddl
     ' IS '   || quote_literal(d.description) || ';' as ddl
