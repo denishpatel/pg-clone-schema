@@ -80,7 +80,7 @@
 -- 2024-10-30  MJV FIX: Fixed Issue#138: conversion changes for PG v17: fixed queries for domains.
 -- 2024-11-05  MJV FIX: Fixed Issue#139: change return type from VOID to INTEGER for programatic error handling.
 -- 2024-11-08  MJV FIX: Fixed Issue#141: Remove/rename function types (obj_type-->objj_type, perm_type-->permm_type) before exiting function and put them in the public schema so they don't get propagated during the cloning process.
--- 2024-11-13  MJV FIX: Fixed Issue#140: More issues with non-standard schema names requiring quoting. Also required changes to pg_get_tabledef().
+-- 2024-11-14  MJV FIX: Fixed Issue#140: More issues with non-standard schema names requiring quoting. Also required changes to pg_get_tabledef().
 -- 2024-??-??  MJV FIX: Fixed Issue#122: TODO ---> Do not create explicit sequence when it is implied via serial definition.
 
 do $$ 
@@ -188,11 +188,11 @@ $$
         -- Issue#124 Fix
         -- Issue#140
         -- v_insert_ddl = 'INSERT INTO ' || target_schema || '.' || atable || ' (' || v_cols || ') OVERRIDING SYSTEM VALUE ' || 'SELECT ' || v_cols_sel || ' FROM ' || source_schema || '.' || atable || ';';    
-        v_insert_ddl = 'INSERT INTO ' || target_schema || '.' || atable || ' (' || v_cols || ') OVERRIDING SYSTEM VALUE ' || 'SELECT ' || v_cols_sel || ' FROM ' || quote_ident(source_schema) || '.' || atable || ';';    
+        v_insert_ddl = 'INSERT INTO ' || quote_ident(target_schema) || '.' || atable || ' (' || v_cols || ') OVERRIDING SYSTEM VALUE ' || 'SELECT ' || v_cols_sel || ' FROM ' || quote_ident(source_schema) || '.' || atable || ';';    
     ELSE
         -- Issue#140
         -- v_insert_ddl = 'INSERT INTO ' || target_schema || '.' || atable || ' (' || v_cols || ') ' || 'SELECT ' || v_cols_sel || ' FROM ' || source_schema || '.' || atable || ';';
-        v_insert_ddl = 'INSERT INTO ' || target_schema || '.' || atable || ' (' || v_cols || ') ' || 'SELECT ' || v_cols_sel || ' FROM ' || quote_ident(source_schema) || '.' || atable || ';';
+        v_insert_ddl = 'INSERT INTO ' || quote_ident(target_schema) || '.' || atable || ' (' || v_cols || ') ' || 'SELECT ' || v_cols_sel || ' FROM ' || quote_ident(source_schema) || '.' || atable || ';';
     END IF;
     RETURN v_insert_ddl;
   END;
@@ -1158,7 +1158,7 @@ DECLARE
   s                timestamptz;
   lastsql          text := '';
   lasttbl          text := '';
-  v_version        text := '2.14 November 13, 2024';
+  v_version        text := '2.14 November 14, 2024';
 
 BEGIN
   -- uncomment the following to get line context info when debugging exceptions. 
