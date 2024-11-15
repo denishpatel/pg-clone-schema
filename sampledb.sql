@@ -1136,6 +1136,9 @@ CREATE POLICY fp_s ON information FOR SELECT USING (group_id <= (SELECT group_id
 CREATE POLICY fp_u ON information FOR UPDATE USING (group_id <= (SELECT group_id FROM users WHERE user_name = current_user));
 
 
+CREATE SEQUENCE explicitsequence_key START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1;
+CREATE TABLE atable (key integer NOT NULL default nextval('explicitsequence_key'), avalue text);
+
 -- -----------------------------
 -- Create case-sensitive objects
 -- -----------------------------
