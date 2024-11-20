@@ -82,7 +82,6 @@
 -- 2024-11-08  MJV FIX: Fixed Issue#141: Remove/rename function types (obj_type-->objj_type, perm_type-->permm_type) before exiting function and put them in the public schema so they don't get propagated during the cloning process.
 -- 2024-11-14  MJV FIX: Fixed Issue#140: More issues with non-standard schema names requiring quoting. Also required changes to pg_get_tabledef().
 -- 2024-11-16  MJV FIX: Fixed Issue#142: Totally rewrote how sequences, serial, and identity columns were being created, altered, and setval for them.
--- 2024-11-20  MJV FIX: Fixed Issue#143: Apply changes to pg_get_tabledef() related to issue#32.  Also removed debugging from pg_get_tabledef() when called from here in verbose mode.  Call it directly to debug.
 
 
 do $$ 
@@ -265,7 +264,7 @@ NO OBLIGATIONS TO PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFI
 -- 2024-09-20   Fixed Issue#29: added verbose info for searchpath problems.
 -- 2024-10-01   Fixed Issue#30: Fixed column def with geometry point defined - geometry geometry(Point, 4326) 
 -- 2024-11-13   Fixed Issue#31: Case-sensitive schemas not handled correctly.
--- 2024-11-20   Fixed Issue#32: Show explicit sequence default output, not SERIAL types to emulate the way PG does it.
+-- 2024-??-??   Fixed Issue#??: Distinguish between serial identity, and explicit sequences. NOT IMPLEMENTED YET
 
 
 DROP TYPE IF EXISTS public.tabledefs CASCADE;
@@ -302,47 +301,21 @@ BEGIN
     -- RAISE NOTICE 'DEBUG: oldway=%',v_coldef;
   ELSE
     -- a.attrelid::regclass::text, a.attname
-    -- Issue#32: bypass the following query which converts to serial and bypasses explicit sequence defs
-    -- SELECT CASE WHEN a.atttypid = ANY ('{int,int8,int2}'::regtype[]) AND EXISTS (SELECT FROM pg_attrdef ad WHERE ad.adrelid = a.attrelid AND ad.adnum   = a.attnum AND 
-	  -- pg_get_expr(ad.adbin, ad.adrelid) = 'nextval(''' || (pg_get_serial_sequence (a.attrelid::regclass::text, a.attname))::regclass || '''::regclass)') THEN CASE a.atttypid 
-	  -- WHEN 'int'::regtype  THEN 'serial' WHEN 'int8'::regtype THEN 'bigserial' WHEN 'int2'::regtype THEN 'smallserial' END ELSE format_type(a.atttypid, a.atttypmod) END AS data_type  
-	  -- INTO v_coldef FROM pg_namespace n, pg_class c, pg_attribute a, pg_type t 
-	  -- WHERE n.nspname = in_schema AND n.oid = c.relnamespace AND c.relname = in_table AND a.attname = in_column and a.attnum > 0 AND a.attrelid = c.oid AND a.atttypid = t.oid ORDER BY a.attnum;
+    SELECT CASE WHEN a.atttypid = ANY ('{int,int8,int2}'::regtype[]) AND EXISTS (SELECT FROM pg_attrdef ad WHERE ad.adrelid = a.attrelid AND ad.adnum   = a.attnum AND 
+	  pg_get_expr(ad.adbin, ad.adrelid) = 'nextval(''' || (pg_get_serial_sequence (a.attrelid::regclass::text, a.attname))::regclass || '''::regclass)') THEN CASE a.atttypid 
+	  WHEN 'int'::regtype  THEN 'serial' WHEN 'int8'::regtype THEN 'bigserial' WHEN 'int2'::regtype THEN 'smallserial' END ELSE format_type(a.atttypid, a.atttypmod) END AS data_type  
+	  INTO v_coldef FROM pg_namespace n, pg_class c, pg_attribute a, pg_type t 
+	  WHERE n.nspname = in_schema AND n.oid = c.relnamespace AND c.relname = in_table AND a.attname = in_column and a.attnum > 0 AND a.attrelid = c.oid AND a.atttypid = t.oid ORDER BY a.attnum;
 	  -- RAISE NOTICE 'DEBUG: newway=%',v_coldef;
-	  
-	  -- WHERE n.nspname = 'sequences' AND n.oid = c.relnamespace AND c.relname = 'atable' AND a.attname = 'key' and a.attnum > 0 AND a.attrelid = c.oid AND a.atttypid = t.oid ORDER BY a.attnum;	  	  
-	  --  data_type
-		-- -----------
-		--  serial
 
-	  -- WHERE n.nspname = 'sequences' AND n.oid = c.relnamespace AND c.relname = 'vectors3' AND a.attname = 'id' and a.attnum > 0 AND a.attrelid = c.oid AND a.atttypid = t.oid ORDER BY a.attnum;	  
-    -- data_type
-    -- -----------
-    -- bigint
-
-    -- Issue#32: show integer types, not serial types as output
-    SELECT a.atttypid::regtype AS dt1, format_type(a.atttypid, a.atttypmod) as dt2, t.typname as dt3, CASE WHEN not(a.attnotnull) THEN True ELSE False END AS nullable, 
-    a.attnum, a.attidentity, a.attgenerated, a.atthasdef, pg_get_expr(ad.adbin, ad.adrelid) dfltexpr 
-    INTO v_dt1, v_dt2, v_dt3, v_nullable, v_position, v_identity, v_generated, v_hasdflt, v_dfltexpr 
-    FROM pg_attribute a JOIN pg_class c ON (a.attrelid = c.oid) JOIN pg_type t ON (a.atttypid = t.oid) LEFT JOIN pg_attrdef ad ON (a.attrelid = ad.adrelid AND a.attnum = ad.adnum) 
-    WHERE c.relkind in ('r','p') AND a.attnum > 0 AND NOT a.attisdropped AND c.relnamespace::regnamespace::text = in_schema AND c.relname = in_table AND a.attname = in_column;
+    -- Issue#24: not implemented yet	  
+	  -- might replace with this below to do more detailed parsing...
+    -- SELECT a.atttypid::regtype AS dt1, format_type(a.atttypid, a.atttypmod) as dt2, t.typname as dt3, CASE WHEN not(a.attnotnull) THEN True ELSE False END AS nullable, 
+    -- a.attnum, a.attidentity, a.attgenerated, a.atthasdef, pg_get_expr(ad.adbin, ad.adrelid) dfltexpr 
+    -- INTO v_dt1, v_dt2, v_dt3, v_nullable, v_position, v_identity, v_generated, v_hasdflt, v_dfltexpr 
+    -- FROM pg_attribute a JOIN pg_class c ON (a.attrelid = c.oid) JOIN pg_type t ON (a.atttypid = t.oid) LEFT JOIN pg_attrdef ad ON (a.attrelid = ad.adrelid AND a.attnum = ad.adnum) 
+    -- WHERE c.relkind in ('r','p') AND a.attnum > 0 AND NOT a.attisdropped AND c.relnamespace::regnamespace::text = in_schema AND c.relname = in_table AND a.attname = in_column;
 	  -- RAISE NOTICE 'schema=%  table=%  column=%  dt1=%  dt2=%  dt3=%  nullable=%  pos=%  identity=%   generated=%  HasDefault=%  DeftExpr=%', in_schema, in_table, in_column, v_dt1,v_dt2,v_dt3,v_nullable,v_position,v_identity,v_generated,v_hasdflt,v_dfltexpr;
-
-	  --   WHERE c.relkind in ('r','p') AND a.attnum > 0 AND NOT a.attisdropped AND c.relnamespace::regnamespace::text = 'sequences' AND c.relname = 'atable' AND a.attname = 'key';
-		--    dt1   |   dt2   | dt3  | nullable | attnum | attidentity | attgenerated | atthasdef |                      dfltexpr
-		-- ---------+---------+------+----------+--------+-------------+--------------+-----------+-----------------------------------------------------
-		--  integer | integer | int4 | f        |      1 |             |              | t         | nextval('sequences.explicitsequence_key'::regclass)
-		
-		--     WHERE c.relkind in ('r','p') AND a.attnum > 0 AND NOT a.attisdropped AND c.relnamespace::regnamespace::text = 'sequences' AND c.relname = 'vectors3' AND a.attname = 'id';
-		--   dt1   |  dt2   | dt3  | nullable | attnum | attidentity | attgenerated | atthasdef | dfltexpr
-		-- --------+--------+------+----------+--------+-------------+--------------+-----------+----------
-		--  bigint | bigint | int8 | f        |      1 | d           |              | f         |
-
-    -- Issue#32 handled in calling routine, not here
- 	  -- CREATE TABLE atable (key integer NOT NULL default nextval('explicitsequence_key'), avalue text);
-	  -- IF v_dfltexpr IS NULL OR v_dfltexpr = '' THEN
-    v_coldef = v_dt1;
-	  
   END IF;
   RETURN v_coldef;
 END;
@@ -361,7 +334,6 @@ LANGUAGE plpgsql VOLATILE
 AS
 $$
   DECLARE
-    v_version        text := '1.10 November 20, 2024';
     v_schema    text := '';
     v_coldef    text := '';
     v_qualified text := '';
@@ -383,7 +355,6 @@ $$
     v_parent text;
     v_parent_schema text;
     v_persist text;
-    v_seqname text := '';
     v_temp  text := ''; 
     v_temp2 text;
     v_relopts text;
@@ -429,7 +400,6 @@ $$
   BEGIN
     SET client_min_messages = 'notice';
     IF _verbose THEN bVerbose = True; END IF;
-    IF bVerbose THEN RAISE NOTICE 'pg_get_tabledef() version %', v_version; END IF;
     
     -- v17 fix: handle case-sensitive  
     -- v_qualified = in_schema || '.' || in_table;
@@ -633,19 +603,18 @@ $$
         SELECT c.column_name, c.data_type, c.udt_name, c.udt_schema, c.character_maximum_length, c.is_nullable, c.column_default, c.numeric_precision, c.numeric_scale, c.is_identity, c.identity_generation, c.is_generated, c.generation_expression        
         FROM information_schema.columns c WHERE (table_schema, table_name) = (in_schema, in_table) ORDER BY ordinal_position
       LOOP
+         IF bVerbose THEN RAISE NOTICE '(col loop) name=%  type=%  udt_name=%  default=%  is_generated=%  gen_expr=%', v_colrec.column_name, v_colrec.data_type, v_colrec.udt_name, v_colrec.column_default, v_colrec.is_generated, v_colrec.generation_expression; END IF;  
          -- v17 fix: handle case-sensitive for pg_get_serial_sequence that requires SQL Identifier handling
          -- SELECT pg_get_serial_sequence(v_qualified, v_colrec.column_name) into v_temp;
-         -- v17 fix: handle case-sensitive for pg_get_serial_sequence that requires SQL Identifier handling
-         -- SELECT CASE WHEN pg_get_serial_sequence(v_qualified, v_colrec.column_name) IS NOT NULL THEN True ELSE False END into bSerial;
-         SELECT pg_get_serial_sequence(quote_ident(in_schema) || '.' || quote_ident(in_table), v_colrec.column_name) into v_seqname;         
-         IF v_seqname IS NULL THEN v_seqname = ''; END IF;
-         SELECT CASE WHEN pg_get_serial_sequence(quote_ident(in_schema) || '.' || quote_ident(in_table), v_colrec.column_name) IS NOT NULL THEN True ELSE False END into bSerial;          
+         SELECT pg_get_serial_sequence(quote_ident(in_schema) || '.' || quote_ident(in_table), v_colrec.column_name) into v_temp;         
+         IF v_temp IS NULL THEN v_temp = 'NA'; END IF;
          SELECT public.pg_get_coldef(in_schema, in_table,v_colrec.column_name) INTO v_coldef;         
 
-         IF bVerbose THEN 
-             RAISE NOTICE '(col loop) coldef=%  name=%  type=%  udt_name=%  default=%  is_generated=%  gen_expr=%  Serial=%  SeqName=%', 
-                                      v_coldef, v_colrec.column_name, v_colrec.data_type, v_colrec.udt_name, v_colrec.column_default, v_colrec.is_generated, v_colrec.generation_expression, bSerial, v_seqname;
-         END IF;
+         -- v17 fix: handle case-sensitive for pg_get_serial_sequence that requires SQL Identifier handling
+         -- SELECT CASE WHEN pg_get_serial_sequence(v_qualified, v_colrec.column_name) IS NOT NULL THEN True ELSE False END into bSerial;
+         SELECT CASE WHEN pg_get_serial_sequence(quote_ident(in_schema) || '.' || quote_ident(in_table), v_colrec.column_name) IS NOT NULL THEN True ELSE False END into bSerial;
+         
+         IF bVerbose THEN RAISE NOTICE 'DEBUG table: %  Column: %  datatype: %  Serial=%  serialval=%  udtname=%  coldef=%', v_qualified, v_colrec.column_name, v_colrec.data_type, bSerial, v_temp, v_colrec.udt_name, v_coldef; END IF;
          
          --Issue#17 put double-quotes around case-sensitive column names
          SELECT COUNT(*) INTO v_cnt1 FROM information_schema.columns t WHERE EXISTS (SELECT REGEXP_MATCHES(s.column_name, '([A-Z]+)','g') FROM information_schema.columns s 
@@ -659,34 +628,25 @@ $$
          ELSE
            v_table_ddl := v_table_ddl || '  ' || v_colrec.column_name || ' ';
          END IF;
-         
-         IF v_colrec.column_default ILIKE 'nextval%' THEN
-             -- Issue#32: handle explicit sequences for serial types as well simulating pg_dump manner.
-             v_temp = v_colrec.data_type || ' NOT NULL ' || v_colrec.column_default;
-         
-         ELSEIF v_colrec.is_generated = 'ALWAYS' and v_colrec.generation_expression IS NOT NULL THEN
-             -- Issue#23: Handle autogenerated columns and rewrite as a simpler IF THEN ELSE branch instead of a much more complex embedded CASE STATEMENT
+
+         -- Issue#23: Handle autogenerated columns and rewrite as a simpler IF THEN ELSE branch instead of a much more complex embedded CASE STATEMENT
+         IF v_colrec.is_generated = 'ALWAYS' and v_colrec.generation_expression IS NOT NULL THEN
              -- searchable tsvector GENERATED ALWAYS AS (to_tsvector('simple'::regconfig, COALESCE(translate(email, '@.-'::citext, ' '::text), ''::text)) ) STORED
              v_temp = v_colrec.data_type || ' GENERATED ALWAYS AS (' || v_colrec.generation_expression || ') STORED ';
-             
+         --Issue#30 fix handle geometries separately and use coldef func on it
          ELSEIF v_colrec.udt_name in ('geometry') THEN
-             --Issue#30 fix handle geometries separately and use coldef func on it
              v_temp = public.pg_get_coldef(in_schema, in_table,v_colrec.column_name);
-
          ELSEIF v_colrec.udt_name in ('box2d', 'box2df', 'box3d', 'geography', 'geometry_dump', 'gidx', 'spheroid', 'valid_detail') THEN         
 		         v_temp = v_colrec.udt_name;
-
 		     ELSEIF v_colrec.data_type = 'USER-DEFINED' THEN
 		         -- Issue#31 fix
 		         -- v_temp = v_colrec.udt_schema || '.' || v_colrec.udt_name;
 		         v_temp = quote_ident(v_colrec.udt_schema) || '.' || v_colrec.udt_name;
-
 		     ELSEIF v_colrec.data_type = 'ARRAY' THEN
    		       -- Issue#6 fix: handle arrays
 		         v_temp = public.pg_get_coldef(in_schema, in_table,v_colrec.column_name);
              -- v17 fix: handle case-sensitive for pg_get_serial_sequence that requires SQL Identifier handling
   		       -- WHEN pg_get_serial_sequence(v_qualified, v_colrec.column_name) IS NOT NULL 
-
 		     ELSEIF pg_get_serial_sequence(quote_ident(in_schema) || '.' || quote_ident(in_table), v_colrec.column_name) IS NOT NULL THEN
 		         -- Issue#8 fix: handle serial. Note: NOT NULL is implied so no need to declare it explicitly
 		         v_temp = public.pg_get_coldef(in_schema, in_table,v_colrec.column_name);
@@ -695,6 +655,7 @@ $$
 		         -- v_temp = v_colrec.data_type;
 		         v_temp = v_coldef;
          END IF;
+         -- RAISE NOTICE 'column def1=%', v_temp;
 
          -- handle IDENTITY columns
 		     IF v_colrec.is_identity = 'YES' THEN
@@ -709,20 +670,14 @@ $$
          -- ELSEIF v_colrec.numeric_precision > 0 AND v_colrec.numeric_scale > 0 THEN 
          --     v_temp = v_temp || '(' || v_colrec.numeric_precision || ',' || v_colrec.numeric_scale || ')';
          END IF;
-         
-         -- Handle NULL/NOT NULL
-         IF POSITION('NOT NULL ' IN v_temp) > 0 THEN
-             -- Issue#32: for explicit sequences with nextval, we already handled NOT NULL, so ignore    
-             NULL;
-         
-         ELSEIF bSerial AND v_colrec.is_identity = 'NO' THEN 
-             -- Issue#28 - added identity check 
-             v_temp = v_temp || ' NOT NULL';
-         
-         ELSEIF v_colrec.is_nullable = 'NO' AND v_colrec.is_identity = 'NO' THEN 
-             -- Issue#28 - added identity check              
-             v_temp = v_temp || ' NOT NULL';
 
+         -- Handle NULL/NOT NULL
+         -- Issue#28 - added identity check 
+         IF bSerial AND v_colrec.is_identity = 'NO' THEN 
+             v_temp = v_temp || ' NOT NULL';
+         -- Issue#28 - added identity check              
+         ELSEIF v_colrec.is_nullable = 'NO' AND v_colrec.is_identity = 'NO' THEN 
+             v_temp = v_temp || ' NOT NULL';
          ELSEIF v_colrec.is_nullable = 'YES' THEN
              v_temp = v_temp || ' NULL';
          END IF;
@@ -732,13 +687,12 @@ $$
              -- RAISE NOTICE 'Setting default for column, %', v_colrec.column_name;
              v_temp = v_temp || (' DEFAULT ' || v_colrec.column_default);
          END IF;
-         
          v_temp = v_temp || ',' || E'\n';
          -- RAISE NOTICE 'column def2=%', v_temp;
          v_table_ddl := v_table_ddl || v_temp;
          -- RAISE NOTICE 'tabledef=%', v_table_ddl;
          
-         IF bVerbose THEN RAISE NOTICE 'tabledef: %', v_table_ddl; END IF;
+         IF bVerbose THEN RAISE NOTICE 'DEBUG tabledef: %', v_table_ddl; END IF;
       END LOOP;
     END IF;
     IF bVerbose THEN RAISE NOTICE '(2)tabledef so far: %', v_table_ddl; END IF;
@@ -805,7 +759,7 @@ $$
               || v_constraint_def
               || ',' || E'\n';            
         END IF;
-        if bVerbose THEN RAISE NOTICE 'constraint name=% constraint_def=%', v_constraint_name,v_constraint_def; END IF;
+        if bVerbose THEN RAISE NOTICE 'DEBUG4: constraint name=% constraint_def=%', v_constraint_name,v_constraint_def; END IF;
         constraintarr := constraintarr || v_constraintrec.constraint_name:: text;
   
       END LOOP;
@@ -876,7 +830,7 @@ $$
               || v_constraint_def
               || ',' || E'\n';            
         END IF;
-        if bVerbose THEN RAISE NOTICE 'constraint name=% constraint_def=%', v_constraint_name,v_constraint_def; END IF;
+        if bVerbose THEN RAISE NOTICE 'DEBUG4: constraint name=% constraint_def=%', v_constraint_name,v_constraint_def; END IF;
         constraintarr := constraintarr || v_constraintrec.constraint_name:: text;
   
        END LOOP;
@@ -993,7 +947,7 @@ $$
           SELECT c.relname, 'COMMENT ON ' || CASE WHEN c.relkind in ('r','p') AND a.attname IS NULL THEN 'TABLE ' WHEN c.relkind in ('r','p') AND a.attname IS NOT NULL THEN 'COLUMN ' WHEN c.relkind = 'f' THEN 'FOREIGN TABLE ' 
                  -- Issue#140
                  -- WHEN c.relkind = 'm' THEN 'MATERIALIZED VIEW ' WHEN c.relkind = 'v' THEN 'VIEW ' WHEN c.relkind = 'i' THEN 'INDEX ' WHEN c.relkind = 'S' THEN 'SEQUENCE ' ELSE 'XX' END || n.nspname || '.' || 
-                 WHEN c.relkind = 'm' THEN 'MATERIALIZED VIEW ' WHEN c.relkind = 'v' THEN 'VIEW ' WHEN c.relkind = 'i' THEN 'INDEX ' WHEN c.relkind = 'S' THEN 'SEQUENCE ' ELSE 'XX' END || quote_ident(n.nspname) || '.' ||                  
+                 WHEN c.relkind = 'm' THEN 'MATERIALIZED VIEW ' WHEN c.relkind = 'v' THEN 'VIEW ' WHEN c.relkind = 'i' THEN 'INDEX ' WHEN c.relkind = 'S' THEN 'SEQUENCE ' ELSE 'XX' END || quote_ident(n.nspname) || '.' || 
                  CASE WHEN c.relkind in ('r','p') AND a.attname IS NOT NULL THEN quote_ident(c.relname) || '.' || a.attname ELSE quote_ident(c.relname) END || ' IS '   || quote_literal(d.description) || ';' as ddl
 	   	    FROM pg_class c JOIN pg_namespace n ON (n.oid = c.relnamespace) LEFT JOIN pg_description d ON (c.oid = d.objoid) LEFT JOIN pg_attribute a ON (c.oid = a.attrelid AND a.attnum > 0 and a.attnum = d.objsubid)
 	   	    WHERE d.description IS NOT NULL AND n.nspname = in_schema AND c.relname = in_table ORDER BY 2 desc, ddl
@@ -1223,7 +1177,7 @@ DECLARE
   s                timestamptz;
   lastsql          text := '';
   lasttbl          text := '';
-  v_version        text := '2.16 November 20, 2024';
+  v_version        text := '2.15 November 16, 2024';
 
 BEGIN
   -- uncomment the following to get line context info when debugging exceptions. 
@@ -1881,7 +1835,7 @@ BEGIN
           -- FIX: #121 Use pg_get_tabledef instead
           -- Issue#140 remove quote_ident!
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');          
-          SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');          
+          SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, bDebug, 'FKEYS_NONE');          
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
           RAISE INFO '%', buffer3;
           -- issue#91 fix
@@ -1913,7 +1867,7 @@ BEGIN
             -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
             -- Issue#140 remove quote_ident!
             -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
-            SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
+            SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, bDebug, 'FKEYS_NONE');                      
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
             RAISE INFO '%', buffer3;
             -- issue#91 fix
@@ -1933,7 +1887,7 @@ BEGIN
           -- SELECT * INTO buffer3 FROM public.get_table_ddl_complex(source_schema, dest_schema, tblname, sq_server_version_num);     
           -- Issue#140 remove quote_ident!
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
-          SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
+          SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, bDebug, 'FKEYS_NONE');                      
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
           IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef01a:%', buffer3; END IF;
           -- #82: Table def should be fully qualified with target schema, 
@@ -1990,7 +1944,7 @@ BEGIN
             -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
             -- Issue#140 remove quote_ident!
             -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
-            SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
+            SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, bDebug, 'FKEYS_NONE');                      
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
             -- set client_min_messages higher to avoid messages like this:
             -- NOTICE:  merging column "city_id" with inherited definition
@@ -2029,7 +1983,7 @@ BEGIN
       -- SELECT * INTO qry FROM public.get_table_ddl_complex(source_schema, dest_schema, tblname, sq_server_version_num);
       -- Issue#140 remove quote_ident!
       -- SELECT * INTO qry FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
-      SELECT * INTO qry FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
+      SELECT * INTO qry FROM public.pg_get_tabledef(source_schema, tblname, bDebug, 'FKEYS_NONE');                      
       qry := REPLACE(qry, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
       IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef04 - %', qry; END IF;
 
@@ -2345,7 +2299,7 @@ BEGIN
           -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
           -- Issue#140 remove quote_ident!
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
-          SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
+          SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, bDebug, 'FKEYS_NONE');                      
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
           RAISE INFO '%', buffer3;
           -- issue#91 fix
@@ -2377,7 +2331,7 @@ BEGIN
             -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
             -- Issue#140 remove quote_ident!
             -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
-            SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
+            SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, bDebug, 'FKEYS_NONE');                      
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
             RAISE INFO '%', buffer3;
             -- issue#91 fix
@@ -2396,7 +2350,7 @@ BEGIN
           -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
           -- Issue#140 remove quote_ident!
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
-          SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
+          SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, bDebug, 'FKEYS_NONE');                      
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
           IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef01b:%', buffer3; END IF;
           -- #82: Table def should be fully qualified with target schema, 
@@ -2453,7 +2407,7 @@ BEGIN
             -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
             -- Issue#140 remove quote_ident!
             -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
-            SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
+            SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, bDebug, 'FKEYS_NONE');                      
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
             -- set client_min_messages higher to avoid messages like this:
             -- NOTICE:  merging column "city_id" with inherited definition
@@ -2492,7 +2446,7 @@ BEGIN
       -- SELECT * INTO qry FROM public.get_table_ddl_complex(source_schema, dest_schema, tblname, sq_server_version_num);
       -- Issue#140 remove quote_ident!
       -- SELECT * INTO qry FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
-      SELECT * INTO qry FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
+      SELECT * INTO qry FROM public.pg_get_tabledef(source_schema, tblname, bDebug, 'FKEYS_NONE');                      
       qry := REPLACE(qry, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
       
       IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef04 - %', buffer; END IF;
