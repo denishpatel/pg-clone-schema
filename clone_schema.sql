@@ -265,11 +265,11 @@ NO OBLIGATIONS TO PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFI
 -- 2024-09-20   Fixed Issue#29: added verbose info for searchpath problems.
 -- 2024-10-01   Fixed Issue#30: Fixed column def with geometry point defined - geometry geometry(Point, 4326) 
 -- 2024-11-13   Fixed Issue#31: Case-sensitive schemas not handled correctly.
--- 2024-11-20   Fixed Issue#32: Show explicit sequence default output, not SERIAL types to emulate the way PG does it.
-
+-- 2024-11-20   Fixed Issue#32: Show explicit sequence default output, not SERIAL types to emulate the way PG does it. Also use dt2 (formatted), not dt1
+-- 2024-11-20   Fixed Issue#33: Show partition info for parent table if SHOWPARTS enumeration specified
 
 DROP TYPE IF EXISTS public.tabledefs CASCADE;
-CREATE TYPE public.tabledefs AS ENUM ('PKEY_INTERNAL','PKEY_EXTERNAL','FKEYS_INTERNAL', 'FKEYS_EXTERNAL', 'COMMENTS', 'FKEYS_NONE', 'INCLUDE_TRIGGERS', 'NO_TRIGGERS');
+CREATE TYPE public.tabledefs AS ENUM ('PKEY_INTERNAL','PKEY_EXTERNAL','FKEYS_INTERNAL', 'FKEYS_EXTERNAL', 'COMMENTS', 'FKEYS_NONE', 'INCLUDE_TRIGGERS', 'NO_TRIGGERS','SHOWPARTS');
 
 -- SELECT * FROM public.pg_get_coldef('sample','orders','id');
 -- DROP FUNCTION public.pg_get_coldef(text,text,text,boolean);
@@ -406,12 +406,16 @@ $$
 	  search_path_new text := '';
 	  v_partial    boolean;
 	  v_pos        integer;
+	  v_partinfo   text := '';
+	  v_oid        oid;
+	  v_partkeydef text := '';
 
     -- assume defaults for ENUMs at the getgo	
   	pkcnt            int := 0;
   	fkcnt            int := 0;
 	  trigcnt          int := 0;
 	  cmtcnt           int := 0;
+	  showpartscnt     int := 0;
     pktype           public.tabledefs := 'PKEY_INTERNAL';
     fktype           public.tabledefs := 'FKEYS_INTERNAL';
     trigtype         public.tabledefs := 'NO_TRIGGERS';
@@ -458,6 +462,9 @@ $$
                 pktype = avarg;				                
             ELSEIF avarg = 'COMMENTS' THEN
                 cmtcnt = cmtcnt + 1;
+            -- Issue#33 check for dups
+            ELSEIF avarg = 'SHOWPARTS' THEN
+                showpartscnt = showpartscnt + 1;                
                 
             END IF;
         END LOOP;
@@ -473,6 +480,10 @@ $$
         ELSEIF cmtcnt > 1 THEN 
             RAISE WARNING 'Only one comments option can be provided. You provided %', cmtcnt;
             RETURN '';			
+        ELSEIF showpartscnt > 1 THEN 
+            RAISE WARNING 'Only one SHOWPARTS option can be provided. You provided %', showpartscnt;
+            RETURN '';			
+            
             
         END IF;		   		   
     END IF;
@@ -1023,7 +1034,27 @@ $$
     -- add empty line
     v_table_ddl := v_table_ddl || E'\n';
     IF bVerbose THEN RAISE NOTICE '(10)tabledef so far: %', v_table_ddl; END IF;
-    
+
+    -- Issue#33 implementation follows
+    IF showpartscnt = 1 THEN
+        SELECT c.oid, pg_get_partkeydef(c.oid::pg_catalog.oid) INTO v_oid, v_partkeydef FROM pg_class c, pg_namespace n WHERE n.oid = c.relnamespace AND n.nspname = in_schema and c.relname = in_table;
+        IF v_partkeydef IS NOT NULL THEN
+            -- v_partinfo := 'Partition key: ' || v_partkeydef || E'\n' || 'Partitions:' || E'\n' ;
+            v_partinfo := 'Partitions:' || E'\n' ;
+
+            FOR v_rec IN
+                SELECT c.oid::pg_catalog.regclass, c.relkind, inhdetachpending, pg_catalog.pg_get_expr(c.relpartbound, c.oid)
+                FROM pg_catalog.pg_class c, pg_catalog.pg_inherits i WHERE c.oid = i.inhrelid AND i.inhparent = v_oid
+                ORDER BY pg_catalog.pg_get_expr(c.relpartbound, c.oid) = 'DEFAULT', c.oid::pg_catalog.regclass::pg_catalog.text
+            LOOP
+                v_partinfo := v_partinfo || v_rec.oid || ' ' || v_rec.pg_get_expr || E'\n' ;
+            END LOOP;
+        END IF;
+    END IF;
+    IF v_partinfo <> '' THEN
+        v_table_ddl = v_table_ddl || v_partinfo;
+    END IF;
+
     -- reset search_path back to what it was
     -- Issue#29: add verbose info for searchpath stuff
     v_context = 'SEARCHPATH';
