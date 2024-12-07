@@ -85,6 +85,7 @@
 -- 2024-11-20  MJV FIX: Fixed Issue#143: Apply changes to pg_get_tabledef() related to issue#32.  Also removed debugging from pg_get_tabledef() when called from here in verbose mode.  Call it directly to debug.
 -- 2024-11-24  MJV FIX: Fixed Issue#143: Apply changes to pg_get_tabledef() related to issue#27.  Implements outputting optional owner acl, but not used by clone_schema at the present time.
 -- 2024-11-26  MJV FIX: Fixed Issue#145: Apply changes to pg_get_tabledef() related to issue#36.  Bugs related to PG version 10.
+-- 2024-12-07  MJV FIX: Fixed Issue#146: Apply changes to pg_get_tabledef() related to duplicate nextval statements for sequences.
 
 do $$ 
 <<first_block>>
@@ -369,7 +370,7 @@ LANGUAGE plpgsql VOLATILE
 AS
 $$
   DECLARE
-    v_version        text := '2.1 November 26, 2024';
+    v_version        text := '2.2 December 7, 2024';
     v_schema    text := '';
     v_coldef    text := '';
     v_qualified text := '';
@@ -854,7 +855,9 @@ $$
          END IF;
 
          -- Handle defaults
-         IF v_colrec.column_default IS NOT null AND NOT bSerial THEN 
+         -- Issue#32 fix
+          -- IF v_colrec.column_default IS NOT null AND NOT bSerial THEN 
+         IF v_colrec.column_default IS NOT null AND NOT bSerial AND v_colrec.column_default NOT ILIKE 'nextval%' THEN          
              -- RAISE NOTICE 'Setting default for column, %', v_colrec.column_name;
              v_temp = v_temp || (' DEFAULT ' || v_colrec.column_default);
          END IF;
@@ -1205,6 +1208,7 @@ $$
   END;
 $$;
 
+
 /****************************************************/
 /*  Drop In function pg_get_tabledef ends here...   */
 /****************************************************/
@@ -1374,7 +1378,7 @@ DECLARE
   s                timestamptz;
   lastsql          text := '';
   lasttbl          text := '';
-  v_version        text := '2.17 November 24, 2024';
+  v_version        text := '2.17 December 7, 2024';
 
 BEGIN
   -- uncomment the following to get line context info when debugging exceptions. 
