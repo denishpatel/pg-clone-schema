@@ -1329,6 +1329,34 @@ CREATE UNIQUE INDEX IF NOT EXISTS xufhub on f_f_hub (id);
 COMMENT ON TABLE f_f_hub IS 'This table is my f_f_hub.';
 
 
+-- Issue#147 test case for trigger functions residing in public schema
+CREATE TABLE my_trigger_table (id SERIAL PRIMARY KEY, name TEXT);
+
+-- Create public function that doesn't do anything
+CREATE OR REPLACE FUNCTION public.my_function()
+RETURNS text AS $$
+  -- amend name field
+  SELECT 'Hello from public schema';
+$$ LANGUAGE sql;
+
+-- Create the trigger function also in the public schema
+CREATE OR REPLACE FUNCTION public.my_trigger_function()
+RETURNS TRIGGER AS $$
+DECLARE
+BEGIN
+  -- Perform actions here, such as calling other functions
+  PERFORM public.my_function();
+
+  -- Return the modified row to allow the INSERT to proceed
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Create the trigger on the table
+CREATE TRIGGER my_trigger AFTER INSERT ON my_trigger_table
+FOR EACH ROW EXECUTE PROCEDURE public.my_trigger_function();
+
+
 --
 -- End Sample database
 --
