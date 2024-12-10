@@ -86,6 +86,7 @@
 -- 2024-11-24  MJV FIX: Fixed Issue#143: Apply changes to pg_get_tabledef() related to issue#27.  Implements outputting optional owner acl, but not used by clone_schema at the present time.
 -- 2024-11-26  MJV FIX: Fixed Issue#145: Apply changes to pg_get_tabledef() related to issue#36.  Bugs related to PG version 10.
 -- 2024-12-07  MJV FIX: Fixed Issue#146: Apply changes to pg_get_tabledef() related to duplicate nextval statements for sequences.
+-- 2024-12-12  MJV FIX: Fixed Issue#147: Handle case where trigger function resides in the public schema.  Right now, only source schema is considered for trigger functions.  Only the trigger def needs to be in the source schema.
 
 do $$ 
 <<first_block>>
@@ -370,7 +371,7 @@ LANGUAGE plpgsql VOLATILE
 AS
 $$
   DECLARE
-    v_version        text := '2.2 December 7, 2024';
+    v_version        text := '2.3 December 12, 2024';
     v_schema    text := '';
     v_coldef    text := '';
     v_qualified text := '';
@@ -4411,18 +4412,15 @@ BEGIN
   IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
   cnt := 0;
   FOR arec IN
-    -- 2021-03-09 MJV FIX: #40 fixed sql to get the def using pg_get_triggerdef() sql
-    SELECT n.nspname, c.relname, t.tgname, p.proname, REPLACE(pg_get_triggerdef(t.oid), quote_ident(source_schema), quote_ident(dest_schema)) || ';' AS trig_ddl
-    FROM pg_trigger t, pg_class c, pg_namespace n, pg_proc p
-    -- Issue#140
-    -- WHERE n.nspname = quote_ident(source_schema)
-    WHERE n.nspname = source_schema
-      AND n.oid = c.relnamespace
-      AND c.relkind in ('r','p')
-      AND n.oid = p.pronamespace
-      AND c.oid = t.tgrelid
-      AND p.oid = t.tgfoid
-      ORDER BY c.relname, t.tgname
+    -- 2021-03-09 MJV FIX:  #40  fixed sql to get the def using pg_get_triggerdef() sql
+    -- 2024-11-14 MJV FIX: #140  fixed case sensitive schemas
+    -- 2024-12-12 MJV FIX: #147  fixed sql to get the trigger def even if function resides in public schema, but qualify it as such
+    SELECT n1.nspname as trigger_schema, c.relname as table, t.tgname as trigger_name, n2.nspname as function_schema, p.proname as function_name,
+    REPLACE(pg_get_triggerdef(t.oid), quote_ident(source_schema), quote_ident(dest_schema)) || ';' AS trig_ddl
+    FROM pg_trigger t, pg_namespace n1, pg_class c, pg_proc p, pg_namespace n2
+    WHERE n1.nspname = quote_ident(source_schema) AND n1.oid = c.relnamespace AND c.relkind in ('r','p') AND (n2.nspname = quote_ident(source_schema) OR n2.nspname = 'public') 
+    AND c.oid = t.tgrelid AND t.tgfoid = p.oid AND p.pronamespace = n2.oid
+    ORDER BY c.relname, t.tgname
   LOOP
     BEGIN
       cnt := cnt + 1;
@@ -4434,7 +4432,6 @@ BEGIN
         EXECUTE arec.trig_ddl;
         lastsql = '';
       END IF;
-
     END;
   END LOOP;
   RAISE NOTICE '    TRIGGERS cloned: %', LPAD(cnt::text, 5, ' ');
