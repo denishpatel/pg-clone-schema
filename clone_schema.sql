@@ -87,6 +87,7 @@
 -- 2024-11-26  MJV FIX: Fixed Issue#145: Apply changes to pg_get_tabledef() related to issue#36.  Bugs related to PG version 10.
 -- 2024-12-07  MJV FIX: Fixed Issue#146: Apply changes to pg_get_tabledef() related to duplicate nextval statements for sequences.
 -- 2024-12-12  MJV FIX: Fixed Issue#147: Handle case where trigger function resides in the public schema.  Right now, only source schema is considered for trigger functions.  Only the trigger def needs to be in the source schema.
+-- 2024-12-14  MJV FIX: Fixed Issue#148: Handle case-sensitive TYPEs correctly.
 
 do $$ 
 <<first_block>>
@@ -371,7 +372,7 @@ LANGUAGE plpgsql VOLATILE
 AS
 $$
   DECLARE
-    v_version        text := '2.3 December 12, 2024';
+    v_version        text := '2.4 December 14, 2024';
     v_schema    text := '';
     v_coldef    text := '';
     v_qualified text := '';
@@ -1739,10 +1740,13 @@ BEGIN
     -- Fixed Issue#108:enclose double-quote roles with special characters for setting "OWNER TO"
     -- SELECT c.relkind, n.nspname AS schemaname, t.typname AS typname, t.typcategory, pg_catalog.pg_get_userbyid(t.typowner) AS owner, CASE WHEN t.typcategory = 'C' THEN
     SELECT c.relkind, n.nspname AS schemaname, t.typname AS typname, t.typcategory, '"' || pg_catalog.pg_get_userbyid(t.typowner) || '"' AS owner, CASE WHEN t.typcategory = 'C' THEN
-            'CREATE TYPE ' || quote_ident(dest_schema) || '.' || t.typname || ' AS (' || array_to_string(array_agg(a.attname || ' ' || pg_catalog.format_type(a.atttypid, a.atttypmod)
-                ORDER BY c.relname, a.attnum), ', ') || ');'
+        -- Fixed Issue#148 for case-sensitive types
+            -- 'CREATE TYPE ' || quote_ident(dest_schema) || '.' || t.typname || ' AS (' || array_to_string(array_agg(a.attname || ' ' || pg_catalog.format_type(a.atttypid, a.atttypmod)
+            'CREATE TYPE ' || quote_ident(dest_schema) || '.' || quote_ident(t.typname) || ' AS (' || array_to_string(array_agg(a.attname || ' ' || pg_catalog.format_type(a.atttypid, a.atttypmod)            
+             ORDER BY c.relname, a.attnum), ', ') || ');'
         WHEN t.typcategory = 'E' THEN
-            'CREATE TYPE ' || quote_ident(dest_schema) || '.' || t.typname || ' AS ENUM (' || REPLACE(quote_literal(array_to_string(array_agg(e.enumlabel ORDER BY e.enumsortorder), ',')), ',', ''',''') || ');'
+            -- 'CREATE TYPE ' || quote_ident(dest_schema) || '.' || t.typname || ' AS ENUM (' || REPLACE(quote_literal(array_to_string(array_agg(e.enumlabel ORDER BY e.enumsortorder), ',')), ',', ''',''') || ');'
+            'CREATE TYPE ' || quote_ident(dest_schema) || '.' || quote_ident(t.typname) || ' AS ENUM (' || REPLACE(quote_literal(array_to_string(array_agg(e.enumlabel ORDER BY e.enumsortorder), ',')), ',', ''',''') || ');'
         ELSE
             ''
         END AS type_ddl
@@ -1763,6 +1767,7 @@ BEGIN
   LOOP
     BEGIN
       cnt := cnt + 1;
+      RAISE NOTICE 'DEBUGGG:%',arec.type_ddl;
       -- Keep composite and enum types in separate branches for fine tuning later if needed.
       IF arec.typcategory = 'E' THEN
         IF bDDLOnly THEN
@@ -1771,7 +1776,8 @@ BEGIN
           --issue#95
           IF NOT bNoOwner THEN
             -- Fixed Issue#108: double-quote roles in case they have special characters
-            RAISE INFO 'ALTER TYPE % OWNER TO  %;', quote_ident(dest_schema) || '.' || arec.typname, arec.owner;
+            -- Fixed Issue#148: double-quote types as well if they have special characterss
+            RAISE INFO 'ALTER TYPE % OWNER TO  %;', quote_ident(dest_schema) || '.' || quote_ident(arec.typname), arec.owner;
           END IF;
         ELSE
           lastsql = arec.type_ddl;
@@ -1782,7 +1788,8 @@ BEGIN
           --issue#95
           IF NOT bNoOwner THEN
               -- Fixed Issue#108: double-quote roles in case they have special characters
-              lastsql = 'ALTER TYPE ' || quote_ident(dest_schema) || '.' || arec.typname || ' OWNER TO ' || arec.owner; 
+              -- Fixed Issue#148: double-quote types as well if they have special characterss
+              lastsql = 'ALTER TYPE ' || quote_ident(dest_schema) || '.' || quote_ident(arec.typname) || ' OWNER TO ' || arec.owner; 
               IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
 	            EXECUTE lastsql;
 	            lastsql = '';
@@ -1794,7 +1801,8 @@ BEGIN
           --issue#95
           IF NOT bNoOwner THEN
             -- Fixed Issue#108: double-quote roles in case they have special characters
-            RAISE INFO 'ALTER TYPE % OWNER TO  %;', quote_ident(dest_schema) || '.' || arec.typname, arec.owner;
+            -- Fixed Issue#148: double-quote types as well if they have special characterss
+            RAISE INFO 'ALTER TYPE % OWNER TO  %;', quote_ident(dest_schema) || '.' || quote_ident(arec.typname), arec.owner;
           END IF;
         ELSE
           lastsql = arec.type_ddl;
@@ -1804,9 +1812,10 @@ BEGIN
           --issue#95
           IF NOT bNoOwner THEN
               -- Fixed Issue#108: double-quote roles in case they have special characters
-              lastsql = 'ALTER TYPE ' || quote_ident(dest_schema) || '.' || arec.typname || ' OWNER TO ' || arec.owner; 
+              -- Fixed Issue#148: double-quote types as well if they have special characterss
+              lastsql = 'ALTER TYPE ' || quote_ident(dest_schema) || '.' || quote_ident(arec.typname) || ' OWNER TO ' || arec.owner; 
               IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
-	            EXECUTE 'ALTER TYPE ' || quote_ident(dest_schema) || '.' || arec.typname || ' OWNER TO ' || arec.owner;
+	            EXECUTE 'ALTER TYPE ' || quote_ident(dest_schema) || '.' || quote_ident(arec.typname) || ' OWNER TO ' || arec.owner;
 	            lastsql = '';
 	        END IF;
         END IF;
