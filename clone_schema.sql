@@ -87,7 +87,7 @@
 -- 2024-11-26  MJV FIX: Fixed Issue#145: Apply changes to pg_get_tabledef() related to issue#36.  Bugs related to PG version 10.
 -- 2024-12-07  MJV FIX: Fixed Issue#146: Apply changes to pg_get_tabledef() related to duplicate nextval statements for sequences.
 -- 2024-12-12  MJV FIX: Fixed Issue#147: Handle case where trigger function resides in the public schema.  Right now, only source schema is considered for trigger functions.  Only the trigger def needs to be in the source schema.
--- 2024-12-14  MJV FIX: Fixed Issue#148: Handle case-sensitive TYPEs correctly.
+-- 2024-12-14  MJV FIX: Fixed Issue#148: Handle case-sensitive TYPEs correctly.  Required fix to underlying function, pg_get_tabledef() as well.
 
 do $$ 
 <<first_block>>
@@ -274,6 +274,7 @@ NO OBLIGATIONS TO PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFI
 -- 2024-11-24   Issue#27: V 2.0 NEW Feature: Add owner info if requested through 'OWNER_ACL' 
 -- 2024-11-25   Issue#35: V 2.0 NEW featrue: Add option for all other ACLs for a table in addition to the owner, option='ALL_ACLS', including policies (row security).
 -- 2024-11-26   Issue#36: Fixed issue with PG v9.6 not calling pg_get_coldef() correctly. Also removed attgenerated since not in PG v10 and not used anywhere anyhows
+-- 2024-12-15   Issue#37: Fixed issue with case-sensitive user-defined types are not being enclosed with double-quotes.
 
 DROP TYPE IF EXISTS public.tabledefs CASCADE;
 CREATE TYPE public.tabledefs AS ENUM ('PKEY_INTERNAL','PKEY_EXTERNAL','FKEYS_INTERNAL', 'FKEYS_EXTERNAL', 'COMMENTS', 'FKEYS_NONE', 'INCLUDE_TRIGGERS', 'NO_TRIGGERS', 'SHOWPARTS', 'ACL_OWNER', 'ACL_DCL','ACL_POLICIES');
@@ -372,7 +373,7 @@ LANGUAGE plpgsql VOLATILE
 AS
 $$
   DECLARE
-    v_version        text := '2.4 December 14, 2024';
+    v_version        text := '2.3 December 15, 2024';
     v_schema    text := '';
     v_coldef    text := '';
     v_qualified text := '';
@@ -752,8 +753,10 @@ $$
          END IF;
 
          IF bVerbose THEN 
+             -- RAISE NOTICE '(col loop) coldef=%  name=%  type=%  udt_name=%  default=%  is_generated=%  gen_expr=%  Serial=%  SeqName=%', 
+             --                       v_coldef, v_colrec.column_name, v_colrec.data_type, v_colrec.udt_name, v_colrec.column_default, v_colrec.is_generated, v_colrec.generation_expression, bSerial, v_seqname;
              RAISE NOTICE '(col loop) coldef=%  name=%  type=%  udt_name=%  default=%  is_generated=%  gen_expr=%  Serial=%  SeqName=%', 
-                                      v_coldef, v_colrec.column_name, v_colrec.data_type, v_colrec.udt_name, v_colrec.column_default, v_colrec.is_generated, v_colrec.generation_expression, bSerial, v_seqname;
+                                      v_coldef, v_colrec.column_name, v_colrec.data_type, quote_ident(v_colrec.udt_name), v_colrec.column_default, v_colrec.is_generated, v_colrec.generation_expression, bSerial, v_seqname;                                      
          END IF;
          
          --Issue#17 put double-quotes around case-sensitive column names
@@ -793,7 +796,9 @@ $$
 		     ELSEIF v_colrec.data_type = 'USER-DEFINED' THEN
 		         -- Issue#31 fix
 		         -- v_temp = v_colrec.udt_schema || '.' || v_colrec.udt_name;
-		         v_temp = quote_ident(v_colrec.udt_schema) || '.' || v_colrec.udt_name;
+		         -- Issue#37 handle case-sensitive user-defined types
+		         -- v_temp = quote_ident(v_colrec.udt_schema) || '.' || v_colrec.udt_name;
+		         v_temp = quote_ident(v_colrec.udt_schema) || '.' || quote_ident(v_colrec.udt_name);
 
 		     ELSEIF v_colrec.data_type = 'ARRAY' THEN
    		       -- Issue#6 fix: handle arrays
@@ -1767,7 +1772,7 @@ BEGIN
   LOOP
     BEGIN
       cnt := cnt + 1;
-      RAISE NOTICE 'DEBUGGG:%',arec.type_ddl;
+      -- RAISE NOTICE 'DEBUGGG:%',arec.type_ddl;
       -- Keep composite and enum types in separate branches for fine tuning later if needed.
       IF arec.typcategory = 'E' THEN
         IF bDDLOnly THEN
