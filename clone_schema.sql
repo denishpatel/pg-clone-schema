@@ -88,6 +88,7 @@
 -- 2024-12-07  MJV FIX: Fixed Issue#146: Apply changes to pg_get_tabledef() related to duplicate nextval statements for sequences.
 -- 2024-12-12  MJV FIX: Fixed Issue#147: Handle case where trigger function resides in the public schema.  Right now, only source schema is considered for trigger functions.  Only the trigger def needs to be in the source schema.
 -- 2024-12-14  MJV FIX: Fixed Issue#148: Handle case-sensitive TYPEs correctly.  Required fix to underlying function, pg_get_tabledef() as well.
+-- 2024-12-18  MJV FIX: Fixed Issue#149: Handle case-sensitive USER-DEFINED column types when copying data directly. Workaround is to use the FILECOPY option.
 
 do $$ 
 <<first_block>>
@@ -122,7 +123,9 @@ $$
     v_schema     text;
   BEGIN
     FOR v_colrec IN
-      SELECT c.column_name, c.data_type, c.udt_name, c.udt_schema, c.character_maximum_length, c.is_nullable, c.column_default, c.numeric_precision, c.numeric_scale, c.is_identity, c.identity_generation, c.is_generated 
+      -- Issue#149  Handle case-sensitive and keywords for user-defined types
+      -- SELECT c.column_name, c.data_type, c.udt_name, c.udt_schema, c.character_maximum_length, c.is_nullable, c.column_default, c.numeric_precision, c.numeric_scale, c.is_identity, c.identity_generation, c.is_generated 
+      SELECT c.column_name, c.data_type, quote_ident(c.udt_name) as udt_name, c.udt_schema, c.character_maximum_length, c.is_nullable, c.column_default, c.numeric_precision, c.numeric_scale, c.is_identity, c.identity_generation, c.is_generated 
       FROM information_schema.columns c WHERE (table_schema, table_name) = (source_schema, atable) ORDER BY ordinal_position
     LOOP
       IF v_colrec.udt_schema = 'public' THEN
@@ -189,7 +192,7 @@ $$
     END IF;
     
     -- put it all together and return the insert statement
-    -- INSERT INTO clone1.address2 (id2, id3, addr) SELECT id2::text::clone1.udt_myint, id3::text::clone1.udt_myint, addr FROM sample.address;    
+    -- INSERT INTO clone1.address2 (id2, id3, addr) SELECT id2::text::clone1.udt_myint, id3::text::clone1.udt_myint, addr FROM sample.address;  
     IF bIdentity THEN
         -- Issue#124 Fix
         -- Issue#140
@@ -199,7 +202,9 @@ $$
         -- Issue#140
         -- v_insert_ddl = 'INSERT INTO ' || target_schema || '.' || atable || ' (' || v_cols || ') ' || 'SELECT ' || v_cols_sel || ' FROM ' || source_schema || '.' || atable || ';';
         v_insert_ddl = 'INSERT INTO ' || quote_ident(target_schema) || '.' || atable || ' (' || v_cols || ') ' || 'SELECT ' || v_cols_sel || ' FROM ' || quote_ident(source_schema) || '.' || atable || ';';
+        
     END IF;
+    -- RAISE NOTICE 'haha1: %', v_insert_ddl;
     RETURN v_insert_ddl;
   END;
 $$;
@@ -1385,7 +1390,7 @@ DECLARE
   s                timestamptz;
   lastsql          text := '';
   lasttbl          text := '';
-  v_version        text := '2.17 December 7, 2024';
+  v_version        text := '2.18 December 18, 2024';
 
 BEGIN
   -- uncomment the following to get line context info when debugging exceptions. 
