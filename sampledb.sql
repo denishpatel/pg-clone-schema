@@ -1357,6 +1357,18 @@ CREATE TRIGGER my_trigger AFTER INSERT ON my_trigger_table
 FOR EACH ROW EXECUTE PROCEDURE public.my_trigger_function();
 
 
+-- Issue$148
+CREATE TYPE "Week_Day" AS ENUM ('Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday');
+CREATE TABLE opening_days (store_id INT, day "Week_Day");
+INSERT INTO opening_days (store_id, day) VALUES(1,'Sunday');
+INSERT INTO opening_days (store_id, day) VALUES(2,'Monday');
+
+
+-- Issue#149: test with copy data functionality, DATA
+CREATE TABLE keywordcols (id int, "desc" text);
+INSERT INTO keywordcols (id, "desc") VALUES (1, 'whatever');
+
+
 --
 -- End Sample database
 --
