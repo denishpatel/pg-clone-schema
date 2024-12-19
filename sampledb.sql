@@ -1365,8 +1365,8 @@ INSERT INTO opening_days (store_id, day) VALUES(2,'Monday');
 
 
 -- Issue#149: test with copy data functionality, DATA
-CREATE TABLE keywordcols (id int, "desc" text);
-INSERT INTO keywordcols (id, "desc") VALUES (1, 'whatever');
+CREATE TABLE keywordcols (id BIGINT GENERATED ALWAYS AS IDENTITY NOT NULL, "desc" text, exclusive text);
+INSERT INTO keywordcols ("desc",exclusive) VALUES ('whatever', 'whatever2');
 
 
 --
