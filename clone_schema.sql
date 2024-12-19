@@ -88,7 +88,7 @@
 -- 2024-12-07  MJV FIX: Fixed Issue#146: Apply changes to pg_get_tabledef() related to duplicate nextval statements for sequences.
 -- 2024-12-12  MJV FIX: Fixed Issue#147: Handle case where trigger function resides in the public schema.  Right now, only source schema is considered for trigger functions.  Only the trigger def needs to be in the source schema.
 -- 2024-12-14  MJV FIX: Fixed Issue#148: Handle case-sensitive TYPEs correctly.  Required fix to underlying function, pg_get_tabledef() as well.
--- 2024-12-18  MJV FIX: Fixed Issue#149: Handle case-sensitive USER-DEFINED column types when copying data directly. Workaround is to use the FILECOPY option.
+-- 2024-12-19  MJV FIX: Fixed Issue#149: Handle case-sensitive USER-DEFINED column types when copying data directly. Workaround is to use the FILECOPY option.
 
 do $$ 
 <<first_block>>
@@ -125,7 +125,7 @@ $$
     FOR v_colrec IN
       -- Issue#149  Handle case-sensitive and keywords for user-defined types
       -- SELECT c.column_name, c.data_type, c.udt_name, c.udt_schema, c.character_maximum_length, c.is_nullable, c.column_default, c.numeric_precision, c.numeric_scale, c.is_identity, c.identity_generation, c.is_generated 
-      SELECT c.column_name, c.data_type, quote_ident(c.udt_name) as udt_name, c.udt_schema, c.character_maximum_length, c.is_nullable, c.column_default, c.numeric_precision, c.numeric_scale, c.is_identity, c.identity_generation, c.is_generated 
+      SELECT quote_ident(c.column_name) as column_name, c.data_type, quote_ident(c.udt_name) as udt_name, c.udt_schema, c.character_maximum_length, c.is_nullable, c.column_default, c.numeric_precision, c.numeric_scale, c.is_identity, c.identity_generation, c.is_generated 
       FROM information_schema.columns c WHERE (table_schema, table_name) = (source_schema, atable) ORDER BY ordinal_position
     LOOP
       IF v_colrec.udt_schema = 'public' THEN
@@ -538,14 +538,15 @@ $$
 
    -- set search_path = public before we do anything to force explicit schema qualification but dont forget to set it back before exiting...
     SELECT setting INTO search_path_old FROM pg_settings WHERE name = 'search_path';
+    -- RAISE WARNING 'DEBUGGGG: pg_get_tabledef(): current search path=***%***', search_path_old;
 
     SELECT REPLACE(REPLACE(setting, '"$user"', '$user'), '$user', '"$user"') INTO search_path_old
     FROM pg_settings
     WHERE name = 'search_path';
-    -- RAISE NOTICE 'DEBUG tableddl: saving old search_path: ***%***', search_path_old;
+    -- RAISE WARNING 'DEBUGGGG: pg_get_tabledef(): saving old search_path: ***%***', search_path_old;
     EXECUTE 'SET search_path = "public"';
     SELECT setting INTO search_path_new FROM pg_settings WHERE name = 'search_path';
-    -- RAISE NOTICE 'DEBUG tableddl: using new search path=***%***', search_path_new;
+    -- RAISE WARNING 'DEBUGGGG: pg_get_tabledef(): using new search path=***%***', search_path_new;
     
     -- throw an error if table was not found
     IF (v_table_oid IS NULL) THEN
@@ -1192,10 +1193,10 @@ $$
     v_context = 'SEARCHPATH';
     IF search_path_old = '' THEN
       SELECT set_config('search_path', '', false) into v_temp;
-      IF bVerbose THEN RAISE NOTICE 'SearchPath Cleanup: current searchpath=%', v_temp; END IF;
+      -- RAISE WARNING 'DEBUGGGG: pg_get_tabledef(): set current searchpath=%', v_temp;
     ELSE
-      IF bVerbose THEN RAISE NOTICE 'SearchPath Cleanup: resetting searchpath=%', search_path_old; END IF;
       EXECUTE 'SET search_path = ' || search_path_old;
+      -- RAISE WARNING 'DEBUGGGG: pg_get_tabledef(): set current searchpath=%', search_path_old;      
     END IF;
 
     RETURN v_table_ddl;
@@ -1390,7 +1391,7 @@ DECLARE
   s                timestamptz;
   lastsql          text := '';
   lasttbl          text := '';
-  v_version        text := '2.18 December 18, 2024';
+  v_version        text := '2.18 December 19, 2024';
 
 BEGIN
   -- uncomment the following to get line context info when debugging exceptions. 
@@ -1504,18 +1505,18 @@ BEGIN
   -- returned unquoted by some applications, we ensure it remains double quoted.
   -- MJV FIX: #47
   SELECT setting INTO v_dummy FROM pg_settings WHERE name='search_path';
-  IF bDebug THEN RAISE NOTICE 'DEBUG: search_path=%', v_dummy; END IF;
+  -- RAISE WARNING 'DEBUGGGG: search_path=%', v_dummy;
   
   SELECT REPLACE(REPLACE(setting, '"$user"', '$user'), '$user', '"$user"') INTO v_src_path_old
   FROM pg_settings WHERE name = 'search_path';
 
-  IF bDebug THEN RAISE NOTICE 'DEBUG: v_src_path_old=%', v_src_path_old; END IF;
+  -- RAISE WARNING 'DEBUGGGG: v_src_path_old=%', v_src_path_old;
 
   lastsql = 'SET search_path = ' || quote_ident(source_schema) ;
   EXECUTE lastsql;
   lastsql = '';
   SELECT setting INTO v_src_path_new FROM pg_settings WHERE name='search_path';
-  IF bDebug THEN RAISE NOTICE 'DEBUG: new search_path=%', v_src_path_new; END IF;
+  -- RAISE WARNING 'DEBUGGGG: new search_path=%', v_src_path_new; 
   
   -- Validate required types exist.  If not, create them.
   -- Issue#141, remove complex query to determine and simply drop them if they exist and recreate them.  Also put them in the public schema so they don't get propagated during cloning.
@@ -1706,11 +1707,6 @@ BEGIN
   cnt := 0;
   
   -- Issue%138: Need to change query to be compatible with PG17 and still work with previous versions
-  -- SELECT setting INTO buffer2 FROM pg_settings WHERE name = 'search_path';
-  --SELECT set_config('search_path', 'public', true) into buffer3;
-  -- SELECT set_config('search_path', 'public','sample', true) into buffer3;
-  -- SELECT set_config('search_path', 'public', true) into buffer3;
-  -- IF bDebugExec THEN RAISE NOTICE 'BEFORE: Changed search path from % to %',buffer2, buffer3; END IF;
   FOR arec IN
     SELECT n.nspname as "Schema", t.typname, pg_catalog.format_type(t.typbasetype, t.typtypmod) as atype,
     (SELECT c.collname FROM pg_catalog.pg_collation c, pg_catalog.pg_type bt WHERE c.oid = t.typcollation AND bt.oid = t.typbasetype AND t.typcollation <> bt.typcollation) as "Collation",
@@ -1735,8 +1731,6 @@ BEGIN
       END IF;
     END;
   END LOOP;
-  -- SELECT set_config('search_path', buffer3, true) into buffer3;
-  -- IF bDebugExec THEN RAISE NOTICE 'AFTER: Changed search path back from % to %',buffer3, buffer2;  END IF;
   RAISE NOTICE '     DOMAINS cloned: %', LPAD(cnt::text, 5, ' ');
   
   
@@ -1979,7 +1973,7 @@ BEGIN
   rc = 25;
   IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
   SELECT setting INTO v_dummy FROM pg_settings WHERE name='search_path';
-  IF bDebug THEN RAISE NOTICE 'DEBUG: search_path=%', v_dummy; END IF;
+  -- RAISE WARNING 'DEBUGGGG: search_path=%', v_dummy; 
   
   cntables := 0;
   lasttbl = '';
@@ -1987,7 +1981,7 @@ BEGIN
   -- SET search_path = '';
   -- Issue#138: make search path changes only effective for the current transaction (last parm goes from false to true)
   SELECT set_config('search_path', '', true) into v_dummy;
-  IF bDebug THEN RAISE NOTICE 'DEBUG: setting search_path to empty string:%', v_dummy; END IF;
+  -- RAISE WARNING 'DEBUGGGG: setting search_path to empty string:%', v_dummy;
   -- Fix#86 add isgenerated to column list
   -- Fix#91 add tblowner for setting the table ownership to that of the source
   -- Fix#99 added join to pg_tablespace
@@ -2115,9 +2109,10 @@ BEGIN
           -- #82: Table def should be fully qualified with target schema, 
           --      so just make search path = public to handle extension types that should reside in public schema
           v_dummy = 'public';
-          IF bDebug THEN RAISE NOTICE 'DEBUG: setting search_path to public:%', v_dummy; END IF;
+          -- RAISE WARNING 'DEBUGGGG: setting search_path to public:%', v_dummy;
           -- Issue#138: make search path changes only effective for the current transaction (last parm goes from false to true)
           SELECT set_config('search_path', v_dummy, true) into v_dummy;
+          -- RAISE WARNING 'DEBUGGGG: search_path=%',v_dummy;
           lastsql = buffer3;
           IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
           EXECUTE lastsql;
@@ -2218,15 +2213,15 @@ BEGIN
         END IF;
       ELSE
         -- Issue#103: we need to always set search_path priority to target schema when we execute DDL
-        IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef04 context: old search path=%  new search path=% current search path=%', v_src_path_old, v_src_path_new, v_dummy; END IF;
         SELECT setting INTO spath_tmp FROM pg_settings WHERE name = 'search_path';   
+        -- RAISE WARNING 'DEBUGGGG: tabledef04 context: current search_path=%', spath_tmp;
         IF spath_tmp <> dest_schema THEN
           -- change it to target schema and don't forget to change it back after we execute the DDL
           spath = 'SET search_path = "' || dest_schema || '"';
-          IF bDebug THEN RAISE NOTICE 'DEBUG: changing search_path --> %', spath; END IF;
           EXECUTE spath;
+          -- RAISE WARNING 'DEBUGGGG: changed search_path --> %', spath;
           SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';   
-          IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to %', v_dummy; END IF;
+          -- RAISE WARNING 'DEBUGGGG: current search_path --> %', v_dummy;
         END IF;
         IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef04:%', qry; END IF;
         lastsql = qry;
@@ -2242,10 +2237,10 @@ BEGIN
             NULL;
         ELSE
             spath = 'SET search_path = ' || spath_tmp;
-            IF bDebug THEN RAISE NOTICE 'DEBUG: setting search_path back to:%  --> %', spath_tmp,spath; END IF;
+            -- RAISE WARNING 'DEBUGGGG: setting search_path back to:%  --> %', spath_tmp,spath;
             EXECUTE spath;
             SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';   
-            IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed back to %', v_dummy; END IF;
+            -- RAISE WARNING 'DEBUGGGG: search_path changed back to %', v_dummy; 
         END IF;
         -- issue#91 fix
         -- issue#95
@@ -2374,8 +2369,8 @@ BEGIN
       -- Issue#86 fix:
       -- IF data_type = 'USER-DEFINED' THEN
       IF bDebug THEN RAISE NOTICE 'DEBUG: includerecs branch  table=%  data_type=%  isgenerated=%  buffer3=%', tblname, data_type, isGenerated, buffer3; END IF;
+      
       IF data_type = 'USER-DEFINED' OR isGenerated = 'ALWAYS' THEN
-
         -- RAISE WARNING 'Bypassing copying rows for table (%) with user-defined data types.  You must copy them manually.', tblname;
         -- wont work --> INSERT INTO clone1.address (id2, id3, addr) SELECT cast(id2 as clone1.udt_myint), cast(id3 as clone1.udt_myint), addr FROM sample.address;
         -- Issue#101 --> INSERT INTO clone1.address2 (id2, id3, addr) SELECT id2::text::clone1.udt_myint, id3::text::clone1.udt_myint, addr FROM sample.address; 
@@ -2440,7 +2435,7 @@ BEGIN
     -- SET search_path = '';
     -- Issue#138: make search path changes only effective for the current transaction (last parm goes from false to true)
     SELECT set_config('search_path', '', true) into v_dummy;
-    IF bDebug THEN RAISE NOTICE 'DEBUG: setting search_path to empty string:%', v_dummy; END IF;
+    -- RAISE WARNING 'DEBUGGGG: setting search_path to empty string:%', v_dummy;
 
     FOR column_, default_ IN
       SELECT column_name::text,
@@ -2464,7 +2459,7 @@ BEGIN
     END LOOP;
     
     EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
-    IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed back to source schema:%', quote_ident(source_schema); END IF;
+    -- RAISE WARNING 'DEBUGGGG: search_path changed back to source schema:%', quote_ident(source_schema); 
   END LOOP;
   ELSE 
   -- Handle 9.6 versions 90600
@@ -2581,7 +2576,7 @@ BEGIN
           v_dummy = 'public';
           -- Issue#138: make search path changes only effective for the current transaction (last parm goes from false to true)
           SELECT set_config('search_path', v_dummy, true) into v_dummy;
-          IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to public:%', v_dummy; END IF;          
+          -- RAISE WARNING 'DEBUGGGG: search_path changed to public:%', v_dummy; 
           lastsql = buffer3;
           IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
           EXECUTE lastsql;
@@ -2688,10 +2683,10 @@ BEGIN
         IF spath_tmp <> dest_schema THEN
           -- change it to target schema and don't forget to change it back after we execute the DDL
           spath = 'SET search_path = "' || dest_schema || '"';
-          IF bDebug THEN RAISE NOTICE 'DEBUG: changing search_path --> %', spath; END IF;
+          -- RAISE WARNING 'DEBUGGGG: changing search_path --> %', spath;
           EXECUTE spath;
           SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';   
-          IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to %', v_dummy; END IF;
+          -- RAISE WARNING 'DEBUGGGG: search_path changed to %', v_dummy; 
         END IF;
         IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef04:%', qry; END IF;
         lastsql = qry;
@@ -2702,10 +2697,10 @@ BEGIN
         -- Issue#103
         -- Set search path back to what it was
         spath = 'SET search_path = "' || spath_tmp || '"';
-        IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed back to:%', spath_tmp; END IF;
+        -- RAISE WARNING 'DEBUGGGG: search_path changed back to:%', spath_tmp; 
         EXECUTE spath;
         SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';   
-        IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed back to %', v_dummy; END IF;
+        -- RAISE WARNING 'DEBUGGGG: search_path changed back to %', v_dummy; 
         
         -- issue#91 fix
         -- issue#95
@@ -2817,8 +2812,8 @@ BEGIN
       -- Issue#86 fix:
       -- IF data_type = 'USER-DEFINED' THEN
       IF bDebug THEN RAISE NOTICE 'DEBUG: includerecs branch  table=%  data_type=%  isgenerated=%', tblname, data_type, isGenerated; END IF;
+      
       IF data_type = 'USER-DEFINED' OR isGenerated = 'ALWAYS' THEN
-
         -- RAISE WARNING 'Bypassing copying rows for table (%) with user-defined data types.  You must copy them manually.', tblname;
         -- wont work --> INSERT INTO clone1.address (id2, id3, addr) SELECT cast(id2 as clone1.udt_myint), cast(id3 as clone1.udt_myint), addr FROM sample.address;
         -- Issue#101 --> INSERT INTO clone1.address2 (id2, id3, addr) SELECT id2::text::clone1.udt_myint, id3::text::clone1.udt_myint, addr FROM sample.address; 
@@ -2880,7 +2875,7 @@ BEGIN
     -- SET search_path = '';
     -- Issue#138: make search path changes only effective for the current transaction (last parm goes from false to true)
     SELECT set_config('search_path', '', true) into v_dummy;
-    IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to empty string:%', v_dummy; END IF;
+    -- RAISE WARNING 'DEBUGGGG: search_path changed to empty string:%', v_dummy;
 
     FOR column_, default_ IN
       SELECT column_name::text,
@@ -2904,7 +2899,7 @@ BEGIN
     END LOOP;
     
     EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
-    IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed back to source schema:%', quote_ident(source_schema); END IF;
+    -- RAISE WARNING 'DEBUGGGG: search_path changed back to source schema:%', quote_ident(source_schema); 
   END LOOP;      
   END IF;
   -- end of 90600 branch
@@ -2913,7 +2908,7 @@ BEGIN
 
 
   SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
-  IF bDebug THEN RAISE NOTICE 'DEBUG: current search_path=%', v_dummy; END IF;
+  -- RAISE WARNING 'DEBUGGGG: current search_path=%', v_dummy; 
 
   -- Issue#140 section removed since handled above
   -- Assigning sequences to table columns.
@@ -2992,7 +2987,7 @@ BEGIN
     spath_tmp = 'SET search_path = ' || quote_ident(source_schema) || ', public';    
     EXECUTE spath_tmp;
     SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
-    IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to source schema + public:%', v_dummy; END IF;
+    -- RAISE WARNING 'DEBUGGGG: search_path changed to source schema + public:%', v_dummy; 
 
     -- Fixed Issue#65
     -- Fixed Issue#97
@@ -3181,7 +3176,7 @@ BEGIN
   -- SET search_path = '';
   -- Issue#138: make search path changes only effective for the current transaction (last parm goes from false to true)
   SELECT set_config('search_path', '', true)  INTO v_dummy;
-  IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed back to empty string:%', v_dummy; END IF;
+  -- RAISE WARNING 'DEBUGGGG: search_path changed back to empty string:%', v_dummy; 
 
   cnt := 0;
   deferredviewcnt := 0;
@@ -3438,7 +3433,7 @@ BEGIN
   -- MV: Create Triggers
   -- Issue#138: make search path changes only effective for the current transaction (last parm goes from false to true)
   SELECT set_config('search_path', '', true) into v_dummy;
-  IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed back to empty string:%', v_dummy; END IF;    
+  -- RAISE WARNING 'DEBUGGGG: search_path changed back to empty string:%', v_dummy; 
 
   -- MV: Create Rules
   -- Fixes Issue#59 Implement Rules
@@ -3784,7 +3779,7 @@ BEGIN
     -- MV: Permissions: Defaults
     -- ---------------------
     EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
-    IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed back to source schema:%', quote_ident(source_schema); END IF;    
+    -- RAISE WARNING 'DEBUGGGG: search_path changed back to source schema:%', quote_ident(source_schema);
     action := 'PRIVS: Defaults';
     rc = 36;
     IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
@@ -4111,7 +4106,7 @@ BEGIN
     -- SET search_path = '';
     -- Issue#138: make search path changes only effective for the current transaction (last parm goes from false to true)
     SELECT set_config('search_path', '', true) into v_dummy;
-    IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to empty string:%', v_dummy; END IF;
+    -- RAISE WARNING 'DEBUGGGG: search_path changed to empty string:%', v_dummy; 
 
     -- RAISE NOTICE ' source_schema=%  dest_schema=%',source_schema, dest_schema;
     FOR arec IN
@@ -4151,7 +4146,7 @@ BEGIN
       END;
     END LOOP;
     EXECUTE 'SET search_path = ' || quote_ident(source_schema);
-    IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed back to source schema:%', quote_ident(source_schema); END IF;
+    -- RAISE WARNING 'DEBUGGGG: search_path changed back to source schema:%', quote_ident(source_schema);
     RAISE NOTICE '  FUNC PRIVS cloned: %', LPAD(cnt::text, 5, ' ');
   END IF; -- NO ACL BRANCH
 
@@ -4163,7 +4158,7 @@ BEGIN
     IF bVerbose THEN RAISE NOTICE 'Copying rows...'; END IF;  
 
     EXECUTE 'SET search_path = ' || quote_ident(dest_schema) ;
-    IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to target schema:%', quote_ident(dest_schema); END IF;
+    -- RAISE WARNING 'DEBUGGGG: search_path changed to target schema:%', quote_ident(dest_schema);
     action := 'Copy Rows';
     rc = 40;
     IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
@@ -4391,7 +4386,7 @@ BEGIN
   -- SET search_path = '';
   -- Issue#138: make search path changes only effective for the current transaction (last parm goes from false to true)
   SELECT set_config('search_path', '', true) into v_dummy;
-  IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to empty string:%', v_dummy; END IF;
+  -- RAISE WARNING 'DEBUGGGG: search_path changed to empty string:%', v_dummy; 
 
   FOR qry IN
     SELECT 'ALTER TABLE ' || quote_ident(dest_schema) || '.' || quote_ident(rn.relname)
@@ -4419,13 +4414,13 @@ BEGIN
     END IF;
   END LOOP;
   EXECUTE 'SET search_path = ' || quote_ident(source_schema);
-  IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to source schema:%', quote_ident(source_schema); END IF;  
+  -- RAISE WARNING 'DEBUGGGG: search_path changed to source schema:%', quote_ident(source_schema); 
   RAISE NOTICE '       FKEYS cloned: %', LPAD(cnt::text, 5, ' ');
 
   -- Issue#111: forces us to defer triggers til after we populate the tables, just like we did with FKeys (Issue#78).
   -- Issue#138: make search path changes only effective for the current transaction (last parm goes from false to true)
   SELECT set_config('search_path', '', true) into v_dummy;
-  IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to empty string:%', v_dummy; END IF;  
+  -- RAISE WARNING 'DEBUGGGG: search_path changed to empty string:%', v_dummy; 
 
   action := 'Triggers';
   IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
@@ -4462,14 +4457,14 @@ BEGIN
     -- RAISE NOTICE 'Restoring old search_path to empty string';
     -- Issue#138: make search path changes only effective for the current transaction (last parm goes from false to true)
     SELECT set_config('search_path', '', true) into v_dummy;
-    IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to empty string:%', v_dummy; END IF;  
+    -- RAISE WARNING 'DEBUGGGG: search_path changed to empty string:%', v_dummy; 
   ELSE
     -- RAISE NOTICE 'Restoring old search_path to:%', v_src_path_old;
     EXECUTE 'SET search_path = ' || v_src_path_old;
-    IF bDebug THEN RAISE NOTICE 'DEBUG: search_path changed to old one:%', v_src_path_old; END IF;  
+    -- RAISE WARNING 'DEBUGGGG: search_path changed to old one:%', v_src_path_old; 
   END IF;
   SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
-  IF bDebug THEN RAISE NOTICE 'DEBUG: setting search_path back to what it was: %', v_dummy; END IF;
+  -- RAISE WARNING 'DEBUGGGG: setting search_path back to what it was: %', v_dummy; 
   cnt := cast(extract(epoch from (clock_timestamp() - t)) as numeric(18,3));
   
   -- Issue#141: Remove processing types before leaving
