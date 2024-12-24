@@ -89,6 +89,8 @@
 -- 2024-12-12  MJV FIX: Fixed Issue#147: Handle case where trigger function resides in the public schema.  Right now, only source schema is considered for trigger functions.  Only the trigger def needs to be in the source schema.
 -- 2024-12-14  MJV FIX: Fixed Issue#148: Handle case-sensitive TYPEs correctly.  Required fix to underlying function, pg_get_tabledef() as well.
 -- 2024-12-19  MJV FIX: Fixed Issue#149: Handle case-sensitive USER-DEFINED column types when copying data directly. Workaround is to use the FILECOPY option.
+-- 2024-12-24  MJV FIX: Fixed Issue#150: Major clean up DDLONLY output: (1) Prefix UNIQUE indexes with "INFO:  ". (2) fixed case-sensitive problem with ALTER TABLE. (3) fixed problem with child tables created before parent.
+-- 2024-12-24  MJV FIX: Fixed Issue#150: Major clean up continued:      (4) Added SET ROLE logic after creating DEFAULT PRIVS. (5) Added "INFO:" lines when creating indexes. See "Issue#150" for all fixes.
 
 do $$ 
 <<first_block>>
@@ -204,7 +206,6 @@ $$
         v_insert_ddl = 'INSERT INTO ' || quote_ident(target_schema) || '.' || atable || ' (' || v_cols || ') ' || 'SELECT ' || v_cols_sel || ' FROM ' || quote_ident(source_schema) || '.' || atable || ';';
         
     END IF;
-    -- RAISE NOTICE 'haha1: %', v_insert_ddl;
     RETURN v_insert_ddl;
   END;
 $$;
@@ -378,7 +379,7 @@ LANGUAGE plpgsql VOLATILE
 AS
 $$
   DECLARE
-    v_version        text := '2.3 December 15, 2024';
+    v_version        text := '2.4 December 24, 2024';
     v_schema    text := '';
     v_coldef    text := '';
     v_qualified text := '';
@@ -914,8 +915,11 @@ $$
                   || ',' || E'\n';
             ELSE
               -- Issue#16 handle external PG def
-              SELECT 'ALTER TABLE ONLY ' || in_schema || '.' || c.relname || ' ADD CONSTRAINT ' || r.conname || ' ' || pg_catalog.pg_get_constraintdef(r.oid, true) || ';' INTO v_pkey_def 
-              FROM pg_catalog.pg_constraint r, pg_class c, pg_namespace n where r.conrelid = c.oid and  r.contype = 'p' and n.oid = r.connamespace and n.nspname = in_schema AND c.relname = in_table and r.conname = v_constraint_name;             
+              -- Issue#150: Fix case-sensitive ALTER TABLE commands
+              -- SELECT 'ALTER TABLE ONLY ' || in_schema || '.' || c.relname || ' ADD CONSTRAINT ' || r.conname || ' ' || pg_catalog.pg_get_constraintdef(r.oid, true) || ';' INTO v_pkey_def 
+              -- FROM pg_catalog.pg_constraint r, pg_class c, pg_namespace n where r.conrelid = c.oid and  r.contype = 'p' and n.oid = r.connamespace and n.nspname = in_schema AND c.relname = in_table and r.conname = v_constraint_name;             
+              SELECT 'ALTER TABLE ONLY ' || quote_ident(in_schema) || '.' || quote_ident(c.relname) || ' ADD CONSTRAINT ' || r.conname || ' ' || pg_catalog.pg_get_constraintdef(r.oid, true) || ';' INTO v_pkey_def 
+              FROM pg_catalog.pg_constraint r, pg_class c, pg_namespace n where r.conrelid = c.oid and  r.contype = 'p' and n.oid = r.connamespace and n.nspname = in_schema AND c.relname = in_table and r.conname = v_constraint_name;                           
             END IF;
             IF bPartition THEN
               continue;
@@ -1280,7 +1284,13 @@ DECLARE
   tblarray2        text[] := '{}';
   tblarray3        text[] := '{}';
   tblarray4        text[] := '{}';
+  DDLAltTblDefer   text[] := '{}';
+  DDLCreateIXDefer text[] := '{}';
+  DDLAttachDefer   text[] := '{}';
+  DDLAttachSkip    text[] := '{}';   
+  DDLAltCol        text[] := '{}';   
   tblelement       text;
+  tblelement2      text;
   grantor          text;
   grantee          text;
   privs            text;
@@ -1391,6 +1401,8 @@ DECLARE
   s                timestamptz;
   lastsql          text := '';
   lasttbl          text := '';
+  bFound           boolean;
+  role_invoker     text;
   v_version        text := '2.18 December 19, 2024';
 
 BEGIN
@@ -1547,6 +1559,10 @@ BEGIN
 
   IF bDDLOnly THEN
     RAISE NOTICE ' Only generating DDL, not actually creating anything...';
+    
+    -- Issue#150: get clone_schema invoker since we need to reset it again after setting DEFAULT PRIVILEGES
+    SELECT current_role INTO role_invoker;
+    
     -- issue#95
     IF bNoOwner THEN
         RAISE INFO 'CREATE SCHEMA %;', quote_ident(dest_schema);    
@@ -1555,7 +1571,11 @@ BEGIN
         -- RAISE INFO 'CREATE SCHEMA % AUTHORIZATION %;', quote_ident(dest_schema), buffer;    
         RAISE INFO 'CREATE SCHEMA % AUTHORIZATION %;', quote_ident(dest_schema), quote_ident(buffer);  
     END IF;
-    RAISE NOTICE 'SET search_path=%;', quote_ident(dest_schema);
+    
+    -- Issue#150: set search path for target schema
+    -- RAISE NOTICE 'SET search_path=%;', quote_ident(dest_schema);
+		RAISE INFO 'set search_path = public, %;', quote_ident(dest_schema);
+    
   ELSE
     -- issue#95
     IF bNoOwner THEN
@@ -2053,12 +2073,25 @@ BEGIN
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');          
           SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');          
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
+          -- Issue#150 : Add INFO lines if we are in DDLONLY mode
+          IF bDDLOnly THEN
+              buffer3 := REPLACE(buffer3, 'CREATE UNIQUE INDEX IF NOT EXISTS', 'INFO:  CREATE UNIQUE INDEX IF NOT EXISTS');
+              buffer3 := REPLACE(buffer3, 'CREATE INDEX IF NOT EXISTS', 'INFO:  CREATE INDEX IF NOT EXISTS');
+          END IF;
           RAISE INFO '%', buffer3;
+
           -- issue#91 fix
           -- issue#95
           IF NOT bNoOwner THEN    
             -- Fixed Issue#108: double-quote roles in case they have special characters
-            RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || tblname, tblowner;
+            -- Issue#150: do same for tables and defer if children
+            -- RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || tblname, tblowner;
+            IF bChild THEN
+                v_dummy = 'INFO:  ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || ' OWNER TO ' || tblowner || ';';
+                DDLAltTblDefer := DDLAltTblDefer || v_dummy;
+            ELSE
+                RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || quote_ident(tblname), tblowner;
+            END IF;
           END IF;
         ELSE
           IF NOT bChild THEN
@@ -2067,14 +2100,18 @@ BEGIN
              -- issue#95
             IF NOT bNoOwner THEN    
               -- Fixed Issue#108: double-quote roles in case they have special characters
-              RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || tblname, tblowner;
+              -- Issue#150: do same for tables
+              -- RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || tblname, tblowner;
+              RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || quote_ident(tblname), tblowner;
             END IF;
             
             -- issue#99 
             IF tblspace <> 'pg_default' THEN
               -- replace with user-defined tablespace
               -- ALTER TABLE myschema.mytable SET TABLESPACE usrtblspc;
-              RAISE INFO 'ALTER TABLE IF EXISTS % SET TABLESPACE %;', quote_ident(dest_schema) || '.' || tblname, tblspace;
+              -- Issue#150: Handle case-sensitive tables too
+              -- RAISE INFO 'ALTER TABLE IF EXISTS % SET TABLESPACE %;', quote_ident(dest_schema) || '.' || tblname, tblspace;
+              RAISE INFO 'ALTER TABLE IF EXISTS % SET TABLESPACE %;', quote_ident(dest_schema) || '.' || quote_ident(tblname), tblspace;
             END IF;
           ELSE
             -- FIXED #65, #67
@@ -2085,12 +2122,31 @@ BEGIN
             -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
             SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
-            RAISE INFO '%', buffer3;
+            -- Issue#150 : Add INFO lines if we are in DDLONLY mode
+				    buffer3 := REPLACE(buffer3, 'CREATE UNIQUE INDEX IF NOT EXISTS', 'INFO:  CREATE UNIQUE INDEX IF NOT EXISTS');
+				    buffer3 := REPLACE(buffer3, 'CREATE INDEX IF NOT EXISTS', 'INFO:  CREATE INDEX IF NOT EXISTS');
+				    -- Issue#150: defer child index creations until after parent is created later
+				    IF bChild THEN
+				        DDLCreateIXDefer := DDLCreateIXDefer || buffer3;
+				        -- note child table so we don't attempt to attach it explicitly later
+				        v_dummy = quote_ident(dest_schema) || '.' || tblname;
+				        DDLAttachSkip = DDLAttachSkip || v_dummy;
+				    ELSE
+				        RAISE INFO '%', buffer3;
+				    END IF;
+         
             -- issue#91 fix
             -- issue#95
             IF NOT bNoOwner THEN    
               -- Fixed Issue#108: double-quote roles in case they have special characters
-              RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || tblname, tblowner;
+              -- Issue#150: do same for tables and defer if child and we are in DDLONLY mode
+              -- RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || tblname, tblowner;
+              IF bChild THEN
+                  v_dummy = 'INFO:  ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || ' OWNER TO ' || tblowner || ';';
+                  DDLAltTblDefer = DDLAltTblDefer || v_dummy;
+              ELSE
+                  RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || quote_ident(tblname), tblowner;
+              END IF;              
             END IF;
           END IF;
         END IF;
@@ -2105,7 +2161,13 @@ BEGIN
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
           SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
+          -- Issue#150 : Add INFO lines if we are in DDLONLY mode
+					IF bDDLOnly THEN
+					    buffer3 := REPLACE(buffer3, 'CREATE UNIQUE INDEX IF NOT EXISTS', 'INFO:  CREATE UNIQUE INDEX IF NOT EXISTS');
+					    buffer3 := REPLACE(buffer3, 'CREATE INDEX IF NOT EXISTS', 'INFO:  CREATE INDEX IF NOT EXISTS');
+					END IF;
           IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef01a:%', buffer3; END IF;
+
           -- #82: Table def should be fully qualified with target schema, 
           --      so just make search path = public to handle extension types that should reside in public schema
           v_dummy = 'public';
@@ -2121,7 +2183,9 @@ BEGIN
           -- issue#95
           IF NOT bNoOwner THEN    
             -- Fixed Issue#108: double-quote roles in case they have special characters
-            lastsql = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
+            -- Issue#150: do same for tables
+            -- lastsql = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
+            lastsql = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || ' OWNER TO ' || tblowner;
             IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
             EXECUTE lastsql;
             lastsql = '';
@@ -2148,7 +2212,9 @@ BEGIN
             IF tblspace <> 'pg_default' THEN
               -- replace with user-defined tablespace
               -- ALTER TABLE myschema.mytable SET TABLESPACE usrtblspc;
-              lastsql = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' SET TABLESPACE ' || tblspace;
+              -- Issue#150: Handle case-sensitive tables
+              -- lastsql = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' SET TABLESPACE ' || tblspace;
+              lastsql = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || ' SET TABLESPACE ' || tblspace;
               IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
               EXECUTE lastsql;
               lastsql = '';
@@ -2163,6 +2229,12 @@ BEGIN
             -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
             SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
+            -- Issue#150 : Add INFO lines if we are in DDLONLY mode
+						IF bDDLOnly THEN
+						    buffer3 := REPLACE(buffer3, 'CREATE UNIQUE INDEX IF NOT EXISTS', 'INFO:  CREATE UNIQUE INDEX IF NOT EXISTS');
+						    buffer3 := REPLACE(buffer3, 'CREATE INDEX IF NOT EXISTS', 'INFO:  CREATE INDEX IF NOT EXISTS');
+					  END IF;
+            
             -- set client_min_messages higher to avoid messages like this:
             -- NOTICE:  merging column "city_id" with inherited definition
             set client_min_messages = 'WARNING';
@@ -2175,7 +2247,9 @@ BEGIN
             -- issue#95
             IF NOT bNoOwner THEN
               -- Fixed Issue#108: double-quote roles in case they have special characters
-              lastsql = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
+              -- Issue#150: Handle case-sensitive tables
+              -- lastsql = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
+              lastsql = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || ' OWNER TO ' || tblowner;
               IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
               EXECUTE lastsql;
               lastsql = '';
@@ -2202,6 +2276,11 @@ BEGIN
       -- SELECT * INTO qry FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
       SELECT * INTO qry FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
       qry := REPLACE(qry, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
+      -- Issue#150 : Add INFO lines if we are in DDLONLY mode
+			IF bDDLOnly THEN
+    	    qry := REPLACE(qry, 'CREATE UNIQUE INDEX IF NOT EXISTS', 'INFO:  CREATE UNIQUE INDEX IF NOT EXISTS');
+					qry := REPLACE(qry, 'CREATE INDEX IF NOT EXISTS', 'INFO:  CREATE INDEX IF NOT EXISTS');
+			END IF;
       IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef04 - %', qry; END IF;
 
       IF bDDLOnly THEN
@@ -2252,6 +2331,7 @@ BEGIN
           lastsql = '';
         END IF;
       END IF;
+
       -- loop for child tables and alter them to attach to parent for specific partition method.
       -- Issue#103 fix: only loop for the table we are currently processing, tblname!
       FOR aname, part_range, object IN
@@ -2269,11 +2349,13 @@ BEGIN
         IF bDebug THEN RAISE NOTICE 'DEBUG: %',qry; END IF;
         -- issue#91, not sure if we need to do this for child tables
         -- issue#95 we dont set ownership here
+        
+        -- Issue#150: defer attaching children to parents if in DDLONLY mode
         IF bDDLOnly THEN
-          RAISE INFO '%', qry;
+          DDLAttachDefer = DDLAttachDefer || qry;
           IF NOT bNoOwner THEN
             NULL;
-          END IF;
+          END IF;          
         ELSE
           lastsql = qry;
           IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
@@ -2284,8 +2366,9 @@ BEGIN
           END IF;
         END IF;
       END LOOP;
-     END IF;
-     -- INCLUDING ALL creates new index names, we restore them to the old name.
+    END IF;
+    
+    -- INCLUDING ALL creates new index names, we restore them to the old name.
     -- There should be no conflicts since they live in different schemas
     FOR ix_old_name, ix_new_name IN
       SELECT old.indexname, new.indexname
@@ -2449,7 +2532,13 @@ BEGIN
       buffer2 = 'ALTER TABLE ' || buffer || ' ALTER COLUMN ' || quote_ident(column_) || ' SET DEFAULT ' || default_ || ';';
       IF bDDLOnly THEN
         -- May need to come back and revisit this since previous sql will not return anything since no schema as created!
-        RAISE INFO '%', buffer2;
+        -- Issue#150 defer to later...
+        -- RAISE INFO '%', buffer2;
+        IF bDDLOnly THEN
+            DDLAltCol = DDLAltCol || buffer2;
+        ELSE
+            RAISE INFO '%', buffer2;
+        END IF;
       ELSE
         lastsql = buffer2;
         IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
@@ -2497,7 +2586,7 @@ BEGIN
     ELSE
       bChild := True;
     END IF;
-    IF bDebug THEN RAISE NOTICE 'DEBUG: TABLE START --> table=%  bRelispart=NA  relkind=%  bChild=%',tblname, relknd, bChild; END IF;
+    IF bDebug THEN RAISE NOTICE 'DEBUG: TABLE START(2) --> table=%  bRelispart=NA  relkind=%  bChild=%',tblname, relknd, bChild; END IF;
 
     IF data_type = 'USER-DEFINED' THEN
       -- RAISE NOTICE ' Table (%) has column(s) with user-defined types so using get_table_ddl() instead of CREATE TABLE LIKE construct.',tblname;
@@ -2519,28 +2608,51 @@ BEGIN
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
           SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
+          -- Issue#150 : Add INFO lines if we are in DDLONLY mode
+			    IF bDDLOnly THEN
+    	        buffer3 := REPLACE(buffer3, 'CREATE UNIQUE INDEX IF NOT EXISTS', 'INFO:  CREATE UNIQUE INDEX IF NOT EXISTS');
+			    		buffer3 := REPLACE(buffer3, 'CREATE INDEX IF NOT EXISTS', 'INFO:  CREATE INDEX IF NOT EXISTS');
+			    END IF;
           RAISE INFO '%', buffer3;
+          
           -- issue#91 fix
           -- issue#95
           IF NOT bNoOwner THEN    
             -- Fixed Issue#108: double-quote roles in case they have special characters
-            RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || tblname, tblowner;
+            -- Issue#150: Handle case-sensitive tables
+            -- RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || tblname, tblowner;
+            -- Issue#150: defer if child
+            IF bChild THEN
+                v_dummy = 'INFO:  ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || ' OWNER TO ' || tblowner || ';';
+                DDLAltTblDefer := DDLAltTblDefer || v_dummy;
+            ELSE
+                RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || quote_ident(tblname), tblowner;
+            END IF;
           END IF;
         ELSE
           IF NOT bChild THEN
             RAISE INFO '%', 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL);';
             -- issue#91 fix
-             -- issue#95
+            -- issue#95
             IF NOT bNoOwner THEN    
               -- Fixed Issue#108: double-quote roles in case they have special characters
-              RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || tblname, tblowner;
+              -- Issue#150: Handle case-sensitive tables and defer if child and in DDLONLY mode
+              -- RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || tblname, tblowner;
+              IF bChild THEN
+                  v_dummy = 'INFO:  ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || ' OWNER TO ' || tblowner || ';';
+                  DDLAltTblDefer := DDLAltTblDefer || v_dummy;
+              ELSE
+                  RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || quote_ident(tblname), tblowner;
+              END IF;
             END IF;
             
             -- issue#99 
             IF tblspace <> 'pg_default' THEN
               -- replace with user-defined tablespace
               -- ALTER TABLE myschema.mytable SET TABLESPACE usrtblspc;
-              RAISE INFO 'ALTER TABLE IF EXISTS % SET TABLESPACE %;', quote_ident(dest_schema) || '.' || tblname, tblspace;
+              -- Issue#150: Handle case-sensitive tables and defer if DDLONLY mode
+              -- RAISE INFO 'ALTER TABLE IF EXISTS % SET TABLESPACE %;', quote_ident(dest_schema) || '.' || tblname, tblspace;
+              RAISE INFO 'ALTER TABLE IF EXISTS % SET TABLESPACE %;', quote_ident(dest_schema) || '.' || quote_ident(tblname), tblspace;
             END IF;
           ELSE
             -- FIXED #65, #67
@@ -2551,12 +2663,23 @@ BEGIN
             -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
             SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
+            -- Issue#150 : Add INFO lines if we are in DDLONLY mode
+			      buffer3 := REPLACE(buffer3, 'CREATE UNIQUE INDEX IF NOT EXISTS', 'INFO:  CREATE UNIQUE INDEX IF NOT EXISTS');
+			  		buffer3 := REPLACE(buffer3, 'CREATE INDEX IF NOT EXISTS', 'INFO:  CREATE INDEX IF NOT EXISTS');
             RAISE INFO '%', buffer3;
+
             -- issue#91 fix
             -- issue#95
             IF NOT bNoOwner THEN    
               -- Fixed Issue#108: double-quote roles in case they have special characters
-              RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || tblname, tblowner;
+              -- Issue#150: Handle case-sensitive tables and defer if DDLONLY mode
+              -- RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || tblname, tblowner;
+	            IF bChild THEN
+	                v_dummy = 'INFO:  ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || ' OWNER TO ' || tblowner;    
+                  DDLAltTblDefer := DDLAltTblDefer || v_dummy;
+              ELSE
+	                RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || quote_ident(tblname), tblowner;
+              END IF;
             END IF;
           END IF;
         END IF;
@@ -2570,7 +2693,13 @@ BEGIN
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
           SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
+          -- Issue#150 : Add INFO lines if we are in DDLONLY mode
+			    IF bDDLOnly THEN
+    	        buffer3 := REPLACE(buffer3, 'CREATE UNIQUE INDEX IF NOT EXISTS', 'INFO:  CREATE UNIQUE INDEX IF NOT EXISTS');
+			    		buffer3 := REPLACE(buffer3, 'CREATE INDEX IF NOT EXISTS', 'INFO:  CREATE INDEX IF NOT EXISTS');
+			    END IF;
           IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef01b:%', buffer3; END IF;
+          
           -- #82: Table def should be fully qualified with target schema, 
           --      so just make search path = public to handle extension types that should reside in public schema
           v_dummy = 'public';
@@ -2585,7 +2714,9 @@ BEGIN
           -- issue#95
           IF NOT bNoOwner THEN    
             -- Fixed Issue#108: double-quote roles in case they have special characters
-            lastsql = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
+            -- Issue#150: Handle case-sensitive tables
+            -- lastsql = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
+            lastsql = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || ' OWNER TO ' || tblowner;
             IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
             EXECUTE lastsql;
             lastsql = '';
@@ -2611,7 +2742,9 @@ BEGIN
             IF tblspace <> 'pg_default' THEN
               -- replace with user-defined tablespace
               -- ALTER TABLE myschema.mytable SET TABLESPACE usrtblspc;
-              lastsql = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' SET TABLESPACE ' || tblspace;
+              -- Issue#150: Handle case-sensitive tables
+              -- lastsql = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' SET TABLESPACE ' || tblspace;
+              lastsql = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || ' SET TABLESPACE ' || tblspace;
               IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
               EXECUTE lastsql;
               lastsql = '';
@@ -2627,6 +2760,12 @@ BEGIN
             -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
             SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
+            -- Issue#150 : Add INFO lines if we are in DDLONLY mode
+			      IF bDDLOnly THEN
+    	          buffer3 := REPLACE(buffer3, 'CREATE UNIQUE INDEX IF NOT EXISTS', 'INFO:  CREATE UNIQUE INDEX IF NOT EXISTS');
+			      		buffer3 := REPLACE(buffer3, 'CREATE INDEX IF NOT EXISTS', 'INFO:  CREATE INDEX IF NOT EXISTS');
+			      END IF;
+
             -- set client_min_messages higher to avoid messages like this:
             -- NOTICE:  merging column "city_id" with inherited definition
             set client_min_messages = 'WARNING';
@@ -2639,7 +2778,9 @@ BEGIN
             -- issue#95
             IF NOT bNoOwner THEN
               -- Fixed Issue#108: double-quote roles in case they have special characters
-              lastsql = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
+              -- Issue#150: Handle case-sensitive tables
+              -- lastsql = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || tblname || ' OWNER TO ' || tblowner;
+              lastsql = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || ' OWNER TO ' || tblowner;
               IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
               EXECUTE lastsql;
               lastsql = '';
@@ -2666,7 +2807,11 @@ BEGIN
       -- SELECT * INTO qry FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
       SELECT * INTO qry FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
       qry := REPLACE(qry, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
-      
+          -- Issue#150 : Add INFO lines if we are in DDLONLY mode
+			    IF bDDLOnly THEN
+    	        qry := REPLACE(qry, 'CREATE UNIQUE INDEX IF NOT EXISTS', 'INFO:  CREATE UNIQUE INDEX IF NOT EXISTS');
+			    		qry := REPLACE(qry, 'CREATE INDEX IF NOT EXISTS', 'INFO:  CREATE INDEX IF NOT EXISTS');
+			    END IF;
       IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef04 - %', buffer; END IF;
       
       IF bDDLOnly THEN
@@ -2727,8 +2872,9 @@ BEGIN
         IF bDebug THEN RAISE NOTICE 'DEBUG: %',qry; END IF;
         -- issue#91, not sure if we need to do this for child tables
         -- issue#95 we dont set ownership here
+        -- Issue#150: defer attaching children to parents if in DDLONLY mode
         IF bDDLOnly THEN
-          RAISE INFO '%', qry;
+          DDLAttachDefer = DDLAttachDefer || qry;
           IF NOT bNoOwner THEN
             NULL;
           END IF;
@@ -2743,7 +2889,7 @@ BEGIN
         END IF;
       END LOOP;
     END IF;
-        
+
     -- INCLUDING ALL creates new index names, we restore them to the old name.
     -- There should be no conflicts since they live in different schemas
     FOR ix_old_name, ix_new_name IN
@@ -2870,7 +3016,7 @@ BEGIN
         END IF;
       END IF;
     END IF;
-
+   
     -- Issue#61 FIX: use set_config for empty string
     -- SET search_path = '';
     -- Issue#138: make search path changes only effective for the current transaction (last parm goes from false to true)
@@ -2887,9 +3033,10 @@ BEGIN
     LOOP
       -- Issue#78 FIX: handle case-sensitive names with quote_ident() on column name
       buffer2 = 'ALTER TABLE ' || buffer || ' ALTER COLUMN ' || quote_ident(column_) || ' SET DEFAULT ' || default_ || ';';
+      -- Issue#150: defer to later
       IF bDDLOnly THEN
-        -- May need to come back and revisit this since previous sql will not return anything since no schema as created!
-        RAISE INFO '%', buffer2;
+        -- RAISE INFO '%', buffer2;      
+        DDLAltCol = DDLAltCol || buffer2;
       ELSE
         lastsql = buffer2;
         IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
@@ -2903,7 +3050,48 @@ BEGIN
   END LOOP;      
   END IF;
   -- end of 90600 branch
-  
+
+  IF bDDLOnly THEN
+      -- Issue#150 process the deferred DDL statements when in DDLONLY mode
+      IF bDebug OR bDebugExec THEN RAISE NOTICE 'Processing deferred DDLONLY statements for Create child/Index...'; END IF;
+      FOREACH tblelement IN ARRAY DDLCreateIXDefer
+      LOOP
+          RAISE INFO '%',tblelement;    
+      END LOOP;
+
+      -- Issue#150 process the deferred DDL statements when in DDLONLY mode
+      IF bDebug OR bDebugExec THEN RAISE NOTICE 'Processing deferred DDLONLY statements for ALTER COLUMN...DEFAULTS'; END IF;
+      FOREACH tblelement IN ARRAY DDLAltCol
+      LOOP
+          RAISE INFO '%',tblelement;    
+      END LOOP;
+
+      -- Issue#150 process the deferred DDL statements when in DDLONLY mode
+      IF bDebug OR bDebugExec THEN RAISE NOTICE 'Processing deferred DDLONLY statements for Alter Table...'; END IF;
+      FOREACH tblelement IN ARRAY DDLAltTblDefer
+      LOOP 
+          RAISE INFO '%',tblelement;    
+      END LOOP;
+
+      -- Issue#150 process the deferred DDL statements when in DDLONLY mode
+      IF bDebug OR bDebugExec THEN RAISE NOTICE 'Processing deferred DDLONLY statements for Attaching children to parents...'; END IF;
+      FOREACH tblelement IN ARRAY DDLAttachDefer
+      LOOP 
+          bFound = False;
+          FOREACH tblelement2 IN ARRAY DDLAttachSkip
+          LOOP
+              SELECT POSITION(tblelement2 IN tblelement) INTO cnt;
+              IF cnt > 0 THEN
+                  -- RAISE NOTICE 'Skipping %', tblelement;
+                  bFound = True;
+              END IF;
+          END LOOP;
+          IF NOT bFound THEN          
+              RAISE INFO '%',tblelement;    
+          END IF;
+      END LOOP;
+  END IF;
+    
   RAISE NOTICE '      TABLES cloned: %', LPAD(cntables::text, 5, ' ');
 
 
@@ -3414,9 +3602,10 @@ BEGIN
         LOOP 
           cnt = cnt + 1;
           s = clock_timestamp();
-          IF bDebug THEN RAISE NOTICE 'DEBUG: executing deferred view, %',viewdef; END IF;    
           IF bDDLOnly THEN
-            RAISE INFO '%', v_def;
+            -- Issue#150: fixed bug
+            -- RAISE INFO '%', v_def;
+            RAISE INFO '%', viewdef;
           ELSE
             lastsql = viewdef;
             IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;    
@@ -3591,7 +3780,11 @@ BEGIN
     -- Issue#133: might have to change index name since we do not do alter index rename anymore...
     -- See if it exists in new schema.  If not, change name to table name, column name ... _idx, which happens with CREATE TABLE LIKE construct.
     IF buffer = 'i' THEN
-        -- to do
+        -- Issue#150: TO DO, caught as error in DDLONLY mode for sampletable created with the CREATE TABLE ... LIKE method so arbitrary index names result
+        -- we don't get this problem with ONLINE clone_schema since it uses pg_get_tabledef for definition which keeps the old index names
+        -- User may have to comment out or fix this comment line in DDLONLY output to point to the correct index name
+        -- Provide comment inline for user to guide them
+        RAISE INFO '-- IMPORTANT NOTE: You may need to comment out the following comment since the index name may have changed from the source schema.';
     END IF;
     
     -- Issue#98 For MVs we create comments when we create the MVs
@@ -4023,6 +4216,12 @@ BEGIN
     RAISE NOTICE '  DFLT PRIVS cloned: %', LPAD(cnt::text, 5, ' ');    
   END IF; -- NO ACL BRANCH
 
+  IF bDDLOnly THEN
+      -- Issue#150: In DDLONLY mode, changing the current role in the previous DEFAULT PRIVILEGES section will affect permissions going forward to reset to the original user that invoked clone_schema
+      v_dummy = 'SET ROLE ' || role_invoker || ';';
+      RAISE INFO '%', v_dummy;
+  END IF;
+    
   -- Issue#95 bypass if No ACL specified
   IF NOT bNoACL THEN
     -- crunchy data extension, check_access
