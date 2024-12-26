@@ -3784,7 +3784,9 @@ BEGIN
         -- we don't get this problem with ONLINE clone_schema since it uses pg_get_tabledef for definition which keeps the old index names
         -- User may have to comment out or fix this comment line in DDLONLY output to point to the correct index name
         -- Provide comment inline for user to guide them
-        RAISE INFO '-- IMPORTANT NOTE: You may need to comment out the following comment since the index name may have changed from the source schema.';
+	IF bDDLMode THEN
+            RAISE INFO '-- IMPORTANT NOTE: You may need to comment out the following comment since the index name may have changed from the source schema.';
+        END IF;
     END IF;
     
     -- Issue#98 For MVs we create comments when we create the MVs
