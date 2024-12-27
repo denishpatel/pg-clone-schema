@@ -17,10 +17,10 @@ Handles following objects:
 <br/>
 
 Arguments:
-* source schema
-* target schema
-* action (DDLONLY, NODATA, DATA)
-* Enumerated list
+* source schema   <pre>Required: text - schema name</pre>
+* target schema   <pre>Required: text - table name</pre>
+* action          <pre>Required: One of 'DATA','NODATA','DDLONLY'</pre>
+* Enumerated list <pre>Optional: 'NOOWNER','NOACL','VERBOSE','FILECOPY'</pre>
 
 Returns: INTEGER (0 for success, positive non-zero number for an error)
 <br/><br/>
@@ -47,7 +47,7 @@ Just generate DDL:
 >select clone_schema('sample', 'sample_clone', 'DDLONLY');
 
 In this case, standard output with "INFO" lines are the generated DDL.
-
+<br/><br/>
 **Ownership/Privileges**<br/>
 By default, ownership and privileges are also cloned from source to target schema.  To override, specify **NOOWNER** and/or **NOACL** (similar to how pg_dump works). When **NOOWNER** is specified, the one running the script is the default owner unless overridden by a **SET ROLE** command before running this script. 
 
