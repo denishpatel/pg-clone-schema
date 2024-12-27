@@ -59,8 +59,6 @@ Although pg_clone_schema supports data copy, it is not very efficient for large 
 **Sequences, Serial, and Identity**<br/>
 Serial is treated the same way as sequences are with explicit sequence definitions.  Although you can create a serial column with the **serial** keyword, when you export it through pg_dump, it loses its **serial** definition and looks like a plain sequence.  This program also attempts to set the nextval (using **setval**) for all 3 types which have a valid **last_value** from the **pg_sequences** table.
 <br/><br/>
-The **schema_object_counts.sql** file is useful for validating the cloning results.  Just run it against source and target schemas to validate object counts after changing default schema name, **sample**.
-<br/><br/>
 
 # Regression Testing Overview
 Regression Testing is done in the following order:
