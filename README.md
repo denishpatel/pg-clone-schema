@@ -29,16 +29,7 @@ Returns: INTEGER (0 for success, positive non-zero number for an error)
 <pre>Action         Required: One of 'DATA','NODATA','DDLONLY'</pre>
 <pre>ENUM list      Optional: 'NOOWNER','NOACL','VERBOSE','FILECOPY'</pre>
 <br/>
-**Ownership/Privileges**<br/>
-By default, ownership and privileges are also cloned from source to target schema.  To override, specify **NOOWNER** and/or **NOACL** (similar to how pg_dump works). When **NOOWNER** is specified, the one running the script is the default owner unless overridden by a **SET ROLE** command before running this script. 
-
-**Copying Data**
-You may get faster results copying data to/from disk instead of in-memory copy. **FILECOPY** is a workaround for tables with complex UDT-type columns that fail to copy.  It only works for On-Prem PG Instances since it relies on using the COPY command to write to and read from disk on which the PostgreSQL server resides. <br/>
-Although pg_clone_schema supports data copy, it is not very efficient for large datasets.  It only copies tables one at a time.  Using pg_dump/pg_restore in directory mode using parallel jobs would be a lot more efficient for large datasets.
-<br/><br/>
-**Sequences, Serial, and Identity**<br/>
-Serial is treated the same way as sequences are with explicit sequence definitions.  Although you can create a serial column with the **serial** keyword, when you export it through pg_dump, it loses its **serial** definition and looks like a plain sequence.  This program also attempts to set the nextval (using **setval**) for all 3 types which have a valid **last_value** from the **pg_sequences** table.
-<br/><br/>
+**Examples**
 Clone the schema with no data:
 <br/>
 >select clone_schema('sample', 'sample_clone', 'NODATA');
@@ -55,7 +46,19 @@ Just generate DDL:
 >select clone_schema('sample', 'sample_clone', 'DDLONLY');
 
 In this case, standard output with "INFO" lines are the generated DDL.
-<br/><br/><br/>
+
+
+
+**Ownership/Privileges**<br/>
+By default, ownership and privileges are also cloned from source to target schema.  To override, specify **NOOWNER** and/or **NOACL** (similar to how pg_dump works). When **NOOWNER** is specified, the one running the script is the default owner unless overridden by a **SET ROLE** command before running this script. 
+
+**Copying Data**
+You may get faster results copying data to/from disk instead of in-memory copy. **FILECOPY** is a workaround for tables with complex UDT-type columns that fail to copy.  It only works for On-Prem PG Instances since it relies on using the COPY command to write to and read from disk on which the PostgreSQL server resides. <br/>
+Although pg_clone_schema supports data copy, it is not very efficient for large datasets.  It only copies tables one at a time.  Using pg_dump/pg_restore in directory mode using parallel jobs would be a lot more efficient for large datasets.
+<br/><br/>
+**Sequences, Serial, and Identity**<br/>
+Serial is treated the same way as sequences are with explicit sequence definitions.  Although you can create a serial column with the **serial** keyword, when you export it through pg_dump, it loses its **serial** definition and looks like a plain sequence.  This program also attempts to set the nextval (using **setval**) for all 3 types which have a valid **last_value** from the **pg_sequences** table.
+<br/><br/>
 The **schema_object_counts.sql** file is useful for validating the cloning results.  Just run it against source and target schemas to validate object counts after changing default schema name, **sample**.
 <br/><br/>
 
