@@ -85,7 +85,3 @@ Sponsor:
 <br/> 
 Compare cloning with EnterpriseDB's version that only works with their Advanced Server:
 https://www.enterprisedb.com/edb-docs/d/edb-postgres-advanced-server/user-guides/user-guide/11/EDB_Postgres_Advanced_Server_Guide.1.078.html
-
- 
- 
- 
