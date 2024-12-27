@@ -34,7 +34,7 @@ Clone the schema with no data:
 Clone the schema with data:
 <br/>
 >select clone_schema('sample', 'sample_clone', 'DATA');<br/>
->select clone_schema('sample', 'sample_clone', 'DATA','VERBOSE');  -- show row copy progress
+>select clone_schema('sample', 'sample_clone', 'DATA','VERBOSE');  -- verbose mode shows row copy progress
 <br/>
 
 Just generate DDL:
