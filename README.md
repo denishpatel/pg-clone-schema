@@ -23,13 +23,13 @@ Arguments:
 * Enumerated list
 
 Returns: INTEGER (0 for success, positive non-zero number for an error)
-
+<br/>
 <pre>source schema  Required: text - schema name</pre>
 <pre>target schema  Required: text - table name</pre>
 <pre>Action         Required: One of 'DATA','NODATA','DDLONLY'</pre>
 <pre>ENUM list      Optional: 'NOOWNER','NOACL','VERBOSE','FILECOPY'</pre>
 <br/>
-**Examples**
+**Examples**<br/>
 Clone the schema with no data:
 <br/>
 >select clone_schema('sample', 'sample_clone', 'NODATA');
@@ -46,8 +46,6 @@ Just generate DDL:
 >select clone_schema('sample', 'sample_clone', 'DDLONLY');
 
 In this case, standard output with "INFO" lines are the generated DDL.
-
-
 
 **Ownership/Privileges**<br/>
 By default, ownership and privileges are also cloned from source to target schema.  To override, specify **NOOWNER** and/or **NOACL** (similar to how pg_dump works). When **NOOWNER** is specified, the one running the script is the default owner unless overridden by a **SET ROLE** command before running this script. 
