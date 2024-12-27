@@ -23,12 +23,13 @@ Arguments:
 * Enumerated list
 
 Returns: INTEGER (0 for success, positive non-zero number for an error)
-<br/>
+<br/><br/>
 <pre>source schema  Required: text - schema name</pre>
 <pre>target schema  Required: text - table name</pre>
 <pre>Action         Required: One of 'DATA','NODATA','DDLONLY'</pre>
 <pre>ENUM list      Optional: 'NOOWNER','NOACL','VERBOSE','FILECOPY'</pre>
 <br/>
+
 **Examples**<br/>
 Clone the schema with no data:
 <br/>
