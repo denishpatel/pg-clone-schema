@@ -41,7 +41,7 @@ Just generate DDL:
 <br/>
 >select clone_schema('sample', 'sample_clone', 'DDLONLY');
 
-In this case, standard output with "INFO" lines are the generated DDL.
+In the generated output for DDLONLY, remove the lines that start with **NOTICE:  **, and remove any other lines that do not begin with **INFO:  **.  All that should be left are these lines.  Then, remove the first 7 characters of the these lines that begin with **"INFO:  **.  The result should be a clean DDL output.
 <br/><br/>
 **Ownership/Privileges**<br/>
 By default, ownership and privileges are also cloned from source to target schema.  To override, specify **NOOWNER** and/or **NOACL** (similar to how pg_dump works). When **NOOWNER** is specified, the one running the script is the default owner unless overridden by a **SET ROLE** command before running this script. 
