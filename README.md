@@ -45,6 +45,7 @@ In the generated output for DDLONLY, modify the output as follows:
 * remove the lines that start with **NOTICE:**
 * remove any other lines that do not begin with **INFO:**
 * Then, remove the first 7 characters of the these lines that begin with **INFO:**
+<br/>
 The result should be a clean DDL output.
 <br/><br/><br/>
 
