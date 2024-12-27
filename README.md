@@ -29,7 +29,13 @@ Returns: INTEGER (0 for success, positive non-zero number for an error)
 <pre>Action         Required: One of 'DATA','NODATA','DDLONLY'</pre>
 <pre>ENUM list      Optional: 'NOOWNER','NOACL','VERBOSE','FILECOPY'</pre>
 <br/><br/>
-By default, ownership and privileges are also cloned from source to target schema.  To override, specify **NOOWNER** and/or **NOACL** (similar to how pg_dump works). When **NOOWNER** is specified, the one running the script is the default owner unless overridden by a **SET ROLE** command before running this script. You may get faster results copying data to/from disk instead of in-memory copy. **FILECOPY** is a workaround for tables with complex UDT-type columns that fail to copy.  It only works for On-Prem PG Instances since it relies on using the COPY command to write to and read from disk on which the PostgreSQL server resides.
+**Ownership/Privileges**<br/>
+By default, ownership and privileges are also cloned from source to target schema.  To override, specify **NOOWNER** and/or **NOACL** (similar to how pg_dump works). When **NOOWNER** is specified, the one running the script is the default owner unless overridden by a **SET ROLE** command before running this script. 
+
+**Copying Data**
+You may get faster results copying data to/from disk instead of in-memory copy. **FILECOPY** is a workaround for tables with complex UDT-type columns that fail to copy.  It only works for On-Prem PG Instances since it relies on using the COPY command to write to and read from disk on which the PostgreSQL server resides. <br/>
+Although pg_clone_schema supports data copy, it is not very efficient for large datasets.  It only copies tables one at a time.  Using pg_dump/pg_restore in directory mode using parallel jobs would be a lot more efficient for large datasets.
+
 <br/><br/>
 **Sequences, Serial, and Identity**<br/>
 Serial is treated the same way as sequences are with explicit sequence definitions.  Although you can create a serial column with the **serial** keyword, when you export it through pg_dump, it loses its **serial** definition and looks like a plain sequence.  This program also attempts to set the nextval (using **setval**) for all 3 types which have a valid **last_value** from the **pg_sequences** table.
@@ -71,7 +77,6 @@ Regression Testing is done in the following order:
 * You should not use multiple, user-defined schema objects and expect cloning one schema to another to work.  This project does not support that at the present time.  It only supports 3 schemas basically: the source schema, the target schema, and objects defined in the public schema referenced by those user-defined schemas.
 * Index and key names are not all the same in the cloned schema since some of the tables are created with the CREATE TABLE ... (LIKE ...) construct.  Those index names are automatically fabricated by PG with naming format that is prepended with table and column names separated by underscores and ending with "_idx" or "_key".  In DDLOnly mode, this will cause errors when attempting to make comments on indexes.  Follow the NOTE in DDL output for lines you may want to comment out or fix.
 * Foreign Tables are not handled at the present time.  They must be done manually.
-* Although pg_clone_schema supports data copy, it is not very efficient for large datasets.  It only copies tables one at a time.  Using pg_dump/pg_restore in directory mode using parallel jobs would be a lot more efficient for large datasets.
 <br/>
 <br/>
 Sponsor:
