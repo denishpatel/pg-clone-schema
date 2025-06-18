@@ -1,3 +1,29 @@
+/******************************************************************************
+
+MIT License
+
+Copyright (c) 2019 -2025  Denish Patel
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+******************************************************************************/
+
 -- Change History: 
 -- 2021-03-03  MJV FIX: Fixed population of tables with rows section. "buffer" variable was not initialized correctly. Used new variable, tblname, to fix it.
 -- 2021-03-03  MJV FIX: Fixed Issue#34  where user-defined types in declare section of functions caused runtime errors.
@@ -91,6 +117,7 @@
 -- 2024-12-19  MJV FIX: Fixed Issue#149: Handle case-sensitive USER-DEFINED column types when copying data directly. Workaround is to use the FILECOPY option.
 -- 2024-12-24  MJV FIX: Fixed Issue#150: Major clean up DDLONLY output: (1) Prefix UNIQUE indexes with "INFO:  ". (2) fixed case-sensitive problem with ALTER TABLE. (3) fixed problem with child tables created before parent.
 -- 2024-12-24  MJV FIX: Fixed Issue#150: Major clean up continued:      (4) Added SET ROLE logic after creating DEFAULT PRIVS. (5) Added "INFO:" lines when creating indexes. See "Issue#150" for all fixes.
+-- 2025-06-18  MJV FIX: Fixed Issue#152: a tablespace clause must appear before the WHERE clause in an index definition for case-sensitive schemas.  Required fix to pg_get_tabledef(), issue#39
 
 do $$ 
 <<first_block>>
@@ -221,21 +248,27 @@ $$;
 
 /* ********************************************************************************
 COPYRIGHT NOTICE FOLLOWS.  DO NOT REMOVE
-Copyright (c) 2021-2024 SQLEXEC LLC
+Copyright (c) 2021-2025 SQLEXEC LLC
 
-Permission to use, copy, modify, and distribute this software and its documentation 
-for any purpose, without fee, and without a written agreement is hereby granted, 
-provided that the above copyright notice and this paragraph and the following two paragraphs appear in all copies.
+MIT License:
 
-IN NO EVENT SHALL SQLEXEC LLC BE LIABLE TO ANY PARTY FOR DIRECT, INDIRECT,INDIRECT SPECIAL, 
-INCIDENTAL, OR CONSEQUENTIAL DAMAGES, INCLUDING LOST PROFITS, ARISING OUT OF THE USE 
-OF THIS SOFTWARE AND ITS DOCUMENTATION, EVEN IF SQLEXEC LLC HAS BEEN ADVISED OF THE 
-POSSIBILITY OF SUCH DAMAGE.
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-SQLEXEC LLC SPECIFICALLY DISCLAIMS ANY WARRANTIES, INCLUDING, BUT NOT LIMITED TO, 
-THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE. 
-THE SOFTWARE PROVIDED HEREUNDER IS ON AN "AS IS" BASIS, AND SQLEXEC LLC HAS 
-NO OBLIGATIONS TO PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 ************************************************************************************ */
 
@@ -281,6 +314,9 @@ NO OBLIGATIONS TO PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFI
 -- 2024-11-25   Issue#35: V 2.0 NEW featrue: Add option for all other ACLs for a table in addition to the owner, option='ALL_ACLS', including policies (row security).
 -- 2024-11-26   Issue#36: Fixed issue with PG v9.6 not calling pg_get_coldef() correctly. Also removed attgenerated since not in PG v10 and not used anywhere anyhows
 -- 2024-12-15   Issue#37: Fixed issue with case-sensitive user-defined types are not being enclosed with double-quotes.
+-- 2024-12-26   --------: Updated License info for GNU
+-- 2025-04-15   Issue#38: Updated License info to specify MIT instead of GNU since MIT is more permissive
+-- 2025-06-18   Issue#39: Handle tablespace location where schema is case-sensitive. Also, discovered that tablespace not being added to PG 9.6 versions.
 
 DROP TYPE IF EXISTS public.tabledefs CASCADE;
 CREATE TYPE public.tabledefs AS ENUM ('PKEY_INTERNAL','PKEY_EXTERNAL','FKEYS_INTERNAL', 'FKEYS_EXTERNAL', 'COMMENTS', 'FKEYS_NONE', 'INCLUDE_TRIGGERS', 'NO_TRIGGERS', 'SHOWPARTS', 'ACL_OWNER', 'ACL_DCL','ACL_POLICIES');
@@ -379,7 +415,7 @@ LANGUAGE plpgsql VOLATILE
 AS
 $$
   DECLARE
-    v_version        text := '2.4 December 24, 2024';
+    v_version        text := '2.3 December 26, 2024  GNU General Public License 3.0';
     v_schema    text := '';
     v_coldef    text := '';
     v_qualified text := '';
@@ -539,15 +575,14 @@ $$
 
    -- set search_path = public before we do anything to force explicit schema qualification but dont forget to set it back before exiting...
     SELECT setting INTO search_path_old FROM pg_settings WHERE name = 'search_path';
-    -- RAISE WARNING 'DEBUGGGG: pg_get_tabledef(): current search path=***%***', search_path_old;
 
     SELECT REPLACE(REPLACE(setting, '"$user"', '$user'), '$user', '"$user"') INTO search_path_old
     FROM pg_settings
     WHERE name = 'search_path';
-    -- RAISE WARNING 'DEBUGGGG: pg_get_tabledef(): saving old search_path: ***%***', search_path_old;
+    -- RAISE NOTICE 'DEBUG tableddl: saving old search_path: ***%***', search_path_old;
     EXECUTE 'SET search_path = "public"';
     SELECT setting INTO search_path_new FROM pg_settings WHERE name = 'search_path';
-    -- RAISE WARNING 'DEBUGGGG: pg_get_tabledef(): using new search path=***%***', search_path_new;
+    -- RAISE NOTICE 'DEBUG tableddl: using new search path=***%***', search_path_new;
     
     -- throw an error if table was not found
     IF (v_table_oid IS NULL) THEN
@@ -915,11 +950,8 @@ $$
                   || ',' || E'\n';
             ELSE
               -- Issue#16 handle external PG def
-              -- Issue#150: Fix case-sensitive ALTER TABLE commands
-              -- SELECT 'ALTER TABLE ONLY ' || in_schema || '.' || c.relname || ' ADD CONSTRAINT ' || r.conname || ' ' || pg_catalog.pg_get_constraintdef(r.oid, true) || ';' INTO v_pkey_def 
-              -- FROM pg_catalog.pg_constraint r, pg_class c, pg_namespace n where r.conrelid = c.oid and  r.contype = 'p' and n.oid = r.connamespace and n.nspname = in_schema AND c.relname = in_table and r.conname = v_constraint_name;             
-              SELECT 'ALTER TABLE ONLY ' || quote_ident(in_schema) || '.' || quote_ident(c.relname) || ' ADD CONSTRAINT ' || r.conname || ' ' || pg_catalog.pg_get_constraintdef(r.oid, true) || ';' INTO v_pkey_def 
-              FROM pg_catalog.pg_constraint r, pg_class c, pg_namespace n where r.conrelid = c.oid and  r.contype = 'p' and n.oid = r.connamespace and n.nspname = in_schema AND c.relname = in_table and r.conname = v_constraint_name;                           
+              SELECT 'ALTER TABLE ONLY ' || in_schema || '.' || c.relname || ' ADD CONSTRAINT ' || r.conname || ' ' || pg_catalog.pg_get_constraintdef(r.oid, true) || ';' INTO v_pkey_def 
+              FROM pg_catalog.pg_constraint r, pg_class c, pg_namespace n where r.conrelid = c.oid and  r.contype = 'p' and n.oid = r.connamespace and n.nspname = in_schema AND c.relname = in_table and r.conname = v_constraint_name;             
             END IF;
             IF bPartition THEN
               continue;
@@ -1065,6 +1097,11 @@ $$
         -- end the create definition
         v_table_ddl := v_table_ddl || ') ' || v_tablespace || ';' || E'\n';    
       END IF;  
+
+    -- Issue#39: don't forget the tablespace!      
+    ELSEIF v_pgversion < 100000 THEN
+        -- end the create definition
+        v_table_ddl := v_table_ddl || ') ' || v_tablespace || ';' || E'\n';            
     END IF;
 
     IF bVerbose THEN RAISE NOTICE '(5)tabledef so far: %', v_table_ddl; END IF;
@@ -1113,16 +1150,20 @@ $$
       v_indexrec.indexdef := REPLACE(v_indexrec.indexdef, 'CREATE INDEX', 'CREATE INDEX IF NOT EXISTS');
       -- Fix Issue#26: do it for unique/primary key indexes as well
       v_indexrec.indexdef := REPLACE(v_indexrec.indexdef, 'CREATE UNIQUE INDEX', 'CREATE UNIQUE INDEX IF NOT EXISTS');
-      -- RAISE NOTICE 'DEBUG8: adding index, %', v_indexrec.indexname;
-      
+            
       -- NOTE:  cannot specify default tablespace for partitioned relations
       IF v_partition_key IS NOT NULL AND v_partition_key <> '' THEN
           v_table_ddl := v_table_ddl || v_indexrec.indexdef || ';' || E'\n';
       ELSE
           -- Issue#25: see if partial index or not
+          -- Issue#39: handle case-sensitive schemas
+					-- select CASE WHEN i.indpred IS NOT NULL THEN True ELSE False END INTO v_partial 
+					-- FROM pg_index i JOIN pg_class c1 ON (i.indexrelid = c1.oid) JOIN pg_class c2 ON (i.indrelid = c2.oid) 
+					-- WHERE c1.relnamespace::regnamespace::text = in_schema AND c2.relnamespace::regnamespace::text = in_schema AND c2.relname = in_table AND c1.relname = v_indexrec.indexname; 
 					select CASE WHEN i.indpred IS NOT NULL THEN True ELSE False END INTO v_partial 
 					FROM pg_index i JOIN pg_class c1 ON (i.indexrelid = c1.oid) JOIN pg_class c2 ON (i.indrelid = c2.oid) 
-					WHERE c1.relnamespace::regnamespace::text = in_schema AND c2.relnamespace::regnamespace::text = in_schema AND c2.relname = in_table AND c1.relname = v_indexrec.indexname; 
+					WHERE c1.relnamespace::regnamespace::text = quote_ident(in_schema) AND c2.relnamespace::regnamespace::text = c1.relnamespace::regnamespace::text AND c2.relname = in_table AND c1.relname = v_indexrec.indexname; 
+					
           IF v_partial THEN
               -- Put tablespace def before WHERE CLAUSE
               v_temp = v_indexrec.indexdef;
@@ -1197,10 +1238,10 @@ $$
     v_context = 'SEARCHPATH';
     IF search_path_old = '' THEN
       SELECT set_config('search_path', '', false) into v_temp;
-      -- RAISE WARNING 'DEBUGGGG: pg_get_tabledef(): set current searchpath=%', v_temp;
+      IF bVerbose THEN RAISE NOTICE 'SearchPath Cleanup: current searchpath=%', v_temp; END IF;
     ELSE
+      IF bVerbose THEN RAISE NOTICE 'SearchPath Cleanup: resetting searchpath=%', search_path_old; END IF;
       EXECUTE 'SET search_path = ' || search_path_old;
-      -- RAISE WARNING 'DEBUGGGG: pg_get_tabledef(): set current searchpath=%', search_path_old;      
     END IF;
 
     RETURN v_table_ddl;
@@ -3784,7 +3825,7 @@ BEGIN
         -- we don't get this problem with ONLINE clone_schema since it uses pg_get_tabledef for definition which keeps the old index names
         -- User may have to comment out or fix this comment line in DDLONLY output to point to the correct index name
         -- Provide comment inline for user to guide them
-	IF bDDLMode THEN
+        IF bDDLOnly THEN
             RAISE INFO '-- IMPORTANT NOTE: You may need to comment out the following comment since the index name may have changed from the source schema.';
         END IF;
     END IF;
