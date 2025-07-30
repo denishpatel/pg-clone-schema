@@ -417,7 +417,7 @@ LANGUAGE plpgsql VOLATILE
 AS
 $$
   DECLARE
-    v_version        text := '2.3 December 26, 2024  GNU General Public License 3.0';
+    v_version        text := '2.4 July 30, 2025  GNU General Public License 3.0';
     v_schema    text := '';
     v_coldef    text := '';
     v_qualified text := '';
@@ -1470,7 +1470,7 @@ DECLARE
   lasttbl          text := '';
   bFound           boolean;
   role_invoker     text;
-  v_version        text := '2.18 December 19, 2024';
+  v_version        text := '2.19 July 30, 2025';
 
 BEGIN
   -- uncomment the following to get line context info when debugging exceptions. 
