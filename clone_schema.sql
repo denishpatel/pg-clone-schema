@@ -118,6 +118,7 @@ SOFTWARE.
 -- 2024-12-24  MJV FIX: Fixed Issue#150: Major clean up DDLONLY output: (1) Prefix UNIQUE indexes with "INFO:  ". (2) fixed case-sensitive problem with ALTER TABLE. (3) fixed problem with child tables created before parent.
 -- 2024-12-24  MJV FIX: Fixed Issue#150: Major clean up continued:      (4) Added SET ROLE logic after creating DEFAULT PRIVS. (5) Added "INFO:" lines when creating indexes. See "Issue#150" for all fixes.
 -- 2025-06-18  MJV FIX: Fixed Issue#152: a tablespace clause must appear before the WHERE clause in an index definition for case-sensitive schemas.  Required fix to pg_get_tabledef(), issue#39
+-- 2025-07-30  MJV FIX: Fixed Issue#153: REPLICA IDENTITY not being set via ALTER TABLE statements where applicable.  Required fix to drop-in function, pg_get_tabledef(), issue#40
 
 do $$ 
 <<first_block>>
@@ -317,6 +318,7 @@ SOFTWARE.
 -- 2024-12-26   --------: Updated License info for GNU
 -- 2025-04-15   Issue#38: Updated License info to specify MIT instead of GNU since MIT is more permissive
 -- 2025-06-18   Issue#39: Handle tablespace location where schema is case-sensitive. Also, discovered that tablespace not being added to PG 9.6 versions.
+-- 2025-07-30   Issue#40: Handle case where a table has a REPLICA IDENTITY set on it, but it is not exported as an ALTER TABLE statement.
 
 DROP TYPE IF EXISTS public.tabledefs CASCADE;
 CREATE TYPE public.tabledefs AS ENUM ('PKEY_INTERNAL','PKEY_EXTERNAL','FKEYS_INTERNAL', 'FKEYS_EXTERNAL', 'COMMENTS', 'FKEYS_NONE', 'INCLUDE_TRIGGERS', 'NO_TRIGGERS', 'SHOWPARTS', 'ACL_OWNER', 'ACL_DCL','ACL_POLICIES');
@@ -463,6 +465,11 @@ $$
 	  v_partkeydef text := '';
 	  v_owner      text := '';
 	  v_acl        text := '';
+	  v_repl_ident text := '';
+	  v_relreplident                text := '';
+	  v_indisreplident              text := '';
+	  v_replica_identity_setting    text := '';
+	  v_replica_identity_index_name text:= '';
 
     -- assume defaults for ENUMs at the getgo	
   	pkcnt            int := 0;
@@ -610,6 +617,21 @@ $$
     IF aclownercnt = 1 OR acldclcnt = 1 THEN
         v_acl = 'ALTER TABLE IF EXISTS ' || quote_ident(in_schema) || '.' || quote_ident(in_table) || ' OWNER TO ' || v_owner || ';' || E'\n' || E'\n';
     END IF;
+    
+    -- Issue#40: check if we need to add an ALTER TABLE statement for a REPLICA IDENTITY definition.
+    SELECT c.relreplident, i.indisreplident,  idx_c.relname AS replica_identity_index_name, 
+		CASE c.relreplident WHEN 'd' THEN 'DEFAULT' WHEN 'n' THEN 'NOTHING' WHEN 'f' THEN 'FULL' WHEN 'i' THEN 'INDEX' END AS replica_identity_setting 
+		INTO v_relreplident, v_indisreplident, v_replica_identity_index_name, v_replica_identity_setting 
+		FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace LEFT JOIN pg_index i ON i.indrelid = c.oid AND i.indisreplident = TRUE LEFT JOIN pg_class idx_c ON idx_c.oid = i.indexrelid 
+		WHERE n.nspname = in_schema AND c.relname = in_table AND c.relkind = 'r';
+    IF v_relreplident IS NOT NULL THEN
+        IF v_replica_identity_setting = 'INDEX' THEN
+            v_repl_ident := 'ALTER TABLE IF EXISTS ' || quote_ident(in_schema) || '.' || quote_ident(in_table) || ' REPLICA IDENTITY USING INDEX ' || v_replica_identity_index_name || ';' || E'\n';
+        ELSE
+            v_repl_ident := 'ALTER TABLE IF EXISTS ' || quote_ident(in_schema) || '.' || quote_ident(in_table) || ' REPLICA IDENTITY ' || v_replica_identity_setting || ';' || E'\n';
+        END IF;
+    END IF;
+    -- RAISE NOTICE 'DEBUGGGG: v_relreplident value = %  v_replica_identity_setting = %  v_repl_ident = %',v_relreplident, v_replica_identity_setting, v_repl_ident;
     
     -- Issue#35: add all other ACL info if directed
     -- only valid in PG 13 and above
@@ -1111,6 +1133,11 @@ $$
     -- v_table_ddl := v_table_ddl || ') ' || v_relopts || ' ' || v_tablespace || E';\n';  
     -- END IF;
     -- RAISE NOTICE 'ddlsofar3: %', v_table_ddl;
+    
+    -- Issue#40
+    IF v_repl_ident <> '' THEN
+        v_table_ddl = v_table_ddl || v_repl_ident;
+    END IF;
 
     -- Issue#27: add OWNER ACL OR ALL_ACLS info here if directed
     IF v_acl <> '' THEN
@@ -1265,7 +1292,6 @@ $$
 
   END;
 $$;
-
 
 /****************************************************/
 /*  Drop In function pg_get_tabledef ends here...   */
