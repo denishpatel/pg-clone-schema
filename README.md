@@ -7,7 +7,7 @@ Handles following objects:
 
 * Tables - structure (UDT columns, indexes, constraints, keys) and optionally, data
 * Views, Materialized Views - Structure and data
-* Sequences, Serial, Identity
+* Sequences, Serial, Identity,  Replica Identity
 * Functions/Procedures
 * Types (composite and enum)
 * Collations, Domains, Rules, Policies
