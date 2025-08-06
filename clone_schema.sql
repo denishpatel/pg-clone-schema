@@ -118,7 +118,9 @@ SOFTWARE.
 -- 2024-12-24  MJV FIX: Fixed Issue#150: Major clean up DDLONLY output: (1) Prefix UNIQUE indexes with "INFO:  ". (2) fixed case-sensitive problem with ALTER TABLE. (3) fixed problem with child tables created before parent.
 -- 2024-12-24  MJV FIX: Fixed Issue#150: Major clean up continued:      (4) Added SET ROLE logic after creating DEFAULT PRIVS. (5) Added "INFO:" lines when creating indexes. See "Issue#150" for all fixes.
 -- 2025-06-18  MJV FIX: Fixed Issue#152: a tablespace clause must appear before the WHERE clause in an index definition for case-sensitive schemas.  Required fix to pg_get_tabledef(), issue#39
--- 2025-07-30  MJV FIX: Fixed Issue#153: REPLICA IDENTITY not being set via ALTER TABLE statements where applicable.  Required fix to drop-in function, pg_get_tabledef(), issue#40
+-- 2025-08-06  MJV FIX: Fixed Issue#153: REPLICA IDENTITY not being set via ALTER TABLE statements where applicable.  Required fix to drop-in function, pg_get_tabledef(), issue#40
+--                                       Unfortunately, the bug fix for pg_get_tabledef() did not fix this problem since it is being caused by a bug (#19013) by the CREATE TABLE...LIKE construct where the REPLICA IDENTITY
+--                                       is being copied but in a wrong way, changing the attribute from FULL to DEFAULT. Not being fixed for DDLONLY, too much work required.
 
 do $$ 
 <<first_block>>
@@ -1462,6 +1464,14 @@ DECLARE
   
   -- issue#101
   bFileCopy        boolean := False;
+
+  -- issue#153
+  v_relreplident                char := '';
+  v_indisreplident              bool := False;
+  v_replica_identity_index_name text := '';
+  v_replica_identity_setting    text := '';
+  deferredindexes               text[] := '{}';  
+  v_indexdef                    text;  
   
   t                timestamptz := clock_timestamp();
   r                timestamptz;
@@ -1470,7 +1480,7 @@ DECLARE
   lasttbl          text := '';
   bFound           boolean;
   role_invoker     text;
-  v_version        text := '2.19 July 30, 2025';
+  v_version        text := '2.19 August 06, 2025';
 
 BEGIN
   -- uncomment the following to get line context info when debugging exceptions. 
@@ -2162,7 +2172,9 @@ BEGIN
           END IF;
         ELSE
           IF NOT bChild THEN
-            RAISE INFO '%', 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL);';
+            -- issue#153 no fix for replica identity when DDLONLY is specified.  Too hard to fix.
+            -- RAISE NOTICE 'DDLONLY branch for CREATE TABLE LIKE  buffer2=%  buffer=%',buffer2, buffer;
+            IF bDebugExec THEN RAISE INFO '%', 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL);'; END IF;
             -- issue#91 fix
              -- issue#95
             IF NOT bNoOwner THEN    
@@ -2259,12 +2271,40 @@ BEGIN
           END IF;
         ELSE
           IF (NOT bChild OR bRelispart) THEN
+            -- issue#153 fix for replica identity
+            -- RAISE NOTICE 'ONLINE branch for CREATE TABLE LIKE.  buffer2=%  buffer=%',buffer2, buffer;
             buffer3 := 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
-            IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef02:%', buffer3; END IF;
+            IF bDebugExec THEN RAISE NOTICE 'EXEC: %', buffer3; END IF;
             lastsql = buffer3;
             IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
             EXECUTE lastsql;
             lastsql = '';
+            
+            -- issue#153: see if we have a REPLICA IDENTITY in target and if so change it if we need to from DEFAULT to whatever
+            -- buffer := quote_ident(source_schema) || '.' || quote_ident(tblname);
+            SELECT c.relreplident, i.indisreplident,  idx_c.relname AS replica_identity_index_name,
+						CASE c.relreplident WHEN 'd' THEN 'DEFAULT' WHEN 'n' THEN 'NOTHING' WHEN 'f' THEN 'FULL' WHEN 'i' THEN 'INDEX' END AS replica_identity_setting
+						INTO v_relreplident, v_indisreplident, v_replica_identity_index_name, v_replica_identity_setting
+						FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace LEFT JOIN pg_index i ON i.indrelid = c.oid AND i.indisreplident = TRUE LEFT JOIN pg_class idx_c ON idx_c.oid = i.indexrelid
+            WHERE n.nspname = quote_ident(source_schema) AND c.relname = quote_ident(tblname) AND c.relkind = 'r' AND c.relreplident IN ('i','f');
+            IF v_relreplident IS NOT NULL THEN
+                -- RAISE NOTICE 'REPLICA IDENTITY needs fixin for table=%',quote_ident(tblname);
+                -- RAISE NOTICE 'replica info: relreplident=%  indisreplident=%  indexname=%  setting=%', v_relreplident, v_indisreplident, v_replica_identity_index_name, v_replica_identity_setting;
+                IF v_relreplident = 'f' THEN
+                    lastsql = 'ALTER TABLE ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || ' REPLICA IDENTITY FULL;';
+                    IF bDebug or bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;
+                    EXECUTE lastsql;
+                    lastsql = '';
+                ELSEIF v_relreplident = 'i' THEN
+                    -- we need to defer ALTER TABLE just in case the index name was changed later with ALTER INDEX.
+                    v_def = 'ALTER TABLE ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || ' REPLICA IDENTITY USING INDEX ' || v_replica_identity_index_name || ';';
+                    deferredindexes := deferredindexes || v_def;
+                    if bDebug THEN RAISE NOTICE 'deferring ALTER TABLE...REPLICA IDENTITY USING INDEX...'; END IF;
+                    -- EXECUTE lastsql;
+                    lastsql = '';
+                END IF;
+            END IF;
+            
             -- issue#91 fix
             -- issue#95
             IF NOT bNoOwner THEN    
@@ -2493,6 +2533,19 @@ BEGIN
         END IF;
       END IF;
     END LOOP;
+    
+    -- issue#153 time to do the ALTER TABLE REPLICA IDENTIY for INDEX now.
+    cnt = 0;
+    FOREACH v_indexdef IN ARRAY deferredindexes
+	     LOOP 
+		       cnt = cnt + 1;
+		       s = clock_timestamp();
+           lastsql = v_indexdef;
+           IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;    
+           EXECUTE lastsql;
+           lastsql = '';
+       END LOOP;
+    -- RAISE NOTICE 'Deferrd REPLICA IDENTITY: %',cnt;
 
     lastsql = '';
     IF bData THEN
@@ -2698,7 +2751,7 @@ BEGIN
           END IF;
         ELSE
           IF NOT bChild THEN
-            RAISE INFO '%', 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL);';
+            if bDebugExec THEN RAISE INFO 'EXEC: %', 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL);'; END IF;
             -- issue#91 fix
             -- issue#95
             IF NOT bNoOwner THEN    
@@ -2791,8 +2844,8 @@ BEGIN
         ELSE
           IF (NOT bChild) THEN
             lastsql := 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL)';
-            IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef02:%', lastsql; END IF;
-            IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+            IF bDebug THEN RAISE NOTICE 'DEBUG: tabledef02:%', lastsql; END IF;
+            IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;
             EXECUTE lastsql;
             lastsql = '';
             -- issue#91 fix
@@ -3013,6 +3066,8 @@ BEGIN
         END IF;
       END IF;
     END LOOP;
+    
+    -- issue#153 See if there are any REPLICA IDENTITY for indexes to do.
 
     IF bData THEN
       -- Insert records from source table
