@@ -121,6 +121,7 @@ SOFTWARE.
 -- 2025-08-06  MJV FIX: Fixed Issue#153: REPLICA IDENTITY not being set via ALTER TABLE statements where applicable.  Required fix to drop-in function, pg_get_tabledef(), issue#40
 --                                       Unfortunately, the bug fix for pg_get_tabledef() did not fix this problem since it is being caused by a bug (#19013) by the CREATE TABLE...LIKE construct where the REPLICA IDENTITY
 --                                       is being copied but in a wrong way, changing the attribute from FULL to DEFAULT. Not being fixed for DDLONLY, too much work required.
+-- 2025-10-02  MJV FIX: Fixed Issue#154: Did regression testing successfully for PG version 18.  No changes necessary at this time.
 
 do $$ 
 <<first_block>>
