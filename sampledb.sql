@@ -515,6 +515,12 @@ CREATE TABLE measurement_y2023 (
 CREATE TABLE measurement_y2024 (
     CHECK ( logdate >= DATE '2024-01-01' AND logdate < DATE '2025-01-01' )
 ) INHERITS (measurement);
+CREATE TABLE measurement_y2025 (
+    CHECK ( logdate >= DATE '2025-01-01' AND logdate < DATE '2026-01-01' )
+) INHERITS (measurement);
+CREATE TABLE measurement_y2026 (
+    CHECK ( logdate >= DATE '2026-01-01' AND logdate < DATE '2027-01-01' )
+) INHERITS (measurement);
 
 
 CREATE INDEX measurement_y2006m02_logdate_ix ON measurement_y2006m02   (logdate);
@@ -524,6 +530,9 @@ CREATE INDEX measurement_y2007_ix            ON measurement_y2007      (logdate)
 CREATE INDEX measurement_y2008_2022_ix       ON measurement_y2008_2022 (logdate);
 CREATE INDEX measurement_y2023_ix            ON measurement_y2023      (logdate);
 CREATE INDEX measurement_y2024_ix            ON measurement_y2024      (logdate);
+CREATE INDEX measurement_y2025_ix            ON measurement_y2025      (logdate);
+CREATE INDEX measurement_y2026_ix            ON measurement_y2026      (logdate);
+
 CREATE OR REPLACE FUNCTION measurement_insert_trigger()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -548,6 +557,12 @@ BEGIN
     ELSIF ( NEW.logdate >= DATE '2024-01-01' AND
             NEW.logdate <  DATE '2025-01-01' ) THEN
         INSERT INTO measurement_y2024 VALUES (NEW.*);
+    ELSIF ( NEW.logdate >= DATE '2025-01-01' AND
+            NEW.logdate <  DATE '2026-01-01' ) THEN
+        INSERT INTO measurement_y2025 VALUES (NEW.*);
+    ELSIF ( NEW.logdate >= DATE '2026-01-01' AND
+            NEW.logdate <  DATE '2027-01-01' ) THEN
+        INSERT INTO measurement_y2026 VALUES (NEW.*);
     ELSE
         RAISE EXCEPTION 'Date out of range.  Fix the measurement_insert_trigger() function!';
     END IF;
