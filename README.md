@@ -73,6 +73,7 @@ Regression Testing is done in the following order:
 
 # Limitations
 * Only works for PG Versions 10 and up.
+* Large Objects (LOs) are not suported, but bytea binary objects (associated with TOAST tables) are supported.
 * You should not clone the "public" schema.  The resulting output may not be accurate even if it finishes without any errors.
 * You should not use multiple, user-defined schema objects and expect cloning one schema to another to work.  This project does not support that at the present time.  It only supports 3 schemas basically: the source schema, the target schema, and objects defined in the public schema referenced by those user-defined schemas.
 * Index and key names are not all the same in the cloned schema since some of the tables are created with the CREATE TABLE ... (LIKE ...) construct.  Those index names are automatically fabricated by PG with naming format that is prepended with table and column names separated by underscores and ending with "_idx" or "_key".  In DDLOnly mode, this will cause errors when attempting to make comments on indexes.  Follow the NOTE in DDL output for lines you may want to comment out or fix.
