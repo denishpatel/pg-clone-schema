@@ -79,10 +79,10 @@ Regression Testing is done in the following order:
 * Index and key names are not all the same in the cloned schema since some of the tables are created with the CREATE TABLE ... (LIKE ...) construct.  Those index names are automatically fabricated by PG with naming format that is prepended with table and column names separated by underscores and ending with "_idx" or "_key".  In DDLOnly mode, this will cause errors when attempting to make comments on indexes.  Follow the NOTE in DDL output for lines you may want to comment out or fix.
 * Foreign Tables are not handled at the present time.  They must be done manually.
 <br/>
-<br/>
+
 # Note on Binary Data
 This tool fully supports the bytea data type. However, Large Objects (LOs) referenced via OIDs are not currently supported for cloning. If your schema relies on pg_largeobject, the OID references will be copied, but the underlying binary data will not be duplicated.
-<br/>
+
 <br/>
 Sponsor:
  http://elephas.io/
