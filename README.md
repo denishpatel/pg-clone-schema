@@ -80,7 +80,7 @@ Regression Testing is done in the following order:
 * Foreign Tables are not handled at the present time.  They must be done manually.
 <br/>
 <br/>
-#Note on Binary Data
+# Note on Binary Data
 This tool fully supports the bytea data type. However, Large Objects (LOs) referenced via OIDs are not currently supported for cloning. If your schema relies on pg_largeobject, the OID references will be copied, but the underlying binary data will not be duplicated.
 <br/>
 <br/>
