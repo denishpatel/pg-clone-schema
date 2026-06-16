@@ -59,11 +59,11 @@ Although pg_clone_schema supports data copy, it is not very efficient for large 
 **Sequences, Serial, and Identity**<br/>
 Serial is treated the same way as sequences are with explicit sequence definitions.  Although you can create a serial column with the **serial** keyword, when you export it through pg_dump, it loses its **serial** definition and looks like a plain sequence.  This program also attempts to set the nextval (using **setval**) for all 3 types which have a valid **last_value** from the **pg_sequences** table.
 <br/><br/>
-**Function Dependency Issues**
+**Function Dependency Issues**<br/>
 If functions depend on other functions, creation may fail unless the referenced functions already exist.
 Possible solutions:
 - Change the function language from `SQL` to `PL/pgSQL`.
-- Set `check_function_bodies = false`.
+- Set `check_function_bodies = false`.<br/>
 The second option is usually preferred because SQL functions can benefit from optimizer features that may be lost when converting to PL/pgSQL.
 <br/><br/>
 
