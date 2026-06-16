@@ -64,6 +64,7 @@ If functions depend on other functions, creation may fail unless the referenced 
 Possible solutions:
 - Change the function language from `SQL` to `PL/pgSQL`.
 - `Set check_function_bodies = false`.<br/><br/>
+
 The second option is usually preferred because SQL functions can benefit from optimizer features that may be lost when converting to PL/pgSQL. Simply execute this SET command before running clone_schema.
 <br/><br/>
 
