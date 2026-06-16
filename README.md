@@ -65,7 +65,7 @@ Possible solutions:
 - Change the function language from `SQL` to `PL/pgSQL`.
 - `Set check_function_bodies = false`.<br/><br/>
 
-The second option is usually preferred because SQL functions can benefit from optimizer features that may be lost when converting to PL/pgSQL. Simply execute this SET command before running clone_schema.
+The second option is usually preferred because SQL functions can benefit from optimizer features that may be lost when converting to PL/pgSQL. Simply execute this SET command before running clone_schema.  In general, it is recommended to leave it ON at the global level, and override it at the session level for dependency case issues like this.
 <br/><br/>
 
 # Regression Testing Overview
