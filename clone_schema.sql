@@ -2,7 +2,7 @@
 
 MIT License
 
-Copyright (c) 2019 -2025  Denish Patel
+Copyright (c) 2019 -2026  Denish Patel, Michael Vitale
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -122,6 +122,7 @@ SOFTWARE.
 --                                       Unfortunately, the bug fix for pg_get_tabledef() did not fix this problem since it is being caused by a bug (#19013) by the CREATE TABLE...LIKE construct where the REPLICA IDENTITY
 --                                       is being copied but in a wrong way, changing the attribute from FULL to DEFAULT. Not being fixed for DDLONLY, too much work required.
 -- 2025-10-02  MJV FIX: Fixed Issue#154: Did regression testing successfully for PG version 18.  No changes necessary at this time.
+-- 2026-07-18  MJV FIX: Fixed Issue#156: Comments on materialized views caused an exception if it contained embedded apostrophes.
 
 do $$ 
 <<first_block>>
@@ -1481,7 +1482,7 @@ DECLARE
   lasttbl          text := '';
   bFound           boolean;
   role_invoker     text;
-  v_version        text := '2.19 August 06, 2025';
+  v_version        text := '2.20 July 18, 2026';
 
 BEGIN
   -- uncomment the following to get line context info when debugging exceptions. 
@@ -3678,14 +3679,20 @@ BEGIN
       SELECT coalesce(obj_description(oid), '') into adef from pg_class where relkind = 'm' and relname = object;
       IF adef <> '' THEN
         IF bDDLOnly THEN
-          RAISE INFO '%', 'COMMENT ON MATERIALIZED VIEW ' || quote_ident(dest_schema) || '.' || object || ' IS ''' || adef || ''';';
+          -- FIX #156 for embedded apostrophes
+          -- RAISE INFO '%', 'COMMENT ON MATERIALIZED VIEW ' || quote_ident(dest_schema) || '.' || object || ' IS ''' || adef || ''';';
+          RAISE INFO '%', 'COMMENT ON MATERIALIZED VIEW ' || quote_ident(dest_schema) || '.' || object || ' IS ' || quote_literal(adef) || ';';
         ELSE
           -- Issue#$98: also defer if copy rows is on since we defer MVIEWS in that case
           IF bData THEN
-            buffer3 = 'COMMENT ON MATERIALIZED VIEW ' || quote_ident(dest_schema) || '.' || object || ' IS ''' || adef || ''';';
+            -- FIX #156 for embedded apostrophes
+            -- buffer3 = 'COMMENT ON MATERIALIZED VIEW ' || quote_ident(dest_schema) || '.' || object || ' IS ''' || adef || ''';';
+            buffer3 = 'COMMENT ON MATERIALIZED VIEW ' || quote_ident(dest_schema) || '.' || object || ' IS ' || quote_literal(adef) || ';';
             mvarray = mvarray || buffer3;
           ELSE
-            lastsql = 'COMMENT ON MATERIALIZED VIEW ' || quote_ident(dest_schema) || '.' || object || ' IS ''' || adef || ''';'; 
+            -- FIX #156 for embedded apostrophes
+            -- lastsql = 'COMMENT ON MATERIALIZED VIEW ' || quote_ident(dest_schema) || '.' || object || ' IS ''' || adef || ''';'; 
+            lastsql = 'COMMENT ON MATERIALIZED VIEW ' || quote_ident(dest_schema) || '.' || object || ' IS ' || quote_literal(adef) || ';';
             IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
             EXECUTE lastsql;
             lastsql = '';
