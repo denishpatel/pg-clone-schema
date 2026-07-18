@@ -11,7 +11,7 @@
 drop database if exists clone_testing;
 create database clone_testing;
 \connect clone_testing;
-COMMENT ON DATABASE clone_testing IS 'just a comment on my sample database';
+COMMENT ON DATABASE clone_testing IS 'just a comment on my sample''s database';
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -40,7 +40,7 @@ SET row_security = off;
 CREATE EXTENSION IF NOT EXISTS citext WITH SCHEMA public;
 CREATE EXTENSION IF NOT EXISTS postgis WITH SCHEMA public;
 CREATE EXTENSION IF NOT EXISTS postgres_fdw WITH SCHEMA public;
-COMMENT ON EXTENSION postgres_fdw IS 'foreign-data wrapper for remote PostgreSQL servers';
+COMMENT ON EXTENSION postgres_fdw IS 'foreign-data wrapper for remote''s PostgreSQL servers';
 
 CREATE SERVER my_foreign_server FOREIGN DATA WRAPPER postgres_fdw OPTIONS (
     dbname 'testing2',
