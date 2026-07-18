@@ -448,7 +448,7 @@ CREATE TABLE emp (
     last_date timestamp without time zone,
     last_user text
 );
-COMMENT ON TABLE emp IS 'Employee info';
+COMMENT ON TABLE emp IS 'Employee''s info';
 COMMENT ON COLUMN emp.salary IS 'Employee Salary info';
 ALTER TABLE emp OWNER TO postgres;
 
@@ -706,7 +706,7 @@ ALTER FOREIGN TABLE haha OWNER TO postgres;
 
 CREATE MATERIALIZED VIEW activity AS SELECT pid, datname, state, query FROM pg_stat_activity where state in ('active','idle in transaction')  WITH NO DATA;
 ALTER TABLE activity OWNER TO postgres;
-COMMENT ON MATERIALIZED VIEW activity IS 'just a comment on the activity materialized view';
+COMMENT ON MATERIALIZED VIEW activity IS 'just a comment on the activity''s materialized view';
 CREATE INDEX activity_pid_idx ON activity USING btree (pid);
 
 -- create a view dependent on the previous MV
