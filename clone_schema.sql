@@ -124,7 +124,7 @@ SOFTWARE.
 -- 2025-10-02  MJV FIX: Fixed Issue#154: Did regression testing successfully for PG version 18.  No changes necessary at this time.
 -- 2026-07-18  MJV FIX: Fixed Issue#156: Comments on materialized views caused an exception if it contained embedded apostrophes.
 -- 2026-07-28  MJV FIX: Fixed Issue#157: Fixed problem with vector index definitions - Actual fix to pg_get_tabledef() #41
-
+-- 2026-09-20  MJV FIX: Fixed Issue#160: Found incidental bug found when reviewing recently approved pull request (#159). Unused variable "lastvalue" in Sequences FOR LOOP
 
 do $$ 
 <<first_block>>
@@ -1961,18 +1961,17 @@ BEGIN
 	-- Updating the next sequence value to the last value of each sequence-type table (sequences, serial, identity) assumes that the those tables have been incremented the normal way, not overriding system values.
   -- Otherwise, they would have to be re-initialized manually after they are cloned, i.e., nextval returns inaccurate info.
   -- NOTE: pg_dump exports serial columns the same as sequence columns, so while a table can be created with a serial column, when it is exported, it appears just like a sequence with nextval definition
-  
-  FOR relid, aschema, tblname, colname, seqname, deptype, attidentity, seqtype, coldef, formattype, seqowner, lastvalue IN
+
+  -- Fix #160: removed unused variable, "lastvalue". We set last value in subsequent sql in this loop
+  FOR relid, aschema, tblname, colname, seqname, deptype, attidentity, seqtype, coldef, formattype, seqowner IN
     SELECT a.attrelid as relid, tns.nspname AS schema, t.relname AS table_name, a.attname AS column_name, s.relname AS sequence_name, COALESCE(d.deptype, ''), COALESCE(a.attidentity, '') as attidentity, 
     CASE WHEN a.attidentity IS NULL THEN '' WHEN a.attidentity in ('a','d') THEN 'IDENTITY' ELSE '' END as seqtype,
-    (SELECT * FROM public.pg_get_coldef(tns.nspname,t.relname,a.attname)) as coldef, pg_catalog.format_type(a.atttypid, a.atttypmod) as format_type, pg_get_userbyid (s.relowner) as owner, 
-    (SELECT COALESCE(lastvalue, -999) as lastvalue FROM pg_sequences WHERE schemaname = source_schema AND sequencename = s.relname and sequenceowner = pg_get_userbyid (s.relowner)) as lastvalue
+    (SELECT * FROM public.pg_get_coldef(tns.nspname,t.relname,a.attname)) as coldef, pg_catalog.format_type(a.atttypid, a.atttypmod) as format_type, pg_get_userbyid (s.relowner) as owner
     FROM pg_namespace tns JOIN pg_class t ON tns.oid = t.relnamespace AND t.relkind IN ('p', 'r') JOIN pg_attribute a ON t.oid = a.attrelid AND NOT a.attisdropped
     JOIN pg_depend d ON d.classid = 'pg_class'::regclass AND d.refclassid = 'pg_class'::regclass AND t.oid = d.refobjid AND d.refobjsubid = a.attnum JOIN pg_class s ON d.objid = s.oid and s.relkind = 'S' JOIN pg_namespace sns ON s.relnamespace = sns.oid AND sns.nspname = tns.nspname AND tns.nspname = source_schema
     UNION 
     SELECT 0 as relid, ss.schemaname as schema, '' AS table_name, '' as column_name, ss.sequencename as sequence_name, '' as deptype, '' as attidentity, '' as seqtype, '' as coldef, ss.data_type::text as format_type, 
-    ss.sequenceowner as owner, COALESCE(ss.last_value, -999) as lastvalue
-    FROM pg_sequences ss where ss.schemaname = source_schema
+    ss.sequenceowner as owner FROM pg_sequences ss where ss.schemaname = source_schema
     AND NOT EXISTS 
     (SELECT 1 FROM pg_namespace tns JOIN pg_class t ON tns.oid = t.relnamespace AND t.relkind IN ('p', 'r') JOIN pg_attribute a ON t.oid = a.attrelid AND NOT a.attisdropped
     JOIN pg_depend d ON d.classid = 'pg_class'::regclass AND d.refclassid = 'pg_class'::regclass AND t.oid = d.refobjid AND d.refobjsubid = a.attnum JOIN pg_class s ON d.objid = s.oid and s.relkind = 'S' JOIN pg_namespace sns ON s.relnamespace = sns.oid AND sns.nspname = tns.nspname AND tns.nspname = source_schema and s.relname = ss.sequencename)
