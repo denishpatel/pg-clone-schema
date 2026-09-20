@@ -1968,14 +1968,14 @@ BEGIN
     (SELECT * FROM public.pg_get_coldef(tns.nspname,t.relname,a.attname)) as coldef, pg_catalog.format_type(a.atttypid, a.atttypmod) as format_type, pg_get_userbyid (s.relowner) as owner, 
     (SELECT COALESCE(lastvalue, -999) as lastvalue FROM pg_sequences WHERE schemaname = source_schema AND sequencename = s.relname and sequenceowner = pg_get_userbyid (s.relowner)) as lastvalue
     FROM pg_namespace tns JOIN pg_class t ON tns.oid = t.relnamespace AND t.relkind IN ('p', 'r') JOIN pg_attribute a ON t.oid = a.attrelid AND NOT a.attisdropped
-    JOIN pg_depend d ON t.oid = d.refobjid AND d.refobjsubid = a.attnum JOIN pg_class s ON d.objid = s.oid and s.relkind = 'S' JOIN pg_namespace sns ON s.relnamespace = sns.oid AND tns.nspname = source_schema
+    JOIN pg_depend d ON d.classid = 'pg_class'::regclass AND d.refclassid = 'pg_class'::regclass AND t.oid = d.refobjid AND d.refobjsubid = a.attnum JOIN pg_class s ON d.objid = s.oid and s.relkind = 'S' JOIN pg_namespace sns ON s.relnamespace = sns.oid AND sns.nspname = tns.nspname AND tns.nspname = source_schema
     UNION 
     SELECT 0 as relid, ss.schemaname as schema, '' AS table_name, '' as column_name, ss.sequencename as sequence_name, '' as deptype, '' as attidentity, '' as seqtype, '' as coldef, ss.data_type::text as format_type, 
     ss.sequenceowner as owner, COALESCE(ss.last_value, -999) as lastvalue
     FROM pg_sequences ss where ss.schemaname = source_schema
     AND NOT EXISTS 
     (SELECT 1 FROM pg_namespace tns JOIN pg_class t ON tns.oid = t.relnamespace AND t.relkind IN ('p', 'r') JOIN pg_attribute a ON t.oid = a.attrelid AND NOT a.attisdropped
-    JOIN pg_depend d ON t.oid = d.refobjid AND d.refobjsubid = a.attnum JOIN pg_class s ON d.objid = s.oid and s.relkind = 'S' JOIN pg_namespace sns ON s.relnamespace = sns.oid AND tns.nspname = source_schema and s.relname = ss.sequencename)
+    JOIN pg_depend d ON d.classid = 'pg_class'::regclass AND d.refclassid = 'pg_class'::regclass AND t.oid = d.refobjid AND d.refobjsubid = a.attnum JOIN pg_class s ON d.objid = s.oid and s.relkind = 'S' JOIN pg_namespace sns ON s.relnamespace = sns.oid AND sns.nspname = tns.nspname AND tns.nspname = source_schema and s.relname = ss.sequencename)
     ORDER BY 5
   LOOP
     cnt := cnt + 1;
@@ -3591,7 +3591,7 @@ BEGIN
     -- Issue#133: Added logic to defer creation of views dependent on MVs.
     v_dummy = SUBSTRING(aname, POSITION('.' IN aname) + 1);
     WITH dependencies AS (SELECT distinct dependent_obj.relname, source_obj.relname FROM pg_depend
-    JOIN pg_rewrite ON pg_depend.objid = pg_rewrite.oid
+    JOIN pg_rewrite ON pg_depend.classid = 'pg_rewrite'::regclass AND pg_depend.objid = pg_rewrite.oid
     JOIN pg_class as dependent_obj ON pg_rewrite.ev_class = dependent_obj.oid
     JOIN pg_class as source_obj ON pg_depend.refobjid = source_obj.oid
     JOIN pg_namespace dependent_ns ON dependent_ns.oid = dependent_obj.relnamespace
