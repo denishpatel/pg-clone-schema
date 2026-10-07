@@ -3320,18 +3320,26 @@ BEGIN
     SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
     -- RAISE WARNING 'DEBUGGGG: search_path changed to source schema + public:%', v_dummy; 
 
+    IF bDDLOnly THEN
+      RAISE INFO 'SET search_path = %, public;', quote_ident(dest_schema);
+    END IF;
+
     -- Fixed Issue#65
     -- Fixed Issue#97
     -- FOR func_oid IN SELECT oid FROM pg_proc WHERE pronamespace = src_oid AND prokind != 'a'
     IF is_prokind THEN
-      FOR func_oid, func_owner, func_name, func_args, func_argno, buffer3 IN 
-          SELECT p.oid, pg_catalog.pg_get_userbyid(p.proowner), p.proname, oidvectortypes(p.proargtypes), p.pronargs,
+      FOR func_oid, func_owner, func_name, func_argno, buffer3 IN
+          SELECT p.oid, pg_catalog.pg_get_userbyid(p.proowner), p.proname, p.pronargs,
           CASE WHEN prokind = 'p' THEN 'PROCEDURE' WHEN prokind = 'f' THEN 'FUNCTION' ELSE '' END 
           FROM pg_proc p WHERE p.pronamespace = src_oid AND p.prokind != 'a'          
       LOOP
         cnt := cnt + 1;
-        SELECT pg_get_functiondef(func_oid)
-        INTO qry;
+        -- Deparse inside each iteration: cursor batches must not inherit the execution path.
+        PERFORM set_config('search_path', '', true);
+        SELECT pg_get_functiondef(func_oid), pg_get_function_identity_arguments(func_oid)
+        INTO qry, func_args;
+        func_args := replace(func_args, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
+        PERFORM set_config('search_path', quote_ident(dest_schema) || ', public', true);
   
         SELECT replace(qry, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO dest_qry;
         IF bDDLOnly THEN
@@ -3364,11 +3372,11 @@ BEGIN
                 -- Fixed Issue#108: double-quote roles in case they have special characters
                 dest_qry = 'ALTER ' || buffer3 || ' ' || quote_ident(dest_schema) || '.' || quote_ident(func_name) || '(' || func_args || ') OWNER TO ' || '"' || func_owner || '";';
             END IF;
+            lastsql = dest_qry;
+            IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;
+            execline = 3352; EXECUTE lastsql;
+            lastsql = '';
           END IF;
-          lastsql = dest_qry;
-          IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
-          execline = 3352; EXECUTE lastsql;
-          lastsql = '';
         END IF;
       END LOOP;
     ELSE
@@ -3377,8 +3385,10 @@ BEGIN
                       WHERE pronamespace = src_oid AND not proisagg
       LOOP
         cnt := cnt + 1;
+        PERFORM set_config('search_path', '', true);
         SELECT pg_get_functiondef(func_oid) INTO qry;
         SELECT replace(qry, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO dest_qry;
+        PERFORM set_config('search_path', quote_ident(dest_schema) || ', public', true);
         IF bDDLOnly THEN
           RAISE INFO '%;', dest_qry;
         ELSE
@@ -3390,6 +3400,9 @@ BEGIN
       END LOOP;
     END IF;
   
+    -- Aggregates still expect the source schema context, including when there were no routines.
+    PERFORM set_config('search_path', quote_ident(source_schema) || ', public', true);
+
     -- Create aggregate functions.
     -- Fixed Issue#65
     -- FOR func_oid IN SELECT oid FROM pg_proc WHERE pronamespace = src_oid AND prokind = 'a'
@@ -3961,6 +3974,8 @@ BEGIN
   rc = 35;
   IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
   cnt2 := 0;
+  SELECT setting INTO spath_tmp FROM pg_settings WHERE name = 'search_path';
+  PERFORM set_config('search_path', '', true);
   IF is_prokind THEN
   FOR qry IN
     -- Issue#74 Fix: Change schema from source to target.
@@ -3997,7 +4012,8 @@ BEGIN
     SELECT 'COMMENT ON ' || CASE WHEN p.prokind = 'f' THEN 'FUNCTION ' WHEN p.prokind = 'p' THEN 'PROCEDURE ' WHEN p.prokind = 'a' THEN 'AGGREGATE ' END ||
     -- Issue#140
     -- dest_schema || '.' || p.proname || ' (' || oidvectortypes(p.proargtypes) || ')'
-    quote_ident(dest_schema) || '.' || p.proname || ' (' || oidvectortypes(p.proargtypes) || ')'
+    quote_ident(dest_schema) || '.' || quote_ident(p.proname) || ' (' ||
+    replace(oidvectortypes(p.proargtypes), quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') || ')'
     -- Issue#74 Fix
     -- ' IS ''' || d.description || ''';' as ddl
     ' IS '   || quote_literal(d.description) || ';' as ddl
@@ -4077,7 +4093,8 @@ BEGIN
       AND n.nspname = quote_ident(source_schema) COLLATE pg_catalog.default AND pg_catalog.obj_description(c.oid, 'pg_collation') IS NOT NULL
     UNION
     SELECT 'COMMENT ON ' || CASE WHEN proisagg THEN 'AGGREGATE ' ELSE 'FUNCTION ' END ||
-    dest_schema || '.' || p.proname || ' (' || oidvectortypes(p.proargtypes) || ')'
+    quote_ident(dest_schema) || '.' || quote_ident(p.proname) || ' (' ||
+    replace(oidvectortypes(p.proargtypes), quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') || ')'
     -- Issue#74 Fix
     -- ' IS ''' || d.description || ''';' as ddl
     ' IS '   || quote_literal(d.description) || ';' as ddl
@@ -4114,6 +4131,7 @@ BEGIN
     END IF;
   END LOOP;
   END IF;
+  PERFORM set_config('search_path', spath_tmp, true);
   RAISE NOTICE ' COMMENTS(2) cloned: %', LPAD(cnt2::text, 5, ' ');
 
 
@@ -4470,7 +4488,7 @@ BEGIN
       -- Issue#78 FIX: handle case-sensitive names with quote_ident() on rp.routine_name
       -- Issue#131: do the same for schema/owners
       -- SELECT 'GRANT ' || rp.privilege_type || ' ON ' || COALESCE(r.routine_type, 'FUNCTION') || ' ' || quote_ident(dest_schema) || '.' || quote_ident(rp.routine_name) || ' (' || pg_get_function_identity_arguments(p.oid) || ') TO ' || string_agg(distinct rp.grantee, ',') || ';' as func_dcl
-      SELECT 'GRANT ' || rp.privilege_type || ' ON ' || COALESCE(r.routine_type, 'FUNCTION') || ' ' || quote_ident(dest_schema) || '.' || quote_ident(rp.routine_name) || ' (' || pg_get_function_identity_arguments(p.oid) || ') TO "' || string_agg(distinct rp.grantee, '","') || '";' as func_dcl
+      SELECT 'GRANT ' || rp.privilege_type || ' ON ' || COALESCE(r.routine_type, 'FUNCTION') || ' ' || quote_ident(dest_schema) || '.' || quote_ident(rp.routine_name) || ' (' || replace(pg_get_function_identity_arguments(p.oid), quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') || ') TO "' || string_agg(distinct rp.grantee, '","') || '";' as func_dcl
       FROM information_schema.routine_privileges rp, information_schema.routines r, pg_proc p, pg_namespace n
       -- Issue#140
       -- WHERE rp.routine_schema = quote_ident(source_schema)
