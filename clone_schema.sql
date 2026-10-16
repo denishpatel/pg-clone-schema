@@ -125,6 +125,7 @@ SOFTWARE.
 -- 2026-07-18  MJV FIX: Fixed Issue#156: Comments on materialized views caused an exception if it contained embedded apostrophes.
 -- 2026-07-28  MJV FIX: Fixed Issue#157: Fixed problem with vector index definitions - Actual fix to pg_get_tabledef() #41
 -- 2026-09-20  MJV FIX: Fixed Issue#160: Found incidental bug found when reviewing recently approved pull request (#159). Unused variable "lastvalue" in Sequences FOR LOOP
+-- 2026-10-16  MJV FIX: Fixed Issue#161: pull request accepted: Fixed Cloned function arguments/return types to be bound to target so we can do partial schema embedded stuff.
 
 do $$ 
 <<first_block>>
