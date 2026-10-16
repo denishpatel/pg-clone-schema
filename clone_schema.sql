@@ -23,7 +23,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ******************************************************************************/
-
+Don't forget to update version here --> v_version
 -- Change History: 
 -- 2021-03-03  MJV FIX: Fixed population of tables with rows section. "buffer" variable was not initialized correctly. Used new variable, tblname, to fix it.
 -- 2021-03-03  MJV FIX: Fixed Issue#34  where user-defined types in declare section of functions caused runtime errors.
@@ -125,7 +125,7 @@ SOFTWARE.
 -- 2026-07-18  MJV FIX: Fixed Issue#156: Comments on materialized views caused an exception if it contained embedded apostrophes.
 -- 2026-07-28  MJV FIX: Fixed Issue#157: Fixed problem with vector index definitions - Actual fix to pg_get_tabledef() #41
 -- 2026-09-20  MJV FIX: Fixed Issue#160: Found incidental bug found when reviewing recently approved pull request (#159). Unused variable "lastvalue" in Sequences FOR LOOP
--- 2026-10-16  MJV FIX: Fixed Issue#161: pull request accepted: Fixed Cloned function arguments/return types to be bound to target so we can do partial schema embedded stuff.
+-- 2026-10-16  MJV FIX: Fixed Issue#161: Cloned function arguments and return types remain bound to source table row types so modified accordingly so we can do partial schema embedded stuff in functional arguments.
 
 do $$ 
 <<first_block>>
@@ -1504,7 +1504,7 @@ DECLARE
   lasttbl          text := '';
   bFound           boolean;
   role_invoker     text;
-  v_version        text := '2.30 July 28, 2026';
+  v_version        text := '2.31 October 16, 2026';
 
 BEGIN
   -- uncomment the following to get line context info when debugging exceptions. 
