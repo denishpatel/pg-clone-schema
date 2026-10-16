@@ -42,9 +42,9 @@ Just generate DDL:
 >select clone_schema('sample', 'sample_clone', 'DDLONLY');
 
 In the generated output for DDLONLY, modify the output as follows:
-* remove the lines that start with **NOTICE:**
-* remove any other lines that do not begin with **INFO:**
-* Then, remove the first 7 characters of the these lines that begin with **INFO:**
+* discard **NOTICE:** messages and the query result output
+* keep each **INFO:** message in full, including its continuation lines (table and function definitions can span multiple lines)
+* remove the first 7 characters (**INFO:** followed by two spaces) from the first line of each retained message; leave continuation lines unchanged
 <br/>
 The result should be a clean DDL output.
 <br/><br/><br/>

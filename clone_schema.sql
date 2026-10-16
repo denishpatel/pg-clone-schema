@@ -2196,7 +2196,7 @@ BEGIN
           IF NOT bChild THEN
             -- issue#153 no fix for replica identity when DDLONLY is specified.  Too hard to fix.
             -- RAISE NOTICE 'DDLONLY branch for CREATE TABLE LIKE  buffer2=%  buffer=%',buffer2, buffer;
-            IF bDebugExec THEN RAISE INFO '%', 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL);'; END IF;
+            RAISE INFO '%', 'CREATE ' || buffer2 || 'TABLE ' || buffer || ' (LIKE ' || quote_ident(source_schema) || '.' || quote_ident(tblname) || ' INCLUDING ALL);';
             -- issue#91 fix
              -- issue#95
             IF NOT bNoOwner THEN    
