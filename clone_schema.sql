@@ -1715,9 +1715,7 @@ BEGIN
   IF sq_server_version_num >= 170000 THEN
     FOR arec IN
       SELECT n.nspname AS schemaname, a.rolname AS ownername, c.collname, c.collprovider, c.collcollate AS locale, 
-             'CREATE COLLATION ' || quote_ident(dest_schema) || '."' || c.collname || '" (provider = ' || 
-             CASE WHEN c.collprovider = 'i' THEN 'icu' WHEN c.collprovider = 'c' THEN 'libc' ELSE '' END || 
-             ', locale = ''' || c.colllocale || ''');' AS COLL_DDL
+             format('CREATE COLLATION %I.%I FROM %I.%I;', dest_schema, c.collname, source_schema, c.collname) AS COLL_DDL
       FROM pg_collation c
           JOIN pg_namespace n ON (c.collnamespace = n.oid)
           JOIN pg_roles a ON (c.collowner = a.oid)
@@ -1741,9 +1739,7 @@ BEGIN
   ELSIF sq_server_version_num >= 150000 THEN
     FOR arec IN
       SELECT n.nspname AS schemaname, a.rolname AS ownername, c.collname, c.collprovider, c.collcollate AS locale, 
-             'CREATE COLLATION ' || quote_ident(dest_schema) || '."' || c.collname || '" (provider = ' || 
-             CASE WHEN c.collprovider = 'i' THEN 'icu' WHEN c.collprovider = 'c' THEN 'libc' ELSE '' END || 
-             ', locale = ''' || c.colliculocale || ''');' AS COLL_DDL
+             format('CREATE COLLATION %I.%I FROM %I.%I;', dest_schema, c.collname, source_schema, c.collname) AS COLL_DDL
       FROM pg_collation c
           JOIN pg_namespace n ON (c.collnamespace = n.oid)
           JOIN pg_roles a ON (c.collowner = a.oid)
@@ -1767,9 +1763,7 @@ BEGIN
   ELSIF sq_server_version_num >= 100000 THEN
     FOR arec IN
       SELECT n.nspname AS schemaname, a.rolname AS ownername, c.collname, c.collprovider, c.collcollate AS locale, 
-             'CREATE COLLATION ' || quote_ident(dest_schema) || '."' || c.collname || '" (provider = ' || 
-             CASE WHEN c.collprovider = 'i' THEN 'icu' WHEN c.collprovider = 'c' THEN 'libc' ELSE '' END || 
-             ', locale = ''' || c.collcollate || ''');' AS COLL_DDL
+             format('CREATE COLLATION %I.%I FROM %I.%I;', dest_schema, c.collname, source_schema, c.collname) AS COLL_DDL
       FROM pg_collation c
           JOIN pg_namespace n ON (c.collnamespace = n.oid)
           JOIN pg_roles a ON (c.collowner = a.oid)
