@@ -1840,7 +1840,7 @@ BEGIN
     BEGIN
       cnt := cnt + 1;
       -- format: CREATE DOMAIN clone1.addr3 AS character varying(90) NOT NULL DEFAULT 'N/A'::character varying CHECK (VALUE::text > ''::text);                
-      lastsql = 'CREATE DOMAIN ' || quote_ident(dest_schema) || '.' || quote_ident(arec.typname) || ' AS ' || arec.atype || CASE WHEN arec.typnotnull IS NOT NULL THEN ' NOT NULL' ELSE '' END ||
+      lastsql = 'CREATE DOMAIN ' || quote_ident(dest_schema) || '.' || quote_ident(arec.typname) || ' AS ' || arec.atype || CASE WHEN arec.typnotnull THEN ' NOT NULL' ELSE '' END ||
                 CASE WHEN arec.typdefault IS NOT NULL THEN ' DEFAULT ' || arec.typdefault ELSE '' END || CASE WHEN arec.acheck <> '' THEN ' ' || arec.acheck ELSE '' END || ';' ;
       IF bDDLOnly THEN
         RAISE INFO '%', lastsql;
