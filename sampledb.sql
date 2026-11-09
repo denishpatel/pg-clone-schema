@@ -112,6 +112,10 @@ ALTER COLLATION "und-u-co-emoji-x-icu" OWNER TO postgres;
 -- Name: addr; Type: DOMAIN; Schema: sample; Owner: postgres
 --
 
+-- tests fix for Issue#170
+CREATE COLLATION libc_test (provider = libc, locale = 'C');
+ALTER COLLATION "libc_test" OWNER TO postgres;
+
 CREATE TYPE udt_myint AS (myint INTEGER);
 
 CREATE DOMAIN addr AS character varying(90) NOT NULL;
