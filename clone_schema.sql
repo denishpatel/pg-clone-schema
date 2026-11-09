@@ -126,6 +126,7 @@ SOFTWARE.
 -- 2026-07-28  MJV FIX: Fixed Issue#157: Fixed problem with vector index definitions - Actual fix to pg_get_tabledef() #41
 -- 2026-09-20  MJV FIX: Fixed Issue#160: Found incidental bug found when reviewing recently approved pull request (#159). Unused variable "lastvalue" in Sequences FOR LOOP
 -- 2026-10-16  MJV FIX: Fixed Issue#161: Cloned function arguments and return types remain bound to source table row types so modified accordingly so we can do partial schema embedded stuff in functional arguments.
+-- 2026-11-09  MJV FIX: Fixed Issue#167: Fixed case where Nullable domains were still being created as NOT NULL ones.
 
 do $$ 
 <<first_block>>
@@ -1840,8 +1841,12 @@ BEGIN
     BEGIN
       cnt := cnt + 1;
       -- format: CREATE DOMAIN clone1.addr3 AS character varying(90) NOT NULL DEFAULT 'N/A'::character varying CHECK (VALUE::text > ''::text);                
-      lastsql = 'CREATE DOMAIN ' || quote_ident(dest_schema) || '.' || quote_ident(arec.typname) || ' AS ' || arec.atype || CASE WHEN arec.typnotnull IS NOT NULL THEN ' NOT NULL' ELSE '' END ||
-                CASE WHEN arec.typdefault IS NOT NULL THEN ' DEFAULT ' || arec.typdefault ELSE '' END || CASE WHEN arec.acheck <> '' THEN ' ' || arec.acheck ELSE '' END || ';' ;
+      -- Issue#167
+      -- lastsql = 'CREATE DOMAIN ' || quote_ident(dest_schema) || '.' || quote_ident(arec.typname) || ' AS ' || arec.atype || CASE WHEN arec.typnotnull IS NOT NULL THEN ' NOT NULL' ELSE '' END ||
+      --          CASE WHEN arec.typdefault IS NOT NULL THEN ' DEFAULT ' || arec.typdefault ELSE '' END || CASE WHEN arec.acheck <> '' THEN ' ' || arec.acheck ELSE '' END || ';' ;
+      lastsql = 'CREATE DOMAIN ' || quote_ident(dest_schema) || '.' || quote_ident(arec.typname) || ' AS ' || arec.atype || CASE WHEN arec.typnotnull THEN ' NOT NULL' ELSE '' END ||
+                CASE WHEN arec.typdefault IS NOT NULL THEN ' DEFAULT ' || arec.typdefault ELSE '' END || CASE WHEN arec.acheck <> '' THEN ' ' || arec.acheck ELSE '' END || ';' ;         
+
       IF bDDLOnly THEN
         RAISE INFO '%', lastsql;
       ELSE
