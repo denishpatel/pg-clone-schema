@@ -7,7 +7,7 @@ clone_schema requires the **pg_get_tabledef()** utility function to be installed
 
 Download and install it before installing clone_schema:
 [pg_get_tabledef GitHub Repository](https://github.com/MichaelDBA/pg_get_tabledef/blob/main/pg_get_tabledef.sql)
-
+<br/><br/>
 
 
 clone_schema handles the following objects:
