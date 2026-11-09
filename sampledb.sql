@@ -118,29 +118,23 @@ CREATE DOMAIN addr AS character varying(90) NOT NULL;
 COMMENT ON DOMAIN addr IS 'my domain comments on addr';
 ALTER DOMAIN addr OWNER TO postgres;
 
-CREATE DOMAIN addr2 AS character varying(90) NULL;
-COMMENT ON DOMAIN addr2 IS 'my nullable domain comments on addr';
-ALTER DOMAIN addr2 OWNER TO postgres;
-
-
 --
 -- Name: addr2; Type: DOMAIN; Schema: sample; Owner: postgres
 --
-
 CREATE DOMAIN addr2 AS character varying(90) NOT NULL DEFAULT 'N/A'::character varying;
-
-
 ALTER DOMAIN addr2 OWNER TO postgres;
 
 --
 -- Name: addr3; Type: DOMAIN; Schema: sample; Owner: postgres
 --
-
 CREATE DOMAIN addr3 AS character varying(90) NOT NULL DEFAULT 'N/A'::character varying
         CONSTRAINT addr3_check CHECK (((VALUE)::text > ''::text));
-
-
 ALTER DOMAIN addr3 OWNER TO postgres;
+
+-- NULL Domain
+CREATE DOMAIN addr4 AS character varying(90) NULL;
+COMMENT ON DOMAIN addr2 IS 'my nullable domain comments on addr4';
+ALTER DOMAIN addr4 OWNER TO postgres;
 
 --
 -- Name: compfoo; Type: TYPE; Schema: sample; Owner: postgres
