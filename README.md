@@ -1,8 +1,8 @@
 # clone_schema
 
 **clone_schema** is a PostgreSQL tool for making a copy of a schema.  It includes all objects associated with a schema.
-
-**Prerequisite**<br/>
+<br/>
+**Prerequisite:**<br/>
 clone_schema requires the **pg_get_tabledef()** utility function to be installed in your PostgreSQL database.
 Download and install it before installing clone_schema:
 [pg_get_tabledef GitHub Repository](https://github.com/MichaelDBA/pg_get_tabledef/blob/main/pg_get_tabledef.sql)
