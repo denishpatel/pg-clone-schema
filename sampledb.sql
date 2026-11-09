@@ -116,9 +116,12 @@ CREATE TYPE udt_myint AS (myint INTEGER);
 
 CREATE DOMAIN addr AS character varying(90) NOT NULL;
 COMMENT ON DOMAIN addr IS 'my domain comments on addr';
-
-
 ALTER DOMAIN addr OWNER TO postgres;
+
+CREATE DOMAIN addr2 AS character varying(90) NULL;
+COMMENT ON DOMAIN addr2 IS 'my nullable domain comments on addr';
+ALTER DOMAIN addr2 OWNER TO postgres;
+
 
 --
 -- Name: addr2; Type: DOMAIN; Schema: sample; Owner: postgres
