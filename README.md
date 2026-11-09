@@ -53,7 +53,7 @@ In the generated output for DDLONLY, modify the output as follows:
 * remove any other lines that do not begin with **INFO:**
 * Then, remove the first 7 characters of the these lines that begin with **INFO:**
 <br/>
-The result should be a clean DDL output.
+The result should be a clean DDL output. There is one area of exceptions, objects with procedural language.  In those cases only the 1st line is prefixed with **INFO**.
 <br/><br/><br/>
 
 **Ownership/Privileges**<br/>
