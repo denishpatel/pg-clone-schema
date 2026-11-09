@@ -128,7 +128,8 @@ SOFTWARE.
 -- 2026-10-16  MJV FIX: Fixed Issue#161: Cloned function arguments and return types remain bound to source table row types so modified accordingly so we can do partial schema embedded stuff in functional arguments.
 -- 2026-11-09  MJV FIX: Fixed Issue#167: Fixed case where Nullable domains were still being created as NOT NULL ones.
 -- 2026-11-09  MJV FIX: Fixed Issue#168: Fix DDLONLY output inconsistencies.
--- 2026-11-09  MJV FIX: Fixed Issue#169: Removed pg_get_tabledef from clone_schema, and updated readme accordingly.
+-- 2026-11-09  MJV FIX: Fixed Issue#169: Removed pg_get_tabledef from clone_schema, and updated readme accordingly. 
+-- 2026-11-09  MJV FIX: Fixed Issue#170: Fixed Copy collation definitions without provider-specific locale assumptions
 
 do $$ 
 <<first_block>>
@@ -252,7 +253,7 @@ $$;
 /*  Drop In function pg_get_tabledef starts here... */
 /****************************************************/
 
-REMOVED.  Must be installed separately. See README
+/* REMOVED.  Must be installed separately. See README */
 
 /****************************************************/
 /*  Drop In function pg_get_tabledef ends here...   */
@@ -651,10 +652,14 @@ BEGIN
   -- perhaps use this logic instead: COALESCE(c.collcollate, c.colliculocale) AS lc_collate, COALESCE(c.collctype, c.colliculocale) AS lc_type  
   IF sq_server_version_num >= 170000 THEN
     FOR arec IN
+      -- Issue#170 fix
+      -- SELECT n.nspname AS schemaname, a.rolname AS ownername, c.collname, c.collprovider, c.collcollate AS locale, 
+      --        'CREATE COLLATION ' || quote_ident(dest_schema) || '."' || c.collname || '" (provider = ' || 
+      --        CASE WHEN c.collprovider = 'i' THEN 'icu' WHEN c.collprovider = 'c' THEN 'libc' ELSE '' END || 
+      --        ', locale = ''' || c.colllocale || ''');' AS COLL_DDL
       SELECT n.nspname AS schemaname, a.rolname AS ownername, c.collname, c.collprovider, c.collcollate AS locale, 
-             'CREATE COLLATION ' || quote_ident(dest_schema) || '."' || c.collname || '" (provider = ' || 
-             CASE WHEN c.collprovider = 'i' THEN 'icu' WHEN c.collprovider = 'c' THEN 'libc' ELSE '' END || 
-             ', locale = ''' || c.colllocale || ''');' AS COLL_DDL
+             'CREATE COLLATION ' || quote_ident(dest_schema) || '.' || quote_ident(c.collname) || ' FROM ' || 
+             quote_ident(source_schema) || '.' || quote_ident(c.collname) || ';' AS COLL_DDL
       FROM pg_collation c
           JOIN pg_namespace n ON (c.collnamespace = n.oid)
           JOIN pg_roles a ON (c.collowner = a.oid)
@@ -677,10 +682,14 @@ BEGIN
     END LOOP;
   ELSIF sq_server_version_num >= 150000 THEN
     FOR arec IN
+      -- Issue#170 fix    
+      -- SELECT n.nspname AS schemaname, a.rolname AS ownername, c.collname, c.collprovider, c.collcollate AS locale, 
+      --        'CREATE COLLATION ' || quote_ident(dest_schema) || '."' || c.collname || '" (provider = ' || 
+      --        CASE WHEN c.collprovider = 'i' THEN 'icu' WHEN c.collprovider = 'c' THEN 'libc' ELSE '' END || 
+      --        ', locale = ''' || c.colliculocale || ''');' AS COLL_DDL
       SELECT n.nspname AS schemaname, a.rolname AS ownername, c.collname, c.collprovider, c.collcollate AS locale, 
-             'CREATE COLLATION ' || quote_ident(dest_schema) || '."' || c.collname || '" (provider = ' || 
-             CASE WHEN c.collprovider = 'i' THEN 'icu' WHEN c.collprovider = 'c' THEN 'libc' ELSE '' END || 
-             ', locale = ''' || c.colliculocale || ''');' AS COLL_DDL
+             'CREATE COLLATION ' || quote_ident(dest_schema) || '.' || quote_ident(c.collname) || ' FROM ' || 
+             quote_ident(source_schema) || '.' || quote_ident(c.collname) || ';' AS COLL_DDL
       FROM pg_collation c
           JOIN pg_namespace n ON (c.collnamespace = n.oid)
           JOIN pg_roles a ON (c.collowner = a.oid)
@@ -703,10 +712,14 @@ BEGIN
     END LOOP;
   ELSIF sq_server_version_num >= 100000 THEN
     FOR arec IN
+      -- Issue#170 fix    
+      -- SELECT n.nspname AS schemaname, a.rolname AS ownername, c.collname, c.collprovider, c.collcollate AS locale, 
+      --        'CREATE COLLATION ' || quote_ident(dest_schema) || '."' || c.collname || '" (provider = ' || 
+      --        CASE WHEN c.collprovider = 'i' THEN 'icu' WHEN c.collprovider = 'c' THEN 'libc' ELSE '' END || 
+      --        ', locale = ''' || c.collcollate || ''');' AS COLL_DDL
       SELECT n.nspname AS schemaname, a.rolname AS ownername, c.collname, c.collprovider, c.collcollate AS locale, 
-             'CREATE COLLATION ' || quote_ident(dest_schema) || '."' || c.collname || '" (provider = ' || 
-             CASE WHEN c.collprovider = 'i' THEN 'icu' WHEN c.collprovider = 'c' THEN 'libc' ELSE '' END || 
-             ', locale = ''' || c.collcollate || ''');' AS COLL_DDL
+             'CREATE COLLATION ' || quote_ident(dest_schema) || '.' || quote_ident(c.collname) || ' FROM ' || 
+             quote_ident(source_schema) || '.' || quote_ident(c.collname) || ';' AS COLL_DDL             
       FROM pg_collation c
           JOIN pg_namespace n ON (c.collnamespace = n.oid)
           JOIN pg_roles a ON (c.collowner = a.oid)
@@ -1115,12 +1128,16 @@ BEGIN
           -- FIX: #121 Use pg_get_tabledef instead
           -- Issue#140 remove quote_ident!
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');          
-          SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');          
+          -- Issue#168: change call to pg_get_tabledef to compact results for DDLONLY branches
+          -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, false, 'FKEYS_NONE');          
+          SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, true, 'FKEYS_NONE');
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
           -- Issue#150 : Add INFO lines if we are in DDLONLY mode
           IF bDDLOnly THEN
               buffer3 := REPLACE(buffer3, 'CREATE UNIQUE INDEX IF NOT EXISTS', 'INFO:  CREATE UNIQUE INDEX IF NOT EXISTS');
               buffer3 := REPLACE(buffer3, 'CREATE INDEX IF NOT EXISTS', 'INFO:  CREATE INDEX IF NOT EXISTS');
+              --Issue#168: add INFO line for DDLONLY output
+              buffer3 := REPLACE(buffer3, E'\nALTER TABLE IF EXISTS', E'\nINFO:  ALTER TABLE IF EXISTS');
           END IF;
           RAISE INFO '%', buffer3;
 
@@ -1165,21 +1182,30 @@ BEGIN
             -- FIX: #121 Use pg_get_tabledef instead
             -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
             -- Issue#140 remove quote_ident!
-            -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
-            SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
-            buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
-            -- Issue#150 : Add INFO lines if we are in DDLONLY mode
-				    buffer3 := REPLACE(buffer3, 'CREATE UNIQUE INDEX IF NOT EXISTS', 'INFO:  CREATE UNIQUE INDEX IF NOT EXISTS');
-				    buffer3 := REPLACE(buffer3, 'CREATE INDEX IF NOT EXISTS', 'INFO:  CREATE INDEX IF NOT EXISTS');
-				    -- Issue#150: defer child index creations until after parent is created later
-				    IF bChild THEN
-				        DDLCreateIXDefer := DDLCreateIXDefer || buffer3;
-				        -- note child table so we don't attempt to attach it explicitly later
-				        v_dummy = quote_ident(dest_schema) || '.' || tblname;
-				        DDLAttachSkip = DDLAttachSkip || v_dummy;
-				    ELSE
-				        RAISE INFO '%', buffer3;
-				    END IF;
+            -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE'); 
+            -- Issue#168: change call to pg_get_tabledef to compact results for DDLONLY branches
+            -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, false, 'FKEYS_NONE');                      
+
+            --Issue#168: compact into 1 line for DDLONLY
+            SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, true, 'FKEYS_NONE');
+	    buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
+	    -- Issue#168: add INFO line for ALTER TABLE statements in DDLONLY output
+	    IF bDDLOnly THEN
+	        buffer3 := regexp_replace(buffer3, E';[ \t\r\n]*ALTER TABLE IF EXISTS', E';\nINFO:  ALTER TABLE IF EXISTS', 'g');
+	    END IF;
+	    -- Issue#150 : Add INFO lines if we are in DDLONLY mode
+	    buffer3 := REPLACE(buffer3, 'CREATE UNIQUE INDEX IF NOT EXISTS', 'INFO:  CREATE UNIQUE INDEX IF NOT EXISTS');
+            buffer3 := REPLACE(buffer3, 'CREATE INDEX IF NOT EXISTS', 'INFO:  CREATE INDEX IF NOT EXISTS');
+		
+            -- Issue#150: defer child index creations until after parent is created later
+            IF bChild THEN
+              DDLCreateIXDefer := DDLCreateIXDefer || buffer3;
+              -- note child table so we don't attempt to attach it explicitly later
+              v_dummy = quote_ident(dest_schema) || '.' || tblname;
+              DDLAttachSkip = DDLAttachSkip || v_dummy;
+            ELSE
+              RAISE INFO '%', buffer3;
+            END IF;
          
             -- issue#91 fix
             -- issue#95
@@ -1205,7 +1231,7 @@ BEGIN
           -- SELECT * INTO buffer3 FROM public.get_table_ddl_complex(source_schema, dest_schema, tblname, sq_server_version_num);     
           -- Issue#140 remove quote_ident!
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
-          SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
+          SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, false, 'FKEYS_NONE');                      
           -- RAISE NOTICE 'DEBUGGGG buffer3=%', buffer3;
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
           -- Issue#150 : Add INFO lines if we are in DDLONLY mode
@@ -1300,7 +1326,7 @@ BEGIN
             -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
             -- Issue#140 remove quote_ident!
             -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
-            SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
+            SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, false, 'FKEYS_NONE');                      
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
             -- Issue#150 : Add INFO lines if we are in DDLONLY mode
 						IF bDDLOnly THEN
@@ -1347,13 +1373,15 @@ BEGIN
       -- SELECT * INTO qry FROM public.get_table_ddl_complex(source_schema, dest_schema, tblname, sq_server_version_num);
       -- Issue#140 remove quote_ident!
       -- SELECT * INTO qry FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
-      SELECT * INTO qry FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
+      --Issue:168: handle DDLONLY
+      -- SELECT * INTO qry FROM public.pg_get_tabledef(source_schema, tblname, false, false, 'FKEYS_NONE');                      
+      SELECT * INTO qry FROM public.pg_get_tabledef(source_schema, tblname, false, bDDLOnly, 'FKEYS_NONE');
       qry := REPLACE(qry, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
       -- Issue#150 : Add INFO lines if we are in DDLONLY mode
-			IF bDDLOnly THEN
-    	    qry := REPLACE(qry, 'CREATE UNIQUE INDEX IF NOT EXISTS', 'INFO:  CREATE UNIQUE INDEX IF NOT EXISTS');
-					qry := REPLACE(qry, 'CREATE INDEX IF NOT EXISTS', 'INFO:  CREATE INDEX IF NOT EXISTS');
-			END IF;
+      IF bDDLOnly THEN
+        qry := REPLACE(qry, 'CREATE UNIQUE INDEX IF NOT EXISTS', 'INFO:  CREATE UNIQUE INDEX IF NOT EXISTS');
+        qry := REPLACE(qry, 'CREATE INDEX IF NOT EXISTS', 'INFO:  CREATE INDEX IF NOT EXISTS');
+      END IF;
       IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef04 - %', qry; END IF;
 
       IF bDDLOnly THEN
@@ -1692,7 +1720,7 @@ BEGIN
           -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
           -- Issue#140 remove quote_ident!
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
-          SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
+          SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, false, 'FKEYS_NONE');                      
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
           -- Issue#150 : Add INFO lines if we are in DDLONLY mode
 			    IF bDDLOnly THEN
@@ -1747,7 +1775,7 @@ BEGIN
             -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
             -- Issue#140 remove quote_ident!
             -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
-            SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
+            SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, false, 'FKEYS_NONE');                      
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
             -- Issue#150 : Add INFO lines if we are in DDLONLY mode
 			      buffer3 := REPLACE(buffer3, 'CREATE UNIQUE INDEX IF NOT EXISTS', 'INFO:  CREATE UNIQUE INDEX IF NOT EXISTS');
@@ -1777,7 +1805,7 @@ BEGIN
           -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
           -- Issue#140 remove quote_ident!
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
-          SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
+          SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, false, 'FKEYS_NONE');                      
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
           -- Issue#150 : Add INFO lines if we are in DDLONLY mode
 			    IF bDDLOnly THEN
@@ -1844,7 +1872,7 @@ BEGIN
             -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
             -- Issue#140 remove quote_ident!
             -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
-            SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
+            SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, false, 'FKEYS_NONE');                      
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
             -- Issue#150 : Add INFO lines if we are in DDLONLY mode
 			      IF bDDLOnly THEN
@@ -1891,7 +1919,7 @@ BEGIN
       -- SELECT * INTO qry FROM public.get_table_ddl_complex(source_schema, dest_schema, tblname, sq_server_version_num);
       -- Issue#140 remove quote_ident!
       -- SELECT * INTO qry FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
-      SELECT * INTO qry FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
+      SELECT * INTO qry FROM public.pg_get_tabledef(source_schema, tblname, false, false, 'FKEYS_NONE');                      
       qry := REPLACE(qry, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
           -- Issue#150 : Add INFO lines if we are in DDLONLY mode
 			    IF bDDLOnly THEN
@@ -2613,7 +2641,12 @@ BEGIN
       -- MJV FIX: #72 remove source schema in MV def
       SELECT REPLACE(v_def, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.') INTO buffer2;
 
-      IF bData THEN
+      -- Issue#168: Compact materialized view query for DDLONLY output
+      IF bDDLOnly THEN
+        buffer2 := regexp_replace(buffer2, E'\\s+', ' ', 'g');
+      END IF;
+
+      IF bData THEN      
         -- issue#98 defer creation until after regular tables are populated. Also defer the ownership as well.
         -- EXECUTE 'CREATE MATERIALIZED VIEW ' || buffer || ' AS ' || buffer2 || ' WITH DATA;' ;
         IF bDebug THEN RAISE NOTICE 'DEBUG: Section=% deferring MV creation, %',action,buffer; END IF;
