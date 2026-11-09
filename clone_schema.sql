@@ -127,6 +127,7 @@ SOFTWARE.
 -- 2026-09-20  MJV FIX: Fixed Issue#160: Found incidental bug found when reviewing recently approved pull request (#159). Unused variable "lastvalue" in Sequences FOR LOOP
 -- 2026-10-16  MJV FIX: Fixed Issue#161: Cloned function arguments and return types remain bound to source table row types so modified accordingly so we can do partial schema embedded stuff in functional arguments.
 -- 2026-11-09  MJV FIX: Fixed Issue#167: Fixed case where Nullable domains were still being created as NOT NULL ones.
+-- 2026-11-09  MJV FIX: Fixed Issue#168: Fix DDLONLY output inconsistencies.
 
 do $$ 
 <<first_block>>
@@ -2168,9 +2169,13 @@ BEGIN
     IF relpersist = 'u' THEN
       buffer2 := 'UNLOGGED ';
     END IF;
+    
     IF relknd = 'r' THEN
       IF bDDLOnly THEN
-        IF data_type = 'USER-DEFINED' THEN
+        -- Issue#168: DDLONLY output inconsistency
+        -- IF data_type = 'USER-DEFINED' THEN
+        IF data_type = 'USER-DEFINED' OR NOT bChild THEN        
+        
           -- FIXED #65, #67
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname);
           -- FIX: #121 Use pg_get_tabledef instead
