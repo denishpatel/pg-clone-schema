@@ -130,6 +130,7 @@ SOFTWARE.
 -- 2026-11-09  MJV FIX: Fixed Issue#168: Fix DDLONLY output inconsistencies.
 -- 2026-11-09  MJV FIX: Fixed Issue#169: Removed pg_get_tabledef from clone_schema, and updated readme accordingly. 
 -- 2026-11-09  MJV FIX: Fixed Issue#170: Fixed Copy collation definitions without provider-specific locale assumptions
+-- 2026-11-10  MJV FIX: Fixed Pull #164: Clone triggers from schema names that require quoting
 
 do $$ 
 <<first_block>>
@@ -3799,6 +3800,7 @@ BEGIN
     SELECT n1.nspname as trigger_schema, c.relname as table, t.tgname as trigger_name, n2.nspname as function_schema, p.proname as function_name,
     REPLACE(pg_get_triggerdef(t.oid), quote_ident(source_schema), quote_ident(dest_schema)) || ';' AS trig_ddl
     FROM pg_trigger t, pg_namespace n1, pg_class c, pg_proc p, pg_namespace n2
+    -- below fix for pull request, 164
     WHERE n1.nspname = source_schema AND n1.oid = c.relnamespace AND c.relkind in ('r','p') AND (n2.nspname = source_schema OR n2.nspname = 'public')
     AND c.oid = t.tgrelid AND t.tgfoid = p.oid AND p.pronamespace = n2.oid
     ORDER BY c.relname, t.tgname
