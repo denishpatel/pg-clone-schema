@@ -48,7 +48,7 @@ SOFTWARE.
 -- 2022-04-02  MJV FIX: Fixed Issue#67  Reworked get_table_ddl() so we are not dependent on outside function, pg_get_tabledef().
 -- 2022-04-02  MJV FIX: Fixed Issue#42  Fixed copying rows logic with exception of tables with user-defined datatypes in them that have to be done manually, documented in README.
 -- 2022-05-01  MJV FIX: Fixed Issue#53  Applied coding style fixes, using pgFormatter as basis for SQL.
--- 2022-05-02  MJV FIX: Fixed Issue#72  Remove original schema references from materialized view definition
+-- 2022-05-02  MJV FIX: Fixed Issue#72  Remove Final schema references from materialized view definition
 -- 2022-05-14  MJV FIX: Fixed Issue#73  Fix dependency order for views depending on other views. Also removed duplicate comment logic for views.
 -- 2022-06-12  MJV FIX: Fixed Issue#74  Change comments ddl from source_scshema to dest_schema. Policies fix using quote_literal(d.description) instead of hard-coded ticks and escape ticks.
 -- 2022-06-13  MJV FIX: Fixed Issue#75  Rows were not being copied correctly for parents.  Needed to move copy rows logic to end, after all DDL is done.
@@ -131,6 +131,7 @@ SOFTWARE.
 -- 2026-11-09  MJV FIX: Fixed Issue#169: Removed pg_get_tabledef from clone_schema, and updated readme accordingly. 
 -- 2026-11-09  MJV FIX: Fixed Issue#170: Fixed Copy collation definitions without provider-specific locale assumptions
 -- 2026-11-10  MJV FIX: Fixed Pull #164: Clone triggers from schema names that require quoting
+-- 2026-11-11  MJV FIX: Fixed Issue#171: Clean up the setting/resetting of search path replacing SET search_path commands with transaction level, perform: PERFORM set_config('search_path', 'mypath', true);
 
 do $$ 
 <<first_block>>
@@ -309,6 +310,7 @@ DECLARE
   part_range       text;
   v_src_path_old   text;
   v_src_path_new   text;
+  v_src_path_orig  text;
   aclstr           text;
   -- issue#80 initialize arrays properly
   tblarray         text[] := '{}';
@@ -576,17 +578,15 @@ BEGIN
   -- In order to avoid issues with the special schema name "$user" that may be
   -- returned unquoted by some applications, we ensure it remains double quoted.
   -- MJV FIX: #47
-  SELECT setting INTO v_dummy FROM pg_settings WHERE name='search_path';
-  -- RAISE WARNING 'DEBUGGGG: search_path=%', v_dummy;
-  
-  SELECT REPLACE(REPLACE(setting, '"$user"', '$user'), '$user', '"$user"') INTO v_src_path_old
-  FROM pg_settings WHERE name = 'search_path';
-
-  -- RAISE WARNING 'DEBUGGGG: v_src_path_old=%', v_src_path_old;
+  SELECT REPLACE(REPLACE(setting, '"$user"', '$user'), '$user', '"$user"') INTO v_src_path_orig FROM pg_settings WHERE name = 'search_path';
+  -- RAISE NOTICE 'DEBUG: original search_path=%', v_src_path_orig;
 
   lastsql = 'SET search_path = ' || quote_ident(source_schema) ;
-  EXECUTE lastsql;
+  -- Issue#171: Use PERFORM instead of SET
+  -- EXECUTE lastsql;
+  PERFORM set_config('search_path', quote_ident(source_schema), true);
   lastsql = '';
+  
   SELECT setting INTO v_src_path_new FROM pg_settings WHERE name='search_path';
   -- RAISE WARNING 'DEBUGGGG: new search_path=%', v_src_path_new; 
   
@@ -633,8 +633,7 @@ BEGIN
     END IF;
     
     -- Issue#150: set search path for target schema
-    -- RAISE NOTICE 'SET search_path=%;', quote_ident(dest_schema);
-		RAISE INFO 'set search_path = public, %;', quote_ident(dest_schema);
+    RAISE INFO 'set search_path = public, %;', quote_ident(dest_schema);
     
   ELSE
     -- issue#95
@@ -1073,10 +1072,10 @@ BEGIN
   cntables := 0;
   lasttbl = '';
   -- Issue#61 FIX: use set_config for empty string
-  -- SET search_path = '';
   -- Issue#138: make search path changes only effective for the current transaction (last parm goes from false to true)
   SELECT set_config('search_path', '', true) into v_dummy;
   -- RAISE WARNING 'DEBUGGGG: setting search_path to empty string:%', v_dummy;
+
   -- Fix#86 add isgenerated to column list
   -- Fix#91 add tblowner for setting the table ownership to that of the source
   -- Fix#99 added join to pg_tablespace
@@ -1414,36 +1413,22 @@ BEGIN
             RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || quote_ident(tblname), tblowner;
         END IF;
       ELSE
-        -- Issue#103: we need to always set search_path priority to target schema when we execute DDL
-        SELECT setting INTO spath_tmp FROM pg_settings WHERE name = 'search_path';   
-        -- RAISE WARNING 'DEBUGGGG: tabledef04 context: current search_path=%', spath_tmp;
-        IF spath_tmp <> dest_schema THEN
-          -- change it to target schema and don't forget to change it back after we execute the DDL
-          spath = 'SET search_path = "' || dest_schema || '"';
-          EXECUTE spath;
-          -- RAISE WARNING 'DEBUGGGG: changed search_path --> %', spath;
-          SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';   
-          -- RAISE WARNING 'DEBUGGGG: current search_path --> %', v_dummy;
-        END IF;
+        -- Issue#171: cleaned up this whole branch section replacing set search_path logic with PERFORM
+
+        -- Issue#103: Save the current search_path and temporarily prioritize the target schema.
+        SELECT setting INTO spath_tmp FROM pg_settings WHERE name = 'search_path';
+
+        PERFORM set_config('search_path', quote_ident(dest_schema), true);
+
         IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef04:%', qry; END IF;
         lastsql = qry;
-        IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+        IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;
         execline = 2418; EXECUTE qry;
         lastsql = '';
-        -- Issue#103
-        -- Set search path back to what it was
-        -- Issue#131: do not surround with single ticks
-        -- spath = 'SET search_path = "' || spath_tmp || '"';
-        IF spath_tmp IS NULL OR spath_tmp = '' THEN 
-            -- no need to change search_path
-            NULL;
-        ELSE
-            spath = 'SET search_path = ' || spath_tmp;
-            -- RAISE WARNING 'DEBUGGGG: setting search_path back to:%  --> %', spath_tmp,spath;
-            EXECUTE spath;
-            SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';   
-            -- RAISE WARNING 'DEBUGGGG: search_path changed back to %', v_dummy; 
-        END IF;
+
+        -- Restore the original search_path.
+        PERFORM set_config('search_path', spath_tmp, true);
+
         -- issue#91 fix
         -- issue#95
         IF NOT bNoOwner THEN
@@ -1651,7 +1636,6 @@ BEGIN
     END IF;
 
     -- Issue#61 FIX: use set_config for empty string
-    -- SET search_path = '';
     -- Issue#138: make search path changes only effective for the current transaction (last parm goes from false to true)
     SELECT set_config('search_path', '', true) into v_dummy;
     -- RAISE WARNING 'DEBUGGGG: setting search_path to empty string:%', v_dummy;
@@ -1683,7 +1667,9 @@ BEGIN
       END IF;
     END LOOP;
     
-    EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
+    -- Issue#171: replace set search_path with transaction level PERFORM
+    -- EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
+    PERFORM set_config('search_path', quote_ident(source_schema), true);
     -- RAISE WARNING 'DEBUGGGG: search_path changed back to source schema:%', quote_ident(source_schema); 
   END LOOP;
   ELSE 
@@ -1958,37 +1944,30 @@ BEGIN
             RAISE INFO 'ALTER TABLE IF EXISTS % OWNER TO %;', quote_ident(dest_schema) || '.' || quote_ident(tblname), tblowner;
         END IF;
       ELSE
-        -- Issue#103: we need to always set search_path priority to target schema when we execute DDL
-        IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef04 context: old search path=%  new search path=% current search path=%', v_src_path_old, v_src_path_new, v_dummy; END IF;
-        SELECT setting INTO spath_tmp FROM pg_settings WHERE name = 'search_path';   
-        IF spath_tmp <> dest_schema THEN
-          -- change it to target schema and don't forget to change it back after we execute the DDL
-          spath = 'SET search_path = "' || dest_schema || '"';
-          -- RAISE WARNING 'DEBUGGGG: changing search_path --> %', spath;
-          EXECUTE spath;
-          SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';   
-          -- RAISE WARNING 'DEBUGGGG: search_path changed to %', v_dummy; 
-        END IF;
+        -- Issue#103: Always prioritize the target schema when executing DDL.
+        
+        -- Issue#171: replaced this entire block
+        SELECT setting INTO spath_tmp FROM pg_settings WHERE name = 'search_path';
+
+        IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef04 context: old search path=%  new search path=% current search path=%', v_src_path_old, v_src_path_new, spath_tmp; END IF;
+
+        PERFORM set_config('search_path', quote_ident(dest_schema), true);
+
         IF bDebug or bDebugExec THEN RAISE NOTICE 'DEBUG: tabledef04:%', qry; END IF;
         lastsql = qry;
-        IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+        IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;
         execline = 2962; EXECUTE lastsql;
         lastsql = '';
-        
-        -- Issue#103
-        -- Set search path back to what it was
-        spath = 'SET search_path = "' || spath_tmp || '"';
-        -- RAISE WARNING 'DEBUGGGG: search_path changed back to:%', spath_tmp; 
-        EXECUTE spath;
-        SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';   
-        -- RAISE WARNING 'DEBUGGGG: search_path changed back to %', v_dummy; 
-        
+
+        -- Restore the original search_path.
+        PERFORM set_config('search_path', spath_tmp, true);
+
         -- issue#91 fix
         -- issue#95
         IF NOT bNoOwner THEN
           -- Fixed Issue#108: double-quote roles in case they have special characters
           lastsql = 'ALTER TABLE IF EXISTS ' || quote_ident(dest_schema) || '.' || quote_ident(tblname) || ' OWNER TO ' || tblowner;
-          IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
+          IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;
           execline = 2979; EXECUTE lastsql;
         END IF;
         
@@ -2183,7 +2162,9 @@ BEGIN
       END IF;
     END LOOP;
     
-    EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
+    -- Issue#171: use transaction search paths, not session ones
+    -- EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
+    PERFORM set_config('search_path', quote_ident(source_schema), true);
     -- RAISE WARNING 'DEBUGGGG: search_path changed back to source schema:%', quote_ident(source_schema); 
   END LOOP;      
   END IF;
@@ -2306,14 +2287,15 @@ BEGIN
     rc = 28;
     IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%',action; END IF;
     cnt := 0;
-    -- MJV FIX per issue# 34
-    -- SET search_path = '';
-    -- Issue#126: concatenate public with the source schema to pick up public stuff...
-    -- EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
-    spath_tmp = 'SET search_path = ' || quote_ident(source_schema) || ', public';    
-    EXECUTE spath_tmp;
-    SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
-    -- RAISE WARNING 'DEBUGGGG: search_path changed to source schema + public:%', v_dummy; 
+    
+    -- MJV FIX per Issue#34
+
+    -- Issue#171: replace session with transaction level search path changes    
+    -- spath_tmp = 'SET search_path = ' || quote_ident(source_schema) || ', public';    
+    -- EXECUTE spath_tmp;
+    -- SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
+    -- Issue#126: Include public after the source schema to resolve public objects.
+    PERFORM set_config('search_path', quote_ident(source_schema) || ', public', true);
 
     IF bDDLOnly THEN
       RAISE INFO 'SET search_path = %, public;', quote_ident(dest_schema);
@@ -3140,7 +3122,11 @@ BEGIN
     -- ---------------------
     -- MV: Permissions: Defaults
     -- ---------------------
-    EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
+    
+    -- Issue$171: replace session level with transaction level updating of search paths
+    -- EXECUTE 'SET search_path = ' || quote_ident(source_schema) ;
+    PERFORM set_config('search_path', quote_ident(source_schema), true);
+    
     -- RAISE WARNING 'DEBUGGGG: search_path changed back to source schema:%', quote_ident(source_schema);
     action := 'PRIVS: Defaults';
     rc = 36;
@@ -3513,7 +3499,11 @@ BEGIN
         END IF;
       END;
     END LOOP;
-    EXECUTE 'SET search_path = ' || quote_ident(source_schema);
+    
+    -- Issue$171: replace session level with transaction level updating of search paths
+    -- EXECUTE 'SET search_path = ' || quote_ident(source_schema);
+    PERFORM set_config('search_path', quote_ident(source_schema), true);
+    
     -- RAISE WARNING 'DEBUGGGG: search_path changed back to source schema:%', quote_ident(source_schema);
     RAISE NOTICE '  FUNC PRIVS cloned: %', LPAD(cnt::text, 5, ' ');
   END IF; -- NO ACL BRANCH
@@ -3524,8 +3514,11 @@ BEGIN
     r = clock_timestamp();
     -- IF bVerbose2 THEN RAISE NOTICE 'START: copy rows %',clock_timestamp() - t; END IF;  
     IF bVerbose2 THEN RAISE NOTICE 'Copying rows...'; END IF;  
-
-    EXECUTE 'SET search_path = ' || quote_ident(dest_schema) ;
+    
+    -- Issue$171: replace session level with transaction level updating of search paths
+    -- EXECUTE 'SET search_path = ' || quote_ident(dest_schema) ;
+    PERFORM set_config('search_path', quote_ident(dest_schema), true);
+    
     -- RAISE WARNING 'DEBUGGGG: search_path changed to target schema:%', quote_ident(dest_schema);
     action := 'Copy Rows';
     rc = 40;
@@ -3781,7 +3774,11 @@ BEGIN
       lastsql = '';
     END IF;
   END LOOP;
-  EXECUTE 'SET search_path = ' || quote_ident(source_schema);
+  
+  -- Issue$171: replace session level with transaction level updating of search paths
+  -- EXECUTE 'SET search_path = ' || quote_ident(source_schema);
+  PERFORM set_config('search_path', quote_ident(source_schema), true);
+  
   -- RAISE WARNING 'DEBUGGGG: search_path changed to source schema:%', quote_ident(source_schema); 
   RAISE NOTICE '       FKEYS cloned: %', LPAD(cnt::text, 5, ' ');
 
@@ -3822,18 +3819,11 @@ BEGIN
   RAISE NOTICE '      TABLES copied: %', LPAD(tblscopied::text, 5, ' ');
   RAISE NOTICE ' MATVIEWS refreshed: %', LPAD(mvscopied::text, 5, ' ');
 
-  IF v_src_path_old = '' OR v_src_path_old = '""' THEN
-    -- RAISE NOTICE 'Restoring old search_path to empty string';
-    -- Issue#138: make search path changes only effective for the current transaction (last parm goes from false to true)
-    SELECT set_config('search_path', '', true) into v_dummy;
-    -- RAISE WARNING 'DEBUGGGG: search_path changed to empty string:%', v_dummy; 
-  ELSE
-    -- RAISE NOTICE 'Restoring old search_path to:%', v_src_path_old;
-    EXECUTE 'SET search_path = ' || v_src_path_old;
-    -- RAISE WARNING 'DEBUGGGG: search_path changed to old one:%', v_src_path_old; 
-  END IF;
-  SELECT setting INTO v_dummy FROM pg_settings WHERE name = 'search_path';
-  -- RAISE WARNING 'DEBUGGGG: setting search_path back to what it was: %', v_dummy; 
+  -- Issue$171: replace session level with transaction level updating of search paths
+  -- EXECUTE 'SET search_path = ' || v_src_path_old;
+  PERFORM set_config('search_path', v_src_path_orig, false);
+  -- RAISE NOTICE 'DEBUGGGG: search_path changed to original one:%', v_src_path_orig; 
+    
   cnt := cast(extract(epoch from (clock_timestamp() - t)) as numeric(18,3));
   
   -- Issue#141: Remove processing types before leaving
@@ -3866,17 +3856,22 @@ BEGIN
 
          -- get current state of search_path too
          SELECT setting INTO spath_tmp FROM pg_settings WHERE name = 'search_path';
-         -- RAISE NOTICE '*****************************************************************';
-         RAISE EXCEPTION E'Version: %  Action: %  CurrentSP: %  oldSP=%  newSP=%  ExecLine=%\nDiagnostics:\n%', v_version, action, spath_tmp, v_src_path_old, v_src_path_new, execline, buffer;
-         
          IF v_src_path_old = '' THEN
            -- RAISE NOTICE 'setting old search_path to empty string';
            -- Issue#138: make search path changes only effective for the current transaction (last parm goes from false to true)
-           SELECT set_config('search_path', '', true);
+           -- SELECT set_config('search_path', '', true);
+           PERFORM set_config('search_path', '', true);
          ELSE
            -- RAISE NOTICE 'setting old search_path to:%', v_src_path_old;
-           EXECUTE 'SET search_path = ' || v_src_path_old;
+           
+           -- Issue$171: replace session level with transaction level updating of search paths
+           -- EXECUTE 'SET search_path = ' || v_src_path_old;
+           PERFORM set_config('search_path', v_src_path_old, true);
          END IF;
+         
+         -- RAISE NOTICE '*****************************************************************';
+         RAISE EXCEPTION E'Version: %  Action: %  CurrentSP: %  oldSP=%  newSP=%  ExecLine=%\nDiagnostics:\n%', v_version, action, spath_tmp, v_src_path_old, v_src_path_new, execline, buffer;
+         
          RETURN rc;
      END;
      
