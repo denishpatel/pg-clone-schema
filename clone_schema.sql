@@ -441,12 +441,33 @@ DECLARE
   lasttbl          text := '';
   bFound           boolean;
   role_invoker     text;
-  v_version        text := '2.31 October 16, 2026';
+  v_version        text := '2.4 November 10, 2026';
 
 BEGIN
   -- uncomment the following to get line context info when debugging exceptions. 
   -- Currently the next line is actually line 141 based on start line (without spaces) = $ BODY $
   -- RAISE EXCEPTION 'line1'; 
+
+  -- Validate the required pg_get_tabledef installation before doing any cloning work.
+  -- IF to_regtype('public.tabledefs') IS NULL THEN
+  --   RAISE EXCEPTION 'Required pg_get_tabledef prerequisite is missing: type public.tabledefs does not exist. Install pg_get_tabledef first.';
+  -- END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public'
+      AND p.proname = 'pg_get_tabledef'
+      AND p.pronargs = 5
+      AND p.proargnames[1] = 'in_schema'
+      AND p.proargnames[2] = 'in_table'
+      AND p.proargnames[4] = 'bcompact'
+      AND p.proargnames[5] = 'arr'
+      AND p.proargtypes[2] = 'boolean'::regtype
+      AND p.proargtypes[3] = 'boolean'::regtype
+      AND p.provariadic = to_regtype('public.tabledefs')
+      AND p.prorettype = 'text'::regtype
+  ) THEN
+     RAISE EXCEPTION 'Required pg_get_tabledef prerequisite is missing or outdated: Install the latest pg_get_tabledef first.';
+  END IF;
 
   -- Make sure NOTICE are shown
     SET client_min_messages = 'notice';
@@ -3843,10 +3864,9 @@ BEGIN
 
          -- get current state of search_path too
          SELECT setting INTO spath_tmp FROM pg_settings WHERE name = 'search_path';
-         RAISE NOTICE '*****************************************************************';
+         -- RAISE NOTICE '*****************************************************************';
          RAISE EXCEPTION E'Version: %  Action: %  CurrentSP: %  oldSP=%  newSP=%  ExecLine=%\nDiagnostics:\n%', v_version, action, spath_tmp, v_src_path_old, v_src_path_new, execline, buffer;
          
-
          IF v_src_path_old = '' THEN
            -- RAISE NOTICE 'setting old search_path to empty string';
            -- Issue#138: make search path changes only effective for the current transaction (last parm goes from false to true)
