@@ -132,6 +132,7 @@ SOFTWARE.
 -- 2026-11-09  MJV FIX: Fixed Issue#170: Fixed Copy collation definitions without provider-specific locale assumptions
 -- 2026-11-10  MJV FIX: Fixed Pull #164: Clone triggers from schema names that require quoting
 -- 2026-11-11  MJV FIX: Fixed Issue#171: Clean up the setting/resetting of search path replacing SET search_path commands with transaction level, perform: PERFORM set_config('search_path', 'mypath', true);
+-- 2026-11-11  MJV FIX: Fixed Issue#172: Fixed the problem with copying rows to the target inheritance type tables.
 
 do $$ 
 <<first_block>>
@@ -3508,6 +3509,55 @@ BEGIN
     RAISE NOTICE '  FUNC PRIVS cloned: %', LPAD(cnt::text, 5, ' ');
   END IF; -- NO ACL BRANCH
 
+  -- Issue#172 Create triggers for traditional inheritance parents before copying rows.
+  IF bData THEN
+    action := 'Inheritance Triggers';
+    rc = 40;
+    IF bDebug THEN RAISE NOTICE 'DEBUG: Section=%', action; END IF;
+    cnt := 0;
+
+    PERFORM set_config('search_path', '', true);
+
+    FOR arec IN
+      SELECT n1.nspname AS trigger_schema,
+             c.relname AS table,
+             t.tgname AS trigger_name,
+             n2.nspname AS function_schema,
+             p.proname AS function_name,
+             REPLACE(pg_get_triggerdef(t.oid), quote_ident(source_schema), quote_ident(dest_schema)) || ';' AS trig_ddl
+      FROM pg_trigger t
+      JOIN pg_class c ON c.oid = t.tgrelid
+      JOIN pg_namespace n1 ON n1.oid = c.relnamespace
+      JOIN pg_proc p ON p.oid = t.tgfoid
+      JOIN pg_namespace n2 ON n2.oid = p.pronamespace
+      WHERE n1.nspname = source_schema
+        AND c.relkind = 'r'
+        AND NOT t.tgisinternal
+        AND (n2.nspname = source_schema OR n2.nspname = 'public')
+        AND EXISTS (
+          SELECT 1
+          FROM pg_inherits i
+          JOIN pg_class ch ON ch.oid = i.inhrelid
+          WHERE i.inhparent = c.oid
+            AND ch.relkind = 'r'
+        )
+      ORDER BY c.relname, t.tgname
+    LOOP
+      cnt := cnt + 1;
+
+      IF bDDLOnly THEN
+        RAISE INFO '%', arec.trig_ddl;
+      ELSE
+        lastsql = arec.trig_ddl;
+        IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;
+        execline = 4500; EXECUTE lastsql;
+        lastsql = '';
+      END IF;
+    END LOOP;
+
+    RAISE NOTICE 'INHERITANCE TRIGGERS created: %', LPAD(cnt::text, 5, ' ');
+  END IF;
+
   -- LOOP for regular tables and populate them if specified
   -- Issue#75 moved from big table loop above to here.
   IF bData THEN
@@ -3794,13 +3844,15 @@ BEGIN
     -- 2021-03-09 MJV FIX:  #40  fixed sql to get the def using pg_get_triggerdef() sql
     -- 2024-11-14 MJV FIX: #140  fixed case sensitive schemas
     -- 2024-12-12 MJV FIX: #147  fixed sql to get the trigger def even if function resides in public schema, but qualify it as such
+    -- 2026-11-11 MJV FIX: #172  fix: exclude traditional inheritance tables
     SELECT n1.nspname as trigger_schema, c.relname as table, t.tgname as trigger_name, n2.nspname as function_schema, p.proname as function_name,
     REPLACE(pg_get_triggerdef(t.oid), quote_ident(source_schema), quote_ident(dest_schema)) || ';' AS trig_ddl
     FROM pg_trigger t, pg_namespace n1, pg_class c, pg_proc p, pg_namespace n2
     -- below fix for pull request, 164
     WHERE n1.nspname = source_schema AND n1.oid = c.relnamespace AND c.relkind in ('r','p') AND (n2.nspname = source_schema OR n2.nspname = 'public')
     AND c.oid = t.tgrelid AND t.tgfoid = p.oid AND p.pronamespace = n2.oid
-    ORDER BY c.relname, t.tgname
+    AND NOT EXISTS (SELECT 1 FROM pg_inherits i JOIN pg_class p ON p.oid = i.inhparent JOIN pg_class ch ON ch.oid = i.inhrelid WHERE (i.inhparent = c.oid OR i.inhrelid = c.oid) AND p.relkind = 'r' AND ch.relkind = 'r' AND NOT ch.relispartition)    
+    
   LOOP
     BEGIN
       cnt := cnt + 1;
