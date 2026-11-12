@@ -134,6 +134,7 @@ SOFTWARE.
 -- 2026-11-11  MJV FIX: Fixed Issue#171: Clean up the setting/resetting of search path replacing SET search_path commands with transaction level, perform: PERFORM set_config('search_path', 'mypath', true);
 -- 2026-11-11  MJV FIX: Fixed Issue#172: Fixed the problem with copying rows to the target inheritance type tables.
 -- 2026-11-12  MJV FIX: Fixed Issue#173: Missing some FKEYs on partitioned tables.
+-- 2026-11-12  MJV FIX: Fixed Issue#174: Incorrect Index Name Matching During Schema Cloning.
 
 do $$ 
 <<first_block>>
@@ -446,7 +447,7 @@ DECLARE
   lasttbl          text := '';
   bFound           boolean;
   role_invoker     text;
-  v_version        text := '2.4 November 10, 2026';
+  v_version        text := '2.5 November 12, 2026';
 
 BEGIN
   -- uncomment the following to get line context info when debugging exceptions. 
@@ -1488,42 +1489,20 @@ BEGIN
         AND old.tablename = new.tablename
         AND old.tablename = tblname
         AND old.indexname <> new.indexname
-        AND regexp_replace(old.indexdef, E'.*USING','') = regexp_replace(new.indexdef, E'.*USING','')
+        AND regexp_replace(old.indexdef, E'.*USING','') = regexp_replace(new.indexdef, E'.*USING','')        
+        -- Issue#174 fix
+        AND NOT EXISTS (SELECT 1 FROM pg_indexes m WHERE m.schemaname = dest_schema AND m.tablename = old.tablename AND m.indexname = old.indexname)
+        AND NOT EXISTS (SELECT 1 FROM pg_indexes m WHERE m.schemaname = source_schema AND m.tablename = new.tablename AND m.indexname = new.indexname)
         ORDER BY old.indexdef, new.indexdef
     LOOP
       -- Issue#133: We never get here when DDLONLY is specified since it depends on the cloned schema being created, so ALTER INDEX action does not happen on DDLONLY commands
       IF bDDLOnly THEN
         RAISE INFO '%', 'ALTER INDEX ' || quote_ident(dest_schema) || '.'  || quote_ident(ix_new_name) || ' RENAME TO ' || quote_ident(ix_old_name) || ';';
       ELSE
-        -- The SELECT query above may return duplicate names when a column is indexed twice the same manner with 2 different names. Therefore, to
-        -- avoid a 'relation "xxx" already exists' we test if the index name is in use or free. Skipping existing index will fallback on unused
-        -- ones and every duplicate will be mapped to distinct old names.
-        -- Issue#133: index names may be different when the table is created with the LIKE... INCLUDING ALL construct, so change the name to what is was in the original for primary keys and non-unique indexes at the present time
-        --  IF NOT EXISTS (
-        --     SELECT TRUE
-        --     FROM pg_indexes
-        --     WHERE schemaname = dest_schema
-        --       AND tablename = tblname
-        --       AND indexname = quote_ident(ix_old_name))
-        --   AND EXISTS (
-        --     SELECT TRUE
-        --     FROM pg_indexes
-        --     WHERE schemaname = dest_schema
-        --       AND tablename = tblname
-        --       AND indexname = quote_ident(ix_new_name))
-        --   THEN
-        -- RAISE NOTICE 'AAAA: schema=%  table=%  oldixname=%  newixname=%',quote_ident(source_schema), tblname, ix_old_name, ix_new_name;
-        -- Issue#133: bypass unique keys
-        -- IF NOT EXISTS (SELECT TRUE FROM pg_class c, pg_constraint ct WHERE ct.conrelid = c.oid AND c.relnamespace::regnamespace::text = quote_ident(source_schema) AND c.relname = tblname AND ct.contype IN ('p', 'u') AND ct.conname = ix_old_name) 
-        IF NOT EXISTS (SELECT TRUE FROM pg_class c, pg_constraint ct WHERE ct.conrelid = c.oid AND c.relnamespace::regnamespace::text = quote_ident(source_schema) AND c.relname = tblname AND ct.contype IN ('u') AND ct.conname = ix_old_name) 
-				THEN
-				  -- Issue#133: bypass columns we can't find in new schema probably due to CREATE TABLE LIKE constructs where fabricated index names are created automatically.
-				  -- Issue#140
-	        -- SELECT count(*) INTO cnt FROM pg_indexes WHERE schemaname = quote_ident(dest_schema) AND tablename = tblname AND indexname =  ix_new_name AND ix_old_name <> ix_new_name AND NOT EXISTS (SELECT TRUE FROM pg_indexes 
-	        -- WHERE schemaname = quote_ident(dest_schema) AND tablename = tblname AND indexname =  ix_old_name);
-	        SELECT count(*) INTO cnt FROM pg_indexes WHERE schemaname = dest_schema AND tablename = tblname AND indexname =  ix_new_name AND ix_old_name <> ix_new_name AND NOT EXISTS (SELECT TRUE FROM pg_indexes 
-	        WHERE schemaname = dest_schema AND tablename = tblname AND indexname =  ix_old_name);
-	        IF cnt > 0 THEN
+        IF NOT EXISTS (SELECT TRUE FROM pg_class c, pg_constraint ct WHERE ct.conrelid = c.oid AND c.relnamespace::regnamespace::text = quote_ident(source_schema) AND c.relname = tblname AND ct.contype IN ('u') AND ct.conname = ix_old_name) THEN
+	    SELECT count(*) INTO cnt FROM pg_indexes WHERE schemaname = dest_schema AND tablename = tblname AND indexname =  ix_new_name AND ix_old_name <> ix_new_name AND NOT EXISTS (SELECT TRUE FROM pg_indexes 
+	    WHERE schemaname = dest_schema AND tablename = tblname AND indexname =  ix_old_name);
+	    IF cnt > 0 THEN
               lastsql = 'ALTER INDEX ' || quote_ident(dest_schema) || '.' || quote_ident(ix_new_name) || ' RENAME TO ' || quote_ident(ix_old_name) || ';'; 
               IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
               execline = 2529; EXECUTE lastsql;
@@ -2018,6 +1997,9 @@ BEGIN
         AND old.tablename = tblname
         AND old.indexname <> new.indexname
         AND regexp_replace(old.indexdef, E'.*USING','') = regexp_replace(new.indexdef, E'.*USING','')
+        -- Issue#174 fix
+        AND NOT EXISTS (SELECT 1 FROM pg_indexes m WHERE m.schemaname = dest_schema AND m.tablename = old.tablename AND m.indexname = old.indexname)
+        AND NOT EXISTS (SELECT 1 FROM pg_indexes m WHERE m.schemaname = source_schema AND m.tablename = new.tablename AND m.indexname = new.indexname)
         ORDER BY old.indexdef, new.indexdef
     LOOP
       lastsql = '';
@@ -2025,32 +2007,11 @@ BEGIN
       IF bDDLOnly THEN
         RAISE INFO '%', 'ALTER INDEX ' || quote_ident(dest_schema) || '.'  || quote_ident(ix_new_name) || ' RENAME TO ' || quote_ident(ix_old_name) || ';';
       ELSE
-        -- The SELECT query above may return duplicate names when a column is indexed twice the same manner with 2 different names. Therefore, to
-        -- avoid a 'relation "xxx" already exists' we test if the index name is in use or free. Skipping existing index will fallback on unused
-        -- ones and every duplicate will be mapped to distinct old names.
-        -- Issue#133: index names may be different when the table is created with the LIKE... INCLUDING ALL construct, so change the name to what is was in the original for non-unique indexes and primary keys at the present time
-        --  IF NOT EXISTS (
-        --     SELECT TRUE
-        --     FROM pg_indexes
-        --     WHERE schemaname = dest_schema
-        --       AND tablename = tblname
-        --       AND indexname = quote_ident(ix_old_name))
-        --   AND EXISTS (
-        --     SELECT TRUE
-        --     FROM pg_indexes
-        --     WHERE schemaname = dest_schema
-        --       AND tablename = tblname
-        --       AND indexname = quote_ident(ix_new_name))
-        --   THEN
-        -- RAISE NOTICE 'AAAA: schema=%  table=%  oldixname=%  newixname=%',quote_ident(source_schema), tblname, ix_old_name, ix_new_name;
-        -- Issue#133: bypass unique keys
-        -- IF NOT EXISTS (SELECT TRUE FROM pg_class c, pg_constraint ct WHERE ct.conrelid = c.oid AND c.relnamespace::regnamespace::text = quote_ident(source_schema) AND c.relname = tblname AND ct.contype IN ('p', 'u') AND ct.conname = ix_old_name) 
-        IF NOT EXISTS (SELECT TRUE FROM pg_class c, pg_constraint ct WHERE ct.conrelid = c.oid AND c.relnamespace::regnamespace::text = quote_ident(source_schema) AND c.relname = tblname AND ct.contype IN ('u') AND ct.conname = ix_old_name)         
-				THEN
-				  -- Issue#133: bypass columns we can't find in new schema probably due to CREATE TABLE LIKE constructs where fabricated index names are created automatically.
-	        SELECT count(*) INTO cnt FROM pg_indexes WHERE schemaname = quote_ident(dest_schema) AND tablename = tblname AND indexname =  ix_new_name AND ix_old_name <> ix_new_name AND NOT EXISTS (SELECT TRUE FROM pg_indexes 
-	        WHERE schemaname = quote_ident(dest_schema) AND tablename = tblname AND indexname =  ix_old_name);
-	        IF cnt > 0 THEN
+        IF NOT EXISTS (SELECT TRUE FROM pg_class c, pg_constraint ct WHERE ct.conrelid = c.oid AND c.relnamespace::regnamespace::text = quote_ident(source_schema) AND c.relname = tblname AND ct.contype IN ('u') AND ct.conname = ix_old_name) THEN
+          -- Issue#133: bypass columns we can't find in new schema probably due to CREATE TABLE LIKE constructs where fabricated index names are created automatically.
+	  SELECT count(*) INTO cnt FROM pg_indexes WHERE schemaname = quote_ident(dest_schema) AND tablename = tblname AND indexname =  ix_new_name AND ix_old_name <> ix_new_name AND NOT EXISTS (SELECT TRUE FROM pg_indexes 
+	  WHERE schemaname = quote_ident(dest_schema) AND tablename = tblname AND indexname =  ix_old_name);
+	  IF cnt > 0 THEN
               lastsql = 'ALTER INDEX ' || quote_ident(dest_schema) || '.' || quote_ident(ix_new_name) || ' RENAME TO ' || quote_ident(ix_old_name) || ';'; 
               IF bDebugExec THEN RAISE NOTICE 'EXEC: %', lastsql; END IF;  
               execline = 3062; EXECUTE lastsql;
