@@ -133,6 +133,7 @@ SOFTWARE.
 -- 2026-11-10  MJV FIX: Fixed Pull #164: Clone triggers from schema names that require quoting
 -- 2026-11-11  MJV FIX: Fixed Issue#171: Clean up the setting/resetting of search path replacing SET search_path commands with transaction level, perform: PERFORM set_config('search_path', 'mypath', true);
 -- 2026-11-11  MJV FIX: Fixed Issue#172: Fixed the problem with copying rows to the target inheritance type tables.
+-- 2026-11-12  MJV FIX: Fixed Issue#173: Missing some FKEYs on partitioned tables.
 
 do $$ 
 <<first_block>>
@@ -3808,8 +3809,9 @@ BEGIN
     -- Issue#103 needed to addd this left join
     LEFT JOIN pg_inherits i ON (rn.oid = i.inhrelid)
     WHERE connamespace = src_oid
-        AND rn.relkind = 'r'
-        AND ct.contype = 'f'
+        -- Issue#173
+        -- AND rn.relkind = 'r' AND ct.contype = 'f'
+        AND rn.relkind IN ('r', 'p') AND ct.contype = 'f' AND ct.conparentid = 0
         -- Issue#103 fix: needed to also add this null check
         AND i.inhrelid is null
   LOOP
