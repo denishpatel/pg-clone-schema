@@ -1,11 +1,7 @@
 --
 -- Sample database used for clone_schema() testing
--- psql -b postgres < ./sampledb.sql
 -- psql -v ON_ERROR_STOP=1 -e -b postgres <  ~/clone_schema/sampledb.sql
--- psql clone_testing < /var/lib/pgsql/clone_schema/clone_schema.sql
--- psql clone_testing; select clone_schema('sample', 'sample_clone1', false, false);
--- add access control after creating the clone_testing database:
--- psql -v ON_ERROR_STOP=1 -e -b postgres < ./sampledb_access_control.sql
+--
 
 -- drop/create clone schema database
 drop database if exists clone_testing;
@@ -29,120 +25,100 @@ SET row_security = off;
 
 -- set global stuff:
 
--- don't worry if roles already exist, since they are cluster-wide, not just database-wide
--- CREATE ROLE sysdba;
--- ALTER ROLE sysdba WITH SUPERUSER INHERIT CREATEROLE CREATEDB LOGIN REPLICATION NOBYPASSRLS PASSWORD 'md54f2192d28c96b5e38d4553264cb2f448';
-
--- Role memberships
-
 -- end of global stuff
 
 CREATE EXTENSION IF NOT EXISTS citext WITH SCHEMA public;
 CREATE EXTENSION IF NOT EXISTS postgis WITH SCHEMA public;
 CREATE EXTENSION IF NOT EXISTS postgres_fdw WITH SCHEMA public;
 COMMENT ON EXTENSION postgres_fdw IS 'foreign-data wrapper for remote''s PostgreSQL servers';
+CREATE EXTENSION IF NOT EXISTS ltree WITH SCHEMA public;
+
+DROP ROLE IF EXISTS sample_writer;
+DROP ROLE IF EXISTS sample_reader;
+CREATE ROLE sample_writer;
+CREATE ROLE sample_reader;
+
+DROP ROLE IF EXISTS managers;
+DROP ROLE IF EXISTS users;
+DROP ROLE IF EXISTS admin;
+DROP ROLE IF EXISTS bob;
+DROP ROLE IF EXISTS alice;
+CREATE ROLE managers;
+CREATE ROLE users;
+CREATE ROLE admin;  -- Administrator
+CREATE ROLE bob;    -- Normal user
+CREATE ROLE alice;  -- Normal user
+
+DROP ROLE IF EXISTS sample_owner;
+CREATE ROLE sample_owner LOGIN;
+GRANT CREATE ON DATABASE clone_testing TO sample_owner;
+GRANT USAGE ON FOREIGN DATA WRAPPER postgres_fdw TO sample_owner;
+GRANT CREATE ON SCHEMA public TO sample_owner;
+GRANT sample_reader TO sample_writer;
+
+-- now set the role from postgres to sample_owner
+SET ROLE sample_owner;
+
+CREATE SCHEMA sample;
+SET search_path = sample, public;
+ALTER SCHEMA sample OWNER TO sample_owner;
+COMMENT ON SCHEMA sample IS 'standard sample schema';
+GRANT USAGE ON FOREIGN DATA WRAPPER postgres_fdw TO sample_owner;
 
 CREATE SERVER my_foreign_server FOREIGN DATA WRAPPER postgres_fdw OPTIONS (
     dbname 'testing2',
     host 'localhost',
     port '5443'
 );
-ALTER SERVER my_foreign_server OWNER TO postgres;
+ALTER SERVER my_foreign_server OWNER TO sample_owner;
 
 CREATE USER MAPPING IF NOT EXISTS FOR postgres SERVER my_foreign_server OPTIONS (
     password 'pgpass',
     "user" 'postgres'
 );
 
---
--- Name: sample; Type: SCHEMA; Schema: -; Owner: postgres
---
-
-CREATE SCHEMA sample;
-SET search_path = sample, public;
-
-
-ALTER SCHEMA sample OWNER TO postgres;
-
---
--- Name: SCHEMA sample; Type: COMMENT; Schema: -; Owner: postgres
---
-
-COMMENT ON SCHEMA sample IS 'standard sample schema';
-
-
---
--- Name: de-u-co-phonebk-x-icu; Type: COLLATION; Schema: sample; Owner: postgres
---
-
 CREATE COLLATION "de-u-co-phonebk-x-icu" (provider = icu, locale = 'de-u-co-phonebk');
 
 
-ALTER COLLATION "de-u-co-phonebk-x-icu" OWNER TO postgres;
-
---
--- Name: french; Type: COLLATION; Schema: sample; Owner: postgres
---
+ALTER COLLATION "de-u-co-phonebk-x-icu" OWNER TO sample_owner;
 
 CREATE COLLATION french (provider = icu, locale = 'fr');
 COMMENT ON COLLATION french IS 'my comments on french collation';
 
 
-ALTER COLLATION french OWNER TO postgres;
-
---
--- Name: german_phonebook; Type: COLLATION; Schema: sample; Owner: postgres
---
+ALTER COLLATION french OWNER TO sample_owner;
 
 CREATE COLLATION german_phonebook (provider = icu, locale = 'de-u-co-phonebk');
 
 
-ALTER COLLATION german_phonebook OWNER TO postgres;
-
---
--- Name: und-u-co-emoji-x-icu; Type: COLLATION; Schema: sample; Owner: postgres
---
+ALTER COLLATION german_phonebook OWNER TO sample_owner;
 
 CREATE COLLATION "und-u-co-emoji-x-icu" (provider = icu, locale = 'und-u-co-emoji');
 
 
-ALTER COLLATION "und-u-co-emoji-x-icu" OWNER TO postgres;
-
---
--- Name: addr; Type: DOMAIN; Schema: sample; Owner: postgres
---
+ALTER COLLATION "und-u-co-emoji-x-icu" OWNER TO sample_owner;
 
 -- tests fix for Issue#170
 CREATE COLLATION libc_test (provider = libc, locale = 'C');
-ALTER COLLATION "libc_test" OWNER TO postgres;
+ALTER COLLATION "libc_test" OWNER TO sample_owner;
 
 CREATE TYPE udt_myint AS (myint INTEGER);
 
 CREATE DOMAIN addr AS character varying(90) NOT NULL;
 COMMENT ON DOMAIN addr IS 'my domain comments on addr';
-ALTER DOMAIN addr OWNER TO postgres;
+ALTER DOMAIN addr OWNER TO sample_owner;
 
---
--- Name: addr2; Type: DOMAIN; Schema: sample; Owner: postgres
---
 CREATE DOMAIN addr2 AS character varying(90) NOT NULL DEFAULT 'N/A'::character varying;
-ALTER DOMAIN addr2 OWNER TO postgres;
+ALTER DOMAIN addr2 OWNER TO sample_owner;
 
---
--- Name: addr3; Type: DOMAIN; Schema: sample; Owner: postgres
---
 CREATE DOMAIN addr3 AS character varying(90) NOT NULL DEFAULT 'N/A'::character varying
         CONSTRAINT addr3_check CHECK (((VALUE)::text > ''::text));
-ALTER DOMAIN addr3 OWNER TO postgres;
+ALTER DOMAIN addr3 OWNER TO sample_owner;
 
 -- NULL Domain
 CREATE DOMAIN addr4 AS character varying(90) NULL;
 COMMENT ON DOMAIN addr2 IS 'my nullable domain comments on addr4';
-ALTER DOMAIN addr4 OWNER TO postgres;
-
---
--- Name: compfoo; Type: TYPE; Schema: sample; Owner: postgres
---
+ALTER DOMAIN addr4 OWNER TO sample_owner;
 
 CREATE TYPE compfoo AS (
         f1 integer,
@@ -151,11 +127,7 @@ CREATE TYPE compfoo AS (
 
 COMMENT ON TYPE compfoo IS 'just a comment on compfoo type';
 
-ALTER TYPE compfoo OWNER TO postgres;
-
---
--- Name: compfoo2; Type: TYPE; Schema: sample; Owner: postgres
---
+ALTER TYPE compfoo OWNER TO sample_owner;
 
 CREATE TYPE compfoo2 AS (
         x1 integer,
@@ -163,11 +135,7 @@ CREATE TYPE compfoo2 AS (
 );
 
 
-ALTER TYPE compfoo2 OWNER TO postgres;
-
---
--- Name: cycle_frequency; Type: TYPE; Schema: sample; Owner: postgres
---
+ALTER TYPE compfoo2 OWNER TO sample_owner;
 
 CREATE TYPE cycle_frequency AS ENUM (
     'WEEKLY',
@@ -175,31 +143,24 @@ CREATE TYPE cycle_frequency AS ENUM (
     'QUARTERLY',
     'ANNUALLY'
 );
-ALTER TYPE cycle_frequency OWNER TO postgres;
+ALTER TYPE cycle_frequency OWNER TO sample_owner;
 
 CREATE TYPE banner_color AS ENUM ('green','blue','lightblue','purple','red','yellow','orange','grey','pink');
-ALTER TYPE banner_color OWNER TO postgres;
---
--- Name: idx; Type: DOMAIN; Schema: sample; Owner: postgres
---
+ALTER TYPE banner_color OWNER TO sample_owner;
 
 CREATE DOMAIN idx AS integer NOT NULL
         CONSTRAINT idx_check CHECK (((VALUE > 100) AND (VALUE < 999)));
 
 
-ALTER DOMAIN idx OWNER TO postgres;
+ALTER DOMAIN idx OWNER TO sample_owner;
 
 -- removed obj_type and perm_type definitions since they are only used by clone_schema function
-
---
--- Name: us_postal_code; Type: DOMAIN; Schema: sample; Owner: postgres
---
 
 CREATE DOMAIN us_postal_code AS text NOT NULL
         CONSTRAINT us_postal_code_check CHECK (((VALUE ~ '^\d{5}$'::text) OR (VALUE ~ '^\d{5}-\d{4}$'::text)));
 
 
-ALTER DOMAIN us_postal_code OWNER TO postgres;
+ALTER DOMAIN us_postal_code OWNER TO sample_owner;
 
 CREATE AGGREGATE avg (float8)
 (
@@ -272,13 +233,8 @@ RETURN;
 END;
 $_$;
 
-ALTER FUNCTION aaa() OWNER TO postgres;
+ALTER FUNCTION aaa() OWNER TO sample_owner;
 COMMENT ON FUNCTION aaa() IS 'comment on my aaa() function';
-
-
---
--- Name: emp_stamp(); Type: FUNCTION; Schema: sample; Owner: postgres
---
 
 CREATE FUNCTION emp_stamp() RETURNS trigger
     LANGUAGE plpgsql
@@ -304,7 +260,7 @@ CREATE FUNCTION emp_stamp() RETURNS trigger
     END;
 $$;
 
-ALTER FUNCTION emp_stamp() OWNER TO postgres;
+ALTER FUNCTION emp_stamp() OWNER TO sample_owner;
 
 CREATE OR REPLACE FUNCTION fnsplitstring(IN par_string VARCHAR, IN par_delimiter CHAR)
 RETURNS TABLE (splitdata VARCHAR)
@@ -387,7 +343,7 @@ CREATE TABLE numerics (
     anumeric4 numeric(25,0),
     anumeric5 numeric(25,0)
 );
-ALTER TABLE numerics OWNER TO postgres;
+ALTER TABLE numerics OWNER TO sample_owner;
 
 CREATE TABLE arrays (
     name            text,
@@ -400,11 +356,7 @@ CREATE TABLE arrays (
     email public.citext,
     aarray7 character varying(200)[] NOT NULL
 );
-ALTER TABLE numerics OWNER TO postgres;
-
---
--- Name: address; Type: TABLE; Schema: sample; Owner: postgres
---
+ALTER TABLE arrays OWNER TO sample_owner;
 
 CREATE TABLE address (
     id bigint NOT NULL,
@@ -417,15 +369,11 @@ COMMENT ON TABLE address IS 'This table is where I keep address info.';
 INSERT INTO address OVERRIDING SYSTEM VALUE SELECT 1, '(1)', '(1)', 'text1';
 INSERT INTO address OVERRIDING SYSTEM VALUE SELECT 2, '(2)', '(2)', 'text2';
 
-ALTER TABLE address OWNER TO postgres;
-
---
--- Name: address_id_seq; Type: SEQUENCE; Schema: sample; Owner: postgres
---
+ALTER TABLE address OWNER TO sample_owner;
 
 ALTER TABLE address ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     SEQUENCE NAME address_id_seq
-    START WITH 1
+    START WITH 3
     INCREMENT BY 1
     NO MINVALUE
     NO MAXVALUE
@@ -439,10 +387,6 @@ INSERT INTO statuses Select 1, 'Coming';
 INSERT INTO statuses Select 2, 'Notcoming';
 INSERT INTO statuses Select 3, 'Maycome';
 
---
--- Name: emp; Type: TABLE; Schema: sample; Owner: postgres
---
-
 CREATE TABLE emp (
     empname text,
     salary integer,
@@ -451,13 +395,9 @@ CREATE TABLE emp (
 );
 COMMENT ON TABLE emp IS 'Employee''s info';
 COMMENT ON COLUMN emp.salary IS 'Employee Salary info';
-ALTER TABLE emp OWNER TO postgres;
+ALTER TABLE emp OWNER TO sample_owner;
 
 INSERT INTO emp select 'michael', 100, current_timestamp, 'john';
-
---
--- Name: foo; Type: TABLE; Schema: sample; Owner: postgres
---
 
 CREATE TABLE foo (
     foo_id integer NOT NULL,
@@ -473,8 +413,8 @@ insert into sample.foo (foo_id, foo_name) SELECT s.id * 1, (SELECT string_agg(x,
 insert into sample.foo2(foo_id, foo_name) SELECT s.id * 1, (SELECT string_agg(x, '') FROM (SELECT chr(ascii('a') + floor(random() * 10)::integer) FROM generate_series(1, 10 + id * 0)) AS y(x))  FROM generate_series(1, 20000) s(id);
 
 
-ALTER TABLE foo OWNER TO postgres;
-ALTER TABLE foo2 OWNER TO postgres;
+ALTER TABLE foo OWNER TO sample_owner;
+ALTER TABLE foo2 OWNER TO sample_owner;
 
 -- PG 16 throws error for following rule creation
 -- CREATE RULE "_RETURN" AS ON SELECT TO foo DO INSTEAD SELECT * FROM foo2;
@@ -580,10 +520,6 @@ INSERT INTO measurement SELECT 1, now(), 70, 100;
 INSERT INTO measurement SELECT 2, now() - interval '1 year', 80, 120;
 INSERT INTO measurement SELECT 3, now() - interval '10 year', 90, 125;
 
---
--- Name: foo_bar_baz; Type: TABLE; Schema: sample; Owner: postgres
---
-
 CREATE TABLE foo_bar_baz (
     foo_id integer NOT NULL,
     bar_id integer NOT NULL,
@@ -593,12 +529,8 @@ CREATE TABLE foo_bar_baz (
 PARTITION BY RANGE (foo_id);
 
 
-ALTER TABLE foo_bar_baz OWNER TO postgres;
+ALTER TABLE foo_bar_baz OWNER TO sample_owner;
 COMMENT ON TABLE foo_bar_baz IS 'just a comment on a partitioned table';
-
---
--- Name: foo_bar_baz_0; Type: TABLE; Schema: sample; Owner: postgres
---
 
 CREATE TABLE foo_bar_baz_0 (
     foo_id integer NOT NULL,
@@ -609,11 +541,7 @@ CREATE TABLE foo_bar_baz_0 (
 ALTER TABLE ONLY foo_bar_baz ATTACH PARTITION foo_bar_baz_0 FOR VALUES FROM (0) TO (1);
 
 
-ALTER TABLE foo_bar_baz_0 OWNER TO postgres;
-
---
--- Name: foo_bar_baz_1; Type: TABLE; Schema: sample; Owner: postgres
---
+ALTER TABLE foo_bar_baz_0 OWNER TO sample_owner;
 
 CREATE TABLE foo_bar_baz_1 (
     foo_id integer NOT NULL,
@@ -624,11 +552,7 @@ CREATE TABLE foo_bar_baz_1 (
 ALTER TABLE ONLY foo_bar_baz ATTACH PARTITION foo_bar_baz_1 FOR VALUES FROM (1) TO (2);
 
 
-ALTER TABLE foo_bar_baz_1 OWNER TO postgres;
-
---
--- Name: foo_bar_baz_2; Type: TABLE; Schema: sample; Owner: postgres
---
+ALTER TABLE foo_bar_baz_1 OWNER TO sample_owner;
 
 CREATE TABLE foo_bar_baz_2 (
     foo_id integer NOT NULL,
@@ -639,11 +563,7 @@ CREATE TABLE foo_bar_baz_2 (
 ALTER TABLE ONLY foo_bar_baz ATTACH PARTITION foo_bar_baz_2 FOR VALUES FROM (2) TO (3);
 
 
-ALTER TABLE foo_bar_baz_2 OWNER TO postgres;
-
---
--- Name: foo_bar_baz_3; Type: TABLE; Schema: sample; Owner: postgres
---
+ALTER TABLE foo_bar_baz_2 OWNER TO sample_owner;
 
 CREATE TABLE foo_bar_baz_3 (
     foo_id integer NOT NULL,
@@ -654,11 +574,7 @@ CREATE TABLE foo_bar_baz_3 (
 ALTER TABLE ONLY foo_bar_baz ATTACH PARTITION foo_bar_baz_3 FOR VALUES FROM (3) TO (4);
 
 
-ALTER TABLE foo_bar_baz_3 OWNER TO postgres;
-
---
--- Name: foo_bar_baz_4; Type: TABLE; Schema: sample; Owner: postgres
---
+ALTER TABLE foo_bar_baz_3 OWNER TO sample_owner;
 
 CREATE TABLE foo_bar_baz_4 (
     foo_id integer NOT NULL,
@@ -669,11 +585,7 @@ CREATE TABLE foo_bar_baz_4 (
 ALTER TABLE ONLY foo_bar_baz ATTACH PARTITION foo_bar_baz_4 FOR VALUES FROM (4) TO (5);
 
 
-ALTER TABLE foo_bar_baz_4 OWNER TO postgres;
-
---
--- Name: foo_bar_baz_5; Type: TABLE; Schema: sample; Owner: postgres
---
+ALTER TABLE foo_bar_baz_4 OWNER TO sample_owner;
 
 CREATE TABLE foo_bar_baz_5 (
     foo_id integer NOT NULL,
@@ -682,15 +594,11 @@ CREATE TABLE foo_bar_baz_5 (
     akey text not null DEFAULT 'my default value'
 );
 ALTER TABLE ONLY foo_bar_baz ATTACH PARTITION foo_bar_baz_5 FOR VALUES FROM (5) TO (6);
-ALTER TABLE foo_bar_baz_5 OWNER TO postgres;
+ALTER TABLE foo_bar_baz_5 OWNER TO sample_owner;
 
 INSERT INTO foo_bar_baz SELECT 1, 1, 1;
 INSERT INTO foo_bar_baz SELECT 2, 2, 2;
 INSERT INTO foo_bar_baz SELECT 3, 3, 3;
-
---
--- Name: haha; Type: FOREIGN TABLE; Schema: sample; Owner: postgres
---
 
 CREATE FOREIGN TABLE haha (
     id integer NOT NULL,
@@ -703,47 +611,39 @@ OPTIONS (
 );
 COMMENT ON FOREIGN TABLE haha IS 'just a comment on a foreign table';
 
-ALTER FOREIGN TABLE haha OWNER TO postgres;
+ALTER FOREIGN TABLE haha OWNER TO sample_owner;
 
 CREATE MATERIALIZED VIEW activity AS SELECT pid, datname, state, query FROM pg_stat_activity where state in ('active','idle in transaction')  WITH NO DATA;
-ALTER TABLE activity OWNER TO postgres;
+ALTER TABLE activity OWNER TO sample_owner;
 COMMENT ON MATERIALIZED VIEW activity IS 'just a comment on the activity''s materialized view';
 CREATE INDEX activity_pid_idx ON activity USING btree (pid);
 
 -- create a view dependent on the previous MV
 CREATE VIEW activity2 AS SELECT pid, datname, state, substring(query,1,30) query FROM activity where state in ('active','idle in transaction');
-ALTER TABLE activity2 OWNER TO postgres;
+ALTER TABLE activity2 OWNER TO sample_owner;
 
 CREATE MATERIALIZED VIEW mv_foo_bar_baz AS
  SELECT count(*) as count
    FROM foo_bar_baz;
-ALTER TABLE mv_foo_bar_baz OWNER TO postgres;
-
---
--- Name: hoho2; Type: VIEW; Schema: sample; Owner: postgres
---
+ALTER TABLE mv_foo_bar_baz OWNER TO sample_owner;
 
 CREATE VIEW hoho2 AS
  SELECT count(*) AS count
    FROM pg_stat_activity;
-ALTER TABLE hoho2 OWNER TO postgres;
+ALTER TABLE hoho2 OWNER TO sample_owner;
 
 -- THIS WONT WORK UNTIL WE FIX dependency ORDERINGS
 -- CREATE VIEW hoho3 AS
 --  SELECT count(*) as count
 --    FROM hoho2;
--- ALTER TABLE hoho3 OWNER TO postgres;
-
---
--- Name: person; Type: TABLE; Schema: sample; Owner: postgres
---
+-- ALTER TABLE hoho3 OWNER TO sample_owner;
 
 CREATE TABLE person (
     id bigint NOT NULL,
     firstname text NOT NULL,
     lastname text NOT NULL
 );
-ALTER TABLE person OWNER TO postgres;
+ALTER TABLE person OWNER TO sample_owner;
 ALTER TABLE person ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     SEQUENCE NAME person_id_seq
     START WITH 1
@@ -760,20 +660,12 @@ SELECT s.idd, (SELECT string_agg(x, '') FROM (SELECT chr(ascii('a') + floor(rand
 (SELECT string_agg(y, '') FROM (SELECT chr(ascii('a') + floor(random() * 10)::integer) FROM generate_series(1, 10 + idd * 0)) AS y(y))  
 FROM generate_series(3, 1000000) s(idd);
 
---
--- Name: sampletable; Type: TABLE; Schema: sample; Owner: postgres
---
-
 CREATE TABLE sampletable (x numeric);
-ALTER TABLE sampletable OWNER TO postgres;
+ALTER TABLE sampletable OWNER TO sample_owner;
 CREATE VIEW v_sampletable AS Select * from sampletable;
 COMMENT ON VIEW v_sampletable IS 'just a view on the sample table';
 INSERT INTO sample.sampletable (x) SELECT s.id FROM generate_series(1, 20000) s(id);
 INSERT INTO sample.sampletable (x) SELECT s.id * 1.00 FROM generate_series(1, 20000) s(id);
-
---
--- Name: seq111; Type: SEQUENCE; Schema: sample; Owner: postgres
---
 
 CREATE SEQUENCE seq111
     START WITH 1
@@ -782,104 +674,44 @@ CREATE SEQUENCE seq111
     NO MAXVALUE
     CACHE 1;
 COMMENT ON SEQUENCE seq111 IS 'just a comment on seq111 sequence';
-
-
-ALTER TABLE seq111 OWNER TO postgres;
-
---
--- Name: test; Type: TABLE; Schema: sample; Owner: postgres
---
+ALTER TABLE seq111 OWNER TO sample_owner;
 
 CREATE TABLE test (
     major integer DEFAULT 2 NOT NULL,
     minor integer
 );
-ALTER TABLE test OWNER TO postgres;
+ALTER TABLE test OWNER TO sample_owner;
 insert into sample.test (major, minor) SELECT s.id, random() * 10000 FROM generate_series(1, 10000) s(id);
-
---
--- Name: address address_pkey; Type: CONSTRAINT; Schema: sample; Owner: postgres
---
 
 ALTER TABLE ONLY address
     ADD CONSTRAINT address_pkey PRIMARY KEY (id);
 
-
---
--- Name: foo_bar_baz foo_bar_baz_pkey; Type: CONSTRAINT; Schema: sample; Owner: postgres
---
-
 ALTER TABLE ONLY foo_bar_baz
     ADD CONSTRAINT foo_bar_baz_pkey PRIMARY KEY (foo_id, bar_id, baz);
-
-
---
--- Name: foo_bar_baz_0 foo_bar_baz_0_pkey; Type: CONSTRAINT; Schema: sample; Owner: postgres
---
 
 ALTER TABLE ONLY foo_bar_baz_0
     ADD CONSTRAINT foo_bar_baz_0_pkey PRIMARY KEY (foo_id, bar_id, baz);
 
-
---
--- Name: foo_bar_baz_1 foo_bar_baz_1_pkey; Type: CONSTRAINT; Schema: sample; Owner: postgres
---
-
 ALTER TABLE ONLY foo_bar_baz_1
     ADD CONSTRAINT foo_bar_baz_1_pkey PRIMARY KEY (foo_id, bar_id, baz);
-
-
---
--- Name: foo_bar_baz_2 foo_bar_baz_2_pkey; Type: CONSTRAINT; Schema: sample; Owner: postgres
---
 
 ALTER TABLE ONLY foo_bar_baz_2
     ADD CONSTRAINT foo_bar_baz_2_pkey PRIMARY KEY (foo_id, bar_id, baz);
 
-
---
--- Name: foo_bar_baz_3 foo_bar_baz_3_pkey; Type: CONSTRAINT; Schema: sample; Owner: postgres
---
-
 ALTER TABLE ONLY foo_bar_baz_3
     ADD CONSTRAINT foo_bar_baz_3_pkey PRIMARY KEY (foo_id, bar_id, baz);
-
-
---
--- Name: foo_bar_baz_4 foo_bar_baz_4_pkey; Type: CONSTRAINT; Schema: sample; Owner: postgres
---
 
 ALTER TABLE ONLY foo_bar_baz_4
     ADD CONSTRAINT foo_bar_baz_4_pkey PRIMARY KEY (foo_id, bar_id, baz);
 
-
---
--- Name: foo_bar_baz_5 foo_bar_baz_5_pkey; Type: CONSTRAINT; Schema: sample; Owner: postgres
---
-
 ALTER TABLE ONLY foo_bar_baz_5
     ADD CONSTRAINT foo_bar_baz_5_pkey PRIMARY KEY (foo_id, bar_id, baz);
-
-
---
--- Name: person person_pkey; Type: CONSTRAINT; Schema: sample; Owner: postgres
---
 
 ALTER TABLE ONLY person
     ADD CONSTRAINT person_pkey PRIMARY KEY (id);
 
-
---
--- Name: test test_pkey; Type: CONSTRAINT; Schema: sample; Owner: postgres
---
-
 ALTER TABLE ONLY test
     ADD CONSTRAINT test_pkey PRIMARY KEY (major);
-
-
---
--- Name: idx_x; Type: INDEX; Schema: sample; Owner: postgres
---
 
 CREATE INDEX idx_x ON sampletable USING btree (x);
 COMMENT ON INDEX idx_x IS 'just another btree index';
@@ -910,11 +742,6 @@ CONSTRAINT enforce_geotype_geom CHECK (((geometrytype("position") = 'POINT'::tex
 CONSTRAINT enforce_srid_geom CHECK ((st_srid("position") = 4326))
 ) TABLESPACE pg_default;
 ALTER TABLE t_site add geometry geometry(Point, 4326) not null;
-
-
---
--- Name: minor_idx; Type: INDEX; Schema: sample; Owner: postgres
---
 
 CREATE INDEX minor_idx ON test USING btree (major, minor);
 COMMENT ON INDEX minor_idx IS 'just another btree index';
@@ -960,142 +787,10 @@ ALTER INDEX foo_bar_baz_pkey ATTACH PARTITION foo_bar_baz_4_pkey;
 
 ALTER INDEX foo_bar_baz_pkey ATTACH PARTITION foo_bar_baz_5_pkey;
 
-
---
--- Name: emp emp_stamp; Type: TRIGGER; Schema: sample; Owner: postgres
---
-
 CREATE TRIGGER emp_stamp BEFORE INSERT OR UPDATE ON emp FOR EACH ROW EXECUTE PROCEDURE emp_stamp();
-
-
---
--- Name: address address_id_fkey; Type: FK CONSTRAINT; Schema: sample; Owner: postgres
---
 
 ALTER TABLE ONLY address
     ADD CONSTRAINT address_id_fkey FOREIGN KEY (id) REFERENCES person(id);
-
-
---
--- Name: SCHEMA sample; Type: ACL; Schema: -; Owner: postgres
---
-
-
---
--- Name: FUNCTION aaa(); Type: ACL; Schema: sample; Owner: postgres
---
-
-
-
---
--- Name: FUNCTION emp_stamp(); Type: ACL; Schema: sample; Owner: postgres
---
-
-
-
---
--- Name: TABLE emp; Type: ACL; Schema: sample; Owner: postgres
---
-
-
-
---
--- Name: TABLE foo; Type: ACL; Schema: sample; Owner: postgres
---
-
-
-
---
--- Name: TABLE foo_bar_baz; Type: ACL; Schema: sample; Owner: postgres
---
-
-
-
---
--- Name: TABLE foo_bar_baz_0; Type: ACL; Schema: sample; Owner: postgres
---
-
-
-
---
--- Name: TABLE foo_bar_baz_1; Type: ACL; Schema: sample; Owner: postgres
---
-
-
-
---
--- Name: TABLE foo_bar_baz_2; Type: ACL; Schema: sample; Owner: postgres
---
-
-
-
---
--- Name: TABLE foo_bar_baz_3; Type: ACL; Schema: sample; Owner: postgres
---
-
-
-
---
--- Name: TABLE foo_bar_baz_4; Type: ACL; Schema: sample; Owner: postgres
---
-
-
-
---
--- Name: TABLE foo_bar_baz_5; Type: ACL; Schema: sample; Owner: postgres
---
-
-
-
---
--- Name: TABLE haha; Type: ACL; Schema: sample; Owner: postgres
---
-
-
-
---
--- Name: TABLE hoho; Type: ACL; Schema: sample; Owner: postgres
---
-
-
-
---
--- Name: TABLE hoho2; Type: ACL; Schema: sample; Owner: postgres
---
-
-
-
---
--- Name: TABLE sampletable; Type: ACL; Schema: sample; Owner: postgres
---
-
-
-
---
--- Name: SEQUENCE seq111; Type: ACL; Schema: sample; Owner: postgres
---
-
-
-
---
--- Name: TABLE test; Type: ACL; Schema: sample; Owner: postgres
---
-
--- RLS and policies. See pg_policies;  https://www.postgresql.org/docs/current/ddl-rowsecurity.html
-DROP ROLE IF EXISTS managers;
-DROP ROLE IF EXISTS users;
-DROP ROLE IF EXISTS admin;
-DROP ROLE IF EXISTS bob;
-DROP ROLE IF EXISTS alice;
-
-CREATE ROLE managers;
-CREATE ROLE users;
-CREATE ROLE admin;  -- Administrator
-CREATE ROLE bob;    -- Normal user
-CREATE ROLE alice;  -- Normal user
-
-
-GRANT USAGE ON SCHEMA sample TO public,managers,users,admin,bob,alice;
 
 CREATE TABLE groups (group_id int PRIMARY KEY, group_name text NOT NULL);
 INSERT INTO groups VALUES (1, 'low'), (2, 'medium'), (5, 'high');
@@ -1105,17 +800,10 @@ CREATE TABLE accounts (manager text, company text, contact_email text);
 ALTER TABLE accounts ENABLE ROW LEVEL SECURITY;
 INSERT INTO accounts SELECT 'admin','Sears','joe@sears.com';
 
--- Set default privileges  
-ALTER DEFAULT PRIVILEGES FOR ROLE managers IN SCHEMA sample GRANT SELECT,USAGE ON SEQUENCES TO managers, users;
-ALTER DEFAULT PRIVILEGES FOR ROLE managers IN SCHEMA sample GRANT ALL ON TABLES TO managers, users;
-ALTER DEFAULT PRIVILEGES FOR ROLE managers IN SCHEMA sample GRANT ALL ON SEQUENCES TO managers, users;
-
-
 CREATE TABLE information (info text, group_id int NOT NULL REFERENCES groups);
 INSERT INTO information VALUES ('barely secret', 1), ('slightly secret', 2), ('very secret', 5);
 
-CREATE POLICY account_managers ON accounts TO managers  USING (manager = current_user);
-COMMENT ON POLICY account_managers ON ACCOUNTS IS 'my comments on account_managers policy';
+-- defer some policy stuff to the end after AC stuff:
 CREATE POLICY user_policy ON users USING (user_name = current_user);
 
 CREATE POLICY user_sel_policy ON users FOR SELECT USING (true);
@@ -1138,14 +826,8 @@ INSERT INTO passwd VALUES ('alice','xxx',2,1,'Alice','098-765-4321',null,'/home/
 
 ALTER TABLE passwd ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY admin_all ON passwd TO admin USING (true) WITH CHECK (true);
 CREATE POLICY all_view ON passwd FOR SELECT USING (true);
 CREATE POLICY user_mod ON passwd FOR UPDATE USING (current_user = user_name) WITH CHECK (current_user = user_name AND shell IN ('/bin/bash','/bin/sh','/bin/dash','/bin/zsh','/bin/tcsh'));
-
-
-CREATE POLICY admin_local_only ON passwd AS RESTRICTIVE TO admin USING (pg_catalog.inet_client_addr() IS NULL);
-
-
 
 ALTER TABLE information ENABLE ROW LEVEL SECURITY;
 
@@ -1160,11 +842,11 @@ CREATE TABLE atable (key integer NOT NULL default nextval('explicitsequence_key'
 -- Create case-sensitive objects
 -- -----------------------------
 CREATE TABLE "CaseSensitive" ("ID" integer, "aValue" text);
-ALTER TABLE "CaseSensitive" OWNER TO postgres;
+ALTER TABLE "CaseSensitive" OWNER TO sample_owner;
 CREATE VIEW "CaseSensitiveView" AS SELECT * FROM "CaseSensitive";
 CREATE SEQUENCE "CaseSensitive_ID_seq" START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1;
 
-ALTER TABLE "CaseSensitive_ID_seq" OWNER TO postgres;
+ALTER TABLE "CaseSensitive_ID_seq" OWNER TO sample_owner;
 COMMENT ON TABLE "CaseSensitive" IS 'just a comment on the CaseSensitive table';
 ALTER SEQUENCE "CaseSensitive_ID_seq" OWNED BY "CaseSensitive"."ID";
 ALTER TABLE ONLY "CaseSensitive" ALTER COLUMN "ID" SET DEFAULT nextval('"CaseSensitive_ID_seq"'::regclass);
@@ -1284,7 +966,7 @@ CREATE TABLE shoelace_log (sl_name    text, sl_avail   integer, log_who    text,
 CREATE RULE log_shoelace AS ON UPDATE TO shoelace_data
     WHERE NEW.sl_avail <> OLD.sl_avail
     DO INSERT INTO shoelace_log VALUES (NEW.sl_name, NEW.sl_avail, current_user, current_timestamp);
-CREATE POLICY "Api can insert" on shoelace_data for insert to postgres  with check (true);
+
 
 CREATE TABLE vectors1 (
 		id uuid NOT NULL,
@@ -1310,7 +992,6 @@ CREATE TABLE vectors3 (
 INSERT INTO sample.vectors3 (email1, email2, email3) VALUES ('aa@aaa.com','bb@bbb.com','cc@ccc.com');
 INSERT INTO sample.vectors3 (email1, email2, email3) VALUES ('aa@aaaaa.com','bb@bbbbb.com','cc@ccccc.com');
 
-CREATE EXTENSION IF NOT EXISTS ltree WITH SCHEMA public;
 DROP FUNCTION IF EXISTS sample.ltree_function(ltree);
 CREATE OR REPLACE FUNCTION sample.ltree_function(public.ltree) RETURNS boolean AS $$
  SELECT $1 @> '1.2.3'::public.ltree;
@@ -1336,8 +1017,6 @@ CREATE TRIGGER b_trigger_bef BEFORE INSERT ON t_demo FOR EACH ROW EXECUTE PROCED
 CREATE TRIGGER a_trigger_bef BEFORE INSERT ON t_demo FOR EACH ROW EXECUTE PROCEDURE trig_func();
 CREATE TRIGGER c_trigger_aft AFTER INSERT  ON t_demo FOR EACH ROW EXECUTE PROCEDURE trig_func();
 CREATE TRIGGER b_trigger_aft AFTER INSERT  ON t_demo FOR EACH ROW EXECUTE PROCEDURE trig_func();
-
-GRANT USAGE ON ALL SEQUENCES IN SCHEMA sample TO managers, users;
 
 -- Issue#133 test case
 CREATE TABLE IF NOT EXISTS f_f_hub (id varchar(255) not null constraint f_hub_id_key unique);
@@ -1388,3 +1067,52 @@ INSERT INTO keywordcols ("desc",exclusive) VALUES ('whatever', 'whatever2');
 --
 -- End Sample database
 --
+
+--
+-- Start of Access Control Stuff
+--
+
+-- don't worry if roles already exist, since they are cluster-wide, not just database-wide
+-- CREATE ROLE sysdba;
+-- ALTER ROLE sysdba WITH SUPERUSER INHERIT CREATEROLE CREATEDB LOGIN REPLICATION NOBYPASSRLS PASSWORD 'md54f2192d28c96b5e38d4553264cb2f448';
+
+
+-- RLS and policies. See pg_policies;  https://www.postgresql.org/docs/current/ddl-rowsecurity.html
+GRANT USAGE ON SCHEMA sample TO public,managers,users,admin,bob,alice,sample_owner,sample_writer,sample_reader;
+
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA sample TO managers, users;
+
+CREATE POLICY account_managers ON accounts TO managers  USING (manager = current_user);
+COMMENT ON POLICY account_managers ON ACCOUNTS IS 'my comments on account_managers policy';
+
+CREATE POLICY admin_all ON passwd TO admin USING (true) WITH CHECK (true);
+CREATE POLICY admin_local_only ON passwd AS RESTRICTIVE TO admin USING (pg_catalog.inet_client_addr() IS NULL);
+CREATE POLICY "Api can insert" on shoelace_data for insert to admin  with check (true);
+
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+
+-- Schema access
+GRANT USAGE ON SCHEMA sample TO sample_reader, sample_writer;
+
+-- Reader: read all existing tables
+GRANT SELECT ON ALL TABLES IN SCHEMA sample TO sample_reader;
+
+-- Writer: write access to all existing tables
+GRANT INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA sample TO sample_writer;
+
+-- Writer: sequence access for serial/sequence-backed columns
+GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA sample TO sample_writer;
+
+-- Future tables: reader
+ALTER DEFAULT PRIVILEGES FOR ROLE sample_owner IN SCHEMA sample GRANT SELECT ON TABLES TO sample_reader;
+
+-- Future tables: writer
+ALTER DEFAULT PRIVILEGES FOR ROLE sample_owner IN SCHEMA sample GRANT INSERT, UPDATE, DELETE ON TABLES TO sample_writer;
+
+-- Future sequences: writer
+ALTER DEFAULT PRIVILEGES FOR ROLE sample_owner IN SCHEMA sample GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO sample_writer;
+    
+--
+-- End of Access Control Stuff
+--
+
